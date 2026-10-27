@@ -10,7 +10,7 @@ export function NotFoundPage() {
     >
       <Link
         to="/"
-        className="inline-flex rounded-md border border-zinc-700 px-3 py-1.5 text-sm text-zinc-300 transition-colors hover:border-zinc-500 hover:text-zinc-100"
+        className="inline-flex rounded-dusk-code border border-dusk-hairline-strong px-3 py-1.5 text-sm text-dusk-muted transition-colors hover:border-dusk-deadend hover:text-dusk-ink"
       >
         Back to projects
       </Link>
