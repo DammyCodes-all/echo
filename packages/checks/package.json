@@ -1,0 +1,15 @@
+{
+  "name": "@echo/checks",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@echo/contracts": "workspace:*",
+    "@echo/core": "workspace:*",
+    "@echo/model": "workspace:*",
+    "@echo/sandbox": "workspace:*"
+  }
+}
