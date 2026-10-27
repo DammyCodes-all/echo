@@ -12,6 +12,7 @@
     "start": "node dist/index.js"
   },
   "dependencies": {
+    "@echo/capture-muse": "workspace:*",
     "@echo/config": "workspace:*",
     "@echo/contracts": "workspace:*",
     "commander": "^15.0.0"
