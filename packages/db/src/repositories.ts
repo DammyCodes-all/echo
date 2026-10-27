@@ -130,6 +130,18 @@ export function upsertSession(
   );
 }
 
+export interface SessionRow {
+  id: string;
+  projectId: string;
+}
+
+export function getSession(db: EchoDb, sessionId: string): SessionRow | null {
+  const row = db.prepare("SELECT id, project_id FROM sessions WHERE id = ?").get(sessionId) as
+    | { id: string; project_id: string }
+    | undefined;
+  return row ? { id: row.id, projectId: row.project_id } : null;
+}
+
 export function getSessionEventIds(db: EchoDb, sessionId: string): Set<string> {
   const rows = db.prepare("SELECT id FROM events WHERE session_id = ?").all(sessionId) as Array<{
     id: string;
@@ -365,6 +377,17 @@ export function latestSnapshot(
   const row = (
     trigger === undefined ? db.prepare(sql).get(sessionId) : db.prepare(sql).get(sessionId, trigger)
   ) as Record<string, unknown> | undefined;
+  return row ? snapshotRowFrom(row) : null;
+}
+
+export function getSnapshotByCommit(
+  db: EchoDb,
+  sessionId: string,
+  commitOid: string,
+): SnapshotRow | null {
+  const row = db
+    .prepare("SELECT * FROM snapshots WHERE session_id = ? AND commit_oid = ?")
+    .get(sessionId, commitOid) as Record<string, unknown> | undefined;
   return row ? snapshotRowFrom(row) : null;
 }
 

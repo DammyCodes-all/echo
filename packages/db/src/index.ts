@@ -2,8 +2,10 @@ export { type EchoDb, openEchoDb, withTransaction } from "./database";
 export { MIGRATIONS, type Migration } from "./migrations";
 export {
   appendEvents,
+  getSession,
   getSessionEventIds,
   getSessionRecordKeys,
+  getSnapshotByCommit,
   insertSnapshot,
   insertStampedEvents,
   latestSnapshot,
@@ -15,6 +17,7 @@ export {
   maxTapeSeq,
   type ProjectSummary,
   readEvents,
+  type SessionRow,
   type SessionSummary,
   type SnapshotFileRow,
   type SnapshotInsert,
