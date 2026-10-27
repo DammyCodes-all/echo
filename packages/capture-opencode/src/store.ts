@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 
 export interface OpenCodeSessionSummary {
@@ -30,9 +29,7 @@ export interface OpenCodeMessageRead {
   skipped: OpenCodeSkippedRow[];
 }
 
-export function projectIdForDirectory(directory: string): string {
-  return `prj_${createHash("sha256").update(directory).digest("hex").slice(0, 16)}`;
-}
+export { projectIdForDirectory } from "@echo/core";
 
 export function sessionModelLabel(raw: string | null): string | null {
   if (raw === null) return null;

@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { loadEchoConfig, saveEchoConfig } from "@echo/config";
 import { Command } from "commander";
+import { runHookCommand } from "./hook";
 
 const program = new Command();
 
@@ -43,6 +44,19 @@ program
       return;
     }
     for (const project of config.projects) process.stdout.write(`${project}\n`);
+  });
+
+program
+  .command("hook")
+  .argument("<agent>", "agent the hook belongs to (muse)")
+  .argument("<event>", "hook event name, e.g. PreToolUse")
+  .description("ingest one agent hook event from stdin into the spool (never blocks)")
+  // No exitOverride here: commander-level misuse (unknown command, missing
+  // arg) surfaces a nonzero exit, which is a visible config bug, not a block
+  // (only exit code 2 blocks). The hook action itself is total and silent.
+  .action((agent: string, event: string) => {
+    const result = runHookCommand({ agent, event });
+    if (result.exitCode !== 0) process.exitCode = result.exitCode;
   });
 
 program.parse();
