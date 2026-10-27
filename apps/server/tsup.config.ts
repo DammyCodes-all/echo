@@ -7,5 +7,7 @@ export default defineConfig({
   outDir: "dist",
   clean: true,
   sourcemap: true,
+  external: ["isomorphic-git", "ignore"],
+  removeNodeProtocol: false,
   noExternal: [/^@echo\//],
 });
