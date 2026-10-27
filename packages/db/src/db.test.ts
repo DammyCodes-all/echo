@@ -5,7 +5,9 @@ import type { TapeEvent } from "@echo/contracts";
 import { describe, expect, it } from "vitest";
 import {
   appendEvents,
+  getSession,
   getSessionEventIds,
+  getSnapshotByCommit,
   insertSnapshot,
   latestSnapshot,
   listProjects,
@@ -163,6 +165,32 @@ describe("repositories", () => {
     expect(first.map((row) => row.event_id)).toEqual(["evt_rev2"]);
     const second = readEvents(db, "ses_1", 1, 1);
     expect(second.map((row) => row.event_id)).toEqual(["evt_other"]);
+    db.close();
+  });
+
+  it("resolves sessions and snapshots for file views", () => {
+    const db = openTestDb();
+    seed(db);
+    expect(getSession(db, "ses_1")).toEqual({ id: "ses_1", projectId: "prj_1" });
+    expect(getSession(db, "ses_missing")).toBeNull();
+
+    insertSnapshot(db, {
+      id: "commit_1",
+      sessionId: "ses_1",
+      commitOid: "commit_1",
+      parentOid: null,
+      trigger: "baseline",
+      eventId: "evt_snapshot",
+      takenAt: "2026-10-27T10:05:00.000Z",
+      fileCount: 0,
+      totalBytes: 0,
+      status: "ok",
+      diagnostics: [],
+      files: [],
+    });
+    expect(getSnapshotByCommit(db, "ses_1", "commit_1")?.trigger).toBe("baseline");
+    expect(getSnapshotByCommit(db, "ses_1", "commit_missing")).toBeNull();
+    expect(getSnapshotByCommit(db, "ses_missing", "commit_1")).toBeNull();
     db.close();
   });
 
