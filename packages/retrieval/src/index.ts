@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { TapeEvent } from "@echo/contracts";
+import { expandTerms, openFts } from "./fts";
 
 export type EvidenceKind = "observed" | "agent_stated" | "snapshot" | "diagnostic";
 export type EvidenceLabel = "observed" | "agent_stated" | "uncertain";
@@ -218,12 +219,13 @@ const TRY_WORDS = new Set([
 ]);
 
 /**
- * Deterministic in-memory retrieval over redacted tape events. SQLite FTS5
- * lands later with the server wiring; the scoring contract (file match +
- * token overlap + kind weight, tape_seq tiebreak) stays the same so the
- * upgrade changes recall, not the answer shape.
+ * Retrieval over redacted tape events, FTS5-backed since the hackathon
+ * build (porter stemmer, prefix terms). The scoring contract is unchanged
+ * (file match + term overlap + kind weight, tape_seq tiebreak): the upgrade
+ * changes recall — stemming and prefix find candidates word overlap
+ * missed — not the answer shape.
  *
- * Two refinements over plain word overlap: try-first questions boost
+ * Two refinements over plain matching: try-first questions boost
  * superseded writes (a write the tape later overwrote is a reverted
  * attempt), and the bundle fills best-first within a character budget
  * (~4 chars per token) so one giant event cannot crowd out small decisive
@@ -266,27 +268,26 @@ export function buildEvidenceBundle(
   const wantsAttempts = tokenize(query.question).some((token) => TRY_WORDS.has(token));
 
   const scored: Array<{ item: EvidenceItem; score: number; seq: number; relevant: boolean }> = [];
-  for (const event of events) {
+  const documents = events.map((event) => {
     const summary = payloadText(event.kind, event.payload);
     const filePath = queryFile ?? eventFilePath(event.kind, event.payload, summary);
-    const mapped = eventKind(event.kind);
-    const haystack = new Set(tokenize(`${summary} ${filePath ?? ""}`));
-    let overlap = 0;
-    for (const token of questionTokens) {
-      if (haystack.has(token)) overlap += 1;
-      // Split compound tokens on . / - so "src/app.ts" still matches "app".
-      for (const part of token.split(/[./-]+/)) {
-        if (part.length >= 3 && haystack.has(part)) {
-          overlap += 1;
-          break;
-        }
-      }
-    }
+    return { summary, filePath, text: `${summary} ${filePath ?? ""}` };
+  });
+  const terms = expandTerms(questionTokens);
+  const fts = openFts(documents.map((doc) => doc.text));
+  try {
+    for (let i = 0; i < events.length; i++) {
+      const event = events[i];
+      const doc = documents[i];
+      if (event === undefined || doc === undefined) continue;
+      const { summary, filePath } = doc;
+      const mapped = eventKind(event.kind);
+      const overlap = fts.overlap(i, terms);
     let score = overlap + mapped.weight;
     const fileMatched = queryFile !== null && filePath === queryFile;
     if (fileMatched) score += 3;
     if (wantsAttempts && superseded.has(event.event_id)) score += 2;
-    // Kind weight ranks; only word overlap or an explicit file match admits.
+    // Kind weight ranks; only term overlap or an explicit file match admits.
     // Otherwise a tool-heavy tape answers "what is the capital of France?".
     const relevant = overlap > 0 || fileMatched;
     if (event.diagnostics.length > 0) {
@@ -321,6 +322,9 @@ export function buildEvidenceBundle(
       seq: event.tape_seq,
       relevant,
     });
+    }
+  } finally {
+    fts.close();
   }
 
   const ranked = scored

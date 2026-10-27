@@ -7,7 +7,10 @@ export interface ParsedMuseEvent {
   id: string;
   stream: MuseStream;
   sequence: number;
-  recordedAtUs: number;
+  // Null when the source line carries no recorded_at (observed on
+  // session.fork.* / session.side.* lines). The mapper falls back to the
+  // daemon clock and labels the event, rather than dropping evidence.
+  recordedAtUs: number | null;
   payloadType: string;
   payload: unknown;
   causationId: string | null;
@@ -65,14 +68,20 @@ function tryParseEvent(parsed: Record<string, unknown>): ParsedMuseEvent | null 
   const stream = asStream(parsed.stream);
   if (!stream) return null;
   if (typeof parsed.sequence !== "number" || !Number.isInteger(parsed.sequence)) return null;
-  if (typeof parsed.recorded_at !== "number" || !Number.isFinite(parsed.recorded_at)) return null;
   if (typeof parsed.payload_type !== "string") return null;
   if (typeof parsed.id !== "string") return null;
+  // recorded_at is microseconds in live logs, but fork/side-channel lines
+  // omit it. Preserve the event with a null timestamp instead of dropping
+  // lineage evidence; the mapper substitutes observed_at and diagnoses it.
+  const recordedAtUs =
+    typeof parsed.recorded_at === "number" && Number.isFinite(parsed.recorded_at)
+      ? parsed.recorded_at
+      : null;
   return {
     id: parsed.id,
     stream,
     sequence: parsed.sequence,
-    recordedAtUs: parsed.recorded_at,
+    recordedAtUs,
     payloadType: parsed.payload_type,
     payload: parsed.payload ?? null,
     causationId: typeof parsed.causation_id === "string" ? parsed.causation_id : null,
@@ -102,14 +111,17 @@ export function parseMuseLines(lines: string[]): ParseResult {
       result.invalidLines++;
       continue;
     }
-    // Header frame: no stream/sequence, carries embedded records.
-    if (!("stream" in parsed) || !("sequence" in parsed)) {
-      result.headerFrames++;
-      continue;
-    }
+    // Marker check runs before the header check: live compaction markers
+    // carry stream + position (no top-level sequence), so a
+    // stream/sequence presence test would misfile them as header frames.
     const marker = tryParseMarker(parsed, lastSequence);
     if (marker) {
       result.markers.push(marker);
+      continue;
+    }
+    // Header frame: no stream/sequence, carries embedded records.
+    if (!("stream" in parsed) || !("sequence" in parsed)) {
+      result.headerFrames++;
       continue;
     }
     const event = tryParseEvent(parsed);
