@@ -1,9 +1,19 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { resolveEchoPaths } from "@echo/config";
-import { listProjects, listSessions, openEchoDb, readEvents } from "@echo/db";
+import {
+  getSession,
+  getSnapshotByCommit,
+  listProjects,
+  listSessions,
+  listSnapshotFiles,
+  listSnapshots,
+  openEchoDb,
+  readEvents,
+} from "@echo/db";
 import Fastify from "fastify";
 import { createIngest } from "./ingest";
+import { readSnapshotFile } from "./snapshot-view";
 
 const VERSION = "0.1.0";
 const DEFAULT_PORT = 4783;
@@ -60,6 +70,53 @@ app.get<{ Params: { id: string }; Querystring: { after?: string; limit?: string 
       });
     }
     return { events: readEvents(db, request.params.id, after, limit) };
+  },
+);
+
+app.get<{ Params: { id: string } }>("/api/sessions/:id/snapshots", async (request) =>
+  listSnapshots(db, request.params.id).map((row) => ({
+    commitOid: row.commitOid,
+    trigger: row.trigger,
+    eventId: row.eventId,
+    takenAt: row.takenAt,
+    fileCount: row.fileCount,
+    totalBytes: row.totalBytes,
+    status: row.status,
+    diagnostics: row.diagnostics,
+  })),
+);
+
+app.get<{ Params: { id: string; commit: string } }>(
+  "/api/sessions/:id/snapshots/:commit/files",
+  async (request, reply) => {
+    const snapshot =
+      getSession(db, request.params.id) &&
+      getSnapshotByCommit(db, request.params.id, request.params.commit);
+    if (!snapshot) {
+      return reply.code(404).send({
+        error: { code: "not_found", message: "unknown session or snapshot" },
+      });
+    }
+    return listSnapshotFiles(db, snapshot.id);
+  },
+);
+
+app.get<{ Params: { id: string; commit: string }; Querystring: { path?: string } }>(
+  "/api/sessions/:id/snapshots/:commit/blob",
+  async (request, reply) => {
+    const outcome = await readSnapshotFile(
+      db,
+      paths.dataDir,
+      request.params.id,
+      request.params.commit,
+      request.query.path ?? "",
+    );
+    if (!outcome.ok) {
+      return reply
+        .code(outcome.code === "not_found" ? 404 : 400)
+        .send({ error: { code: outcome.code, message: outcome.message } });
+    }
+    return outcome.content;
   },
 );
 
