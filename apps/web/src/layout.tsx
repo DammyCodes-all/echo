@@ -11,16 +11,8 @@ export function AppLayout() {
     <div className="flex min-h-screen flex-col">
       <header className="border-b border-dusk-hairline">
         <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between px-6">
-          <NavLink to="/" className="flex items-center gap-3">
-            <span className="flex size-8 items-center justify-center rounded-dusk-code border border-dusk-accent/30 bg-dusk-accent-wash font-mono text-sm font-semibold text-dusk-accent-soft">
-              e
-            </span>
-            <span className="flex items-baseline gap-2">
-              <span className="text-lg font-semibold tracking-tight">Echo</span>
-              <span className="rounded-dusk-pill border border-dusk-hairline-strong px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dusk-muted">
-                scaffold
-              </span>
-            </span>
+          <NavLink to="/" className="flex items-center">
+            <span className="text-lg font-semibold tracking-tight">Echo</span>
           </NavLink>
           <nav className="flex items-center gap-1">
             <NavLink to="/" end className={navLinkClass}>

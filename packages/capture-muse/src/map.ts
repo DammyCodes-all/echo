@@ -64,6 +64,15 @@ function toolCallIdFrom(payload: unknown): string | null {
       if (typeof callId === "string" && callId.length > 0) return callId;
     }
   }
+  const calls = record.tool_calls;
+  if (Array.isArray(calls) && calls.length > 0) {
+    const first = calls[0];
+    if (first !== null && typeof first === "object" && !Array.isArray(first)) {
+      const entry = first as Record<string, unknown>;
+      const fromEntry = entry.tool_call_id ?? entry.call_id;
+      if (typeof fromEntry === "string" && fromEntry.length > 0) return fromEntry;
+    }
+  }
   return null;
 }
 
@@ -74,7 +83,10 @@ function canonicalKind(payloadType: string, innerKind: string | null): TapeEvent
   if (payloadType === "tool_batch.effect.terminal") return "tool.completed";
   if (payloadType === "approval_wait.effect.started") return "approval.requested";
   if (payloadType === "approval_wait.effect.terminal") return "approval.decided";
-  if (payloadType === "runtime.user_intent.accepted" || payloadType === "runtime.user_intent.materialized") {
+  if (
+    payloadType === "runtime.user_intent.accepted" ||
+    payloadType === "runtime.user_intent.materialized"
+  ) {
     return "prompt.submitted";
   }
   if (payloadType === "runtime.command_intake.received") return "prompt.submitted";
@@ -175,22 +187,21 @@ export function mapMuseToTape(
       diagnostics.push("redaction_failed");
       degraded = true;
     }
-    const eventId =
-      `evt_${createHash("sha256")
-        .update(
-          stableJson({
-            session_id: ctx.sessionId,
-            record_key: input.recordKey,
-            kind: input.kind,
-            source_ts: input.ts,
-            sequence: input.sequence,
-            links: input.links ?? null,
-            payload,
-            diagnostics,
-          }),
-        )
-        .digest("hex")
-        .slice(0, 24)}`;
+    const eventId = `evt_${createHash("sha256")
+      .update(
+        stableJson({
+          session_id: ctx.sessionId,
+          record_key: input.recordKey,
+          kind: input.kind,
+          source_ts: input.ts,
+          sequence: input.sequence,
+          links: input.links ?? null,
+          payload,
+          diagnostics,
+        }),
+      )
+      .digest("hex")
+      .slice(0, 24)}`;
     events.push(
       TapeEnvelopeSchema.parse({
         v: 1,
@@ -243,7 +254,10 @@ export function mapMuseToTape(
       links.parent_session_id = ctx.sessionId;
     }
     const toolCallId = toolCallIdFrom(record.payload);
-    if (toolCallId && (kind === "tool.requested" || kind === "tool.completed" || kind === "tool.failed")) {
+    if (
+      toolCallId &&
+      (kind === "tool.requested" || kind === "tool.completed" || kind === "tool.failed")
+    ) {
       links.tool_call_id = toolCallId;
     }
     push({
