@@ -1,6 +1,6 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
-import { resolveEchoPaths } from "@echo/config";
+import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import {
   getSession,
   getSnapshotByCommit,
@@ -13,6 +13,7 @@ import {
 } from "@echo/db";
 import Fastify from "fastify";
 import { createIngest } from "./ingest";
+import { createMuseIngest } from "./muse-ingest";
 import { readSnapshotFile } from "./snapshot-view";
 
 const VERSION = "0.1.0";
@@ -36,6 +37,12 @@ mkdirSync(paths.dataDir, { recursive: true });
 const db = openEchoDb(join(paths.dataDir, "echo.sqlite"));
 const app = Fastify({ logger: true });
 const ingest = createIngest({ dataDir: paths.dataDir, db, log: app.log });
+const museIngest = createMuseIngest({
+  dataDir: paths.dataDir,
+  db,
+  log: app.log,
+  projects: loadEchoConfig().projects,
+});
 
 app.get("/api/health", async () => ({
   status: "ok",
@@ -123,6 +130,7 @@ app.get<{ Params: { id: string; commit: string }; Querystring: { path?: string }
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
   ingest.stop();
+  museIngest.stop();
   db.close();
   await app.close();
 }
@@ -133,9 +141,14 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 try {
   await app.listen({ host: HOST, port: resolvePort() });
   ingest.start();
+  museIngest.start(loadEchoConfig().poll_interval_ms);
   const initial = await ingest.runOnce();
   if (initial.eventsAdded > 0) {
     app.log.info({ ...initial }, "ingested opencode sessions");
+  }
+  const museInitial = await museIngest.runOnce();
+  if (museInitial.eventsAdded > 0) {
+    app.log.info({ ...museInitial }, "ingested muse sessions");
   }
 } catch (error) {
   app.log.error(error);
