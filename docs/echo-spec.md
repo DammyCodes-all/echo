@@ -104,7 +104,7 @@ There are three visualizations. The activity timeline is interactive and covers 
 5. Inspect. Click any hunk and Echo lists captured actions and file versions that can be linked to it, including captured attempts the agent later reverted. Requested edits, observed effects and uncertain mappings are distinguished.
 6. Ask. Ask why a change happened or what was tried first. Retrieval pulls the relevant tape segments, Muse Spark answers using only those, with citations, or refuses.
 7. Select. Echo ranks hunks by risk and by how little I engaged with them, and picks a few (draft: 3 to 5).
-8. Check. For each, a short question (predict the output, or spot the bug). I pick my confidence first (guessing, think so, certain), then answer. The code runs in a sandbox and I see the reference behaviour plus a calibration reading.
+8. Check. For each, an ownership question — consequence, decision, tradeoff, blast_radius, or teach_back, easiest first (ADR 0010). Puzzle questions (predict-the-output, spot-the-bug) are cut: a model answers those unsupervised, so they prove no ownership. I pick my confidence first (guessing, think so, certain), then answer. Every answer grades against a rubric with quoted evidence; for blast_radius the sandbox first establishes what actually breaks, and the model judges whether my explanation matches. I see the reference behaviour plus a calibration reading.
 9. Summarize. A report of what I reviewed, what I proved, and what I waived.
 
 ## 4. What makes it different
@@ -171,7 +171,7 @@ In (core path), the nine things I'm building:
 3. Project-level learning. A project view built from stored tapes: how files connect, and what the agent changed across sessions.
 4. Visualizations. The interactive timeline, the file dependency map, and the attempt tree that separates dead ends from landed code.
 5. Evidence-based "why" with refusal. One Q&A path with retrieval, Muse Spark, citations, and a "not on the tape" refusal.
-6. Execution checks. Echo picks 3 to 5 changes and asks short questions (predict the output, spot the bug) on JavaScript and TypeScript hunks, graded in a sandbox.
+6. Execution checks. Echo picks 3 to 5 changes and asks ownership questions — consequence, decision, tradeoff, blast_radius, teach_back, easiest first — each graded against a rubric with quoted evidence. For blast_radius the sandbox establishes what actually breaks; the model judges the explanation. Puzzle questions are cut (ADR 0010): in this age a model answers them unsupervised, so they are not worth asking.
 7. Confidence calibration. I pick guessing, think so, or certain before answering. Catching a wrong-and-certain answer is the main job of the check half.
 8. Targeting what I skipped. The replay UI records which hunks I opened, and the checks go to the risky ones I didn't.
 9. Local secret redaction. Secrets are scrubbed before Echo stores anything and before any model request, with a masked preview and a disclosure about native-agent storage.
@@ -187,7 +187,7 @@ Cut line (drop in this order if time shrinks):
 1. Screenshot stream and optional terminal playback. Structured activity records plus file snapshots carry the demo.
 2. The file dependency map and the cross-session overlay on it. Keep the project and session lists and the per-session views.
 3. Reverse-motion polish in the replay UI. Keep scrub and diff.
-4. Spot-the-bug checks. Keep predict-the-output.
+4. Puzzle checks. Predict-the-output and spot-the-bug are cut entirely (ADR 0010) — models answer them unsupervised, so they prove no ownership. No warm-up round.
 5. Citation click-to-scrub. Keep inline citations as text.
 6. Mutation testing in the check gate. Keep "the reference answer passes twice."
 7. Second-agent fallback tapes/readers. Keep Muse Code only; documented paths for other agents are not core implementations.

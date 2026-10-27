@@ -1298,41 +1298,53 @@ The proof half exists to catch the answer the user is confident about and wrong 
 
 ### Check generation
 
-For each selected hunk, the model receives the redacted hunk, surrounding snippet, file path, imports/types summary and the instruction to produce a self-contained JavaScript/TypeScript exercise.
+For each selected hunk, the model receives the redacted hunk, surrounding snippet, file path, imports/types summary, the reverted attempts linked to it, and the instruction to produce one ownership question (ADR 0010).
 
-Supported types:
+Supported kinds, easiest first:
 
-- `predict_output` (core): a small snippet with a deterministic entrypoint; the user predicts the output.
-- `spot_bug` (cut-line item 4): a snippet with one defect and a small set of options or a line-selection answer; graded against a reference test.
+- `consequence`: what did this change cost or open up (concrete, local).
+- `decision`: why this approach over the reverted alternative (drawn from the attempt tree).
+- `tradeoff`: what price was accepted for this choice.
+- `blast_radius` (runnable): what breaks if this changes; a self-contained snippet plus the breakage to predict.
+- `teach_back`: explain it so a new teammate can act on it (hardest).
+
+Puzzle kinds (`predict_output`, `spot_bug`) are cut: a model answers them
+unsupervised, so they prove no ownership and are not worth asking.
 
 Proposed schema:
 
 ```json
 {
-  "kind": "predict_output",
-  "question": "What does this print?",
+  "kind": "blast_radius",
+  "question": "What breaks if the guard is removed?",
   "language": "typescript",
   "snippet": "function retry(...) { ... }\nconsole.log(retry(...))",
   "entrypoint": "main",
   "expected_stdout": "2\n",
   "explanation": "The second attempt succeeds.",
+  "rubric": ["names the retry path", "names the failure mode"],
+  "evidence_paths": ["src/retry.ts"],
   "confidence": 0.82
 }
 ```
 
-The snippet must be self-contained. If the hunk depends on repo modules, the generator may include a minimal stub or a bundled subset, but it must not pull in secrets, network calls or the whole repository. The default is snippet scope, not whole-repo execution.
+Open kinds (`consequence`, `decision`, `tradeoff`, `teach_back`) carry a
+rubric instead of a snippet and grade against it; they never get
+exact-match treatment. The default is snippet scope, not whole-repo
+execution: if the hunk depends on repo modules, the generator may include
+a minimal stub or a bundled subset, but it must not pull in secrets,
+network calls or the whole repository.
 
 ### Verification gate
 
 A check is shown only if it clears all of these:
 
-1. **Schema valid.** Parses against the check schema; language is JS/TS; size under the cap.
-2. **Static policy.** No `fs`, `net`, `http`, `https`, `child_process`, `worker_threads`, `process`, `eval`, dynamic import, or native addons. No unbounded loops that the timeout cannot stop. No `Date.now()`/`Math.random()` in a predict-output snippet unless the harness seeds or rejects nondeterminism.
-3. **Bundle.** esbuild bundles/compiles the snippet and harness to a single JS file. Compilation failure rejects the check.
-4. **Reference run twice.** Run the reference answer in the same sandbox backend twice. Require exit 0, identical normalized stdout, and completion within the timeout. If the two runs differ, reject.
-5. **Buggy baseline (spot-the-bug only).** The unpatched snippet must fail the reference test; the fixed snippet must pass.
-6. **Ambiguity review (optional).** A second structured model call asks whether a competent reviewer could defend a different answer. If yes, reject or rewrite. This is a quality gate, not a source of truth.
-7. **Record the evidence.** Store the backend, image digest, commands, stdout hashes, timings and gate version in `verification_json`.
+1. **Schema valid.** Parses against the check schema; language is JS/TS; size under the cap. Open kinds must carry a non-empty rubric.
+2. **Static policy (runnable checks).** No `fs`, `net`, `http`, `https`, `child_process`, `worker_threads`, `process`, `eval`, dynamic import, or native addons. No unbounded loops that the timeout cannot stop. No `Date.now()`/`Math.random()` in a `blast_radius` snippet unless the harness seeds or rejects nondeterminism.
+3. **Bundle (runnable checks).** esbuild bundles/compiles the snippet and harness to a single JS file. Compilation failure rejects the check.
+4. **Reference run twice (runnable checks).** Run the reference answer in the same sandbox backend twice. Require exit 0, identical normalized stdout, and completion within the timeout. If the two runs differ, reject.
+5. **Ambiguity review (open kinds).** A second structured model call asks whether a competent reviewer could defend a different answer. If yes, reject or rewrite. This is a quality gate, not a source of truth.
+6. **Record the evidence.** Store the backend, image digest, commands, stdout hashes, timings and gate version in `verification_json`.
 
 If the gate fails, regenerate once with the failure reason. If it fails again, drop the hunk and record a diagnostic. The check pass rate is reported as a measured number, with the denominator.
 
@@ -1376,7 +1388,7 @@ Additional rules:
 1. The user selects confidence before seeing the answer input: `guessing` (0.4), `think so` (0.7), `certain` (0.95).
 2. The user answers.
 3. The answer runs in the same backend/harness that verified the reference.
-4. Grading: normalized stdout equality for predict-output; option/line match plus reference test for spot-the-bug.
+4. Grading: every kind grades against its rubric — each point pass/fail with a quote from the answer, correct only if all points hit. For `blast_radius` the sandbox first establishes the ground truth (the demonstration must run twice with identical output); the model then judges whether the explanation matches it. No exact-match grading anywhere.
 5. Results: correct/incorrect, reference behavior, sandbox output, time, and calibration.
 6. Calibration:
    - Brier score per answer: `(p - outcome)^2`, where `outcome` is 1 for correct, 0 for incorrect.

@@ -21,7 +21,7 @@ One loop in two halves. The tape half explains what the agent did; the proof hal
 | Tape | Inspect | Hunks linked to actions and snapshots; requested edits vs observed effects vs uncertain mappings labeled |
 | Tape | Project view | JS/TS import graph + agent-touched overlay; attempt tree separating dead ends from landed code |
 | Proof | Ask | Evidence-grounded Q&A (Muse Spark): citations to the tape, or the refusal "not on the tape" |
-| Proof | Check | 3–5 risky hunks → predict-the-output / spot-the-bug, graded by execution in a sandbox |
+| Proof | Check | 3–5 risky hunks → ownership questions (consequence → teach_back), runnable ones graded by execution in a sandbox |
 | Proof | Calibrate | Confidence picked before answering; wrong-and-certain is the headline event |
 | Proof | Report | What I reviewed, proved, and waived |
 
@@ -175,7 +175,7 @@ Harness lives in `eval/`; outputs are JSON plus a Markdown summary with sample s
 1. Screenshot stream and terminal playback
 2. Dependency map + cross-session overlay
 3. Reverse-motion polish in replay
-4. Spot-the-bug checks (keep predict-the-output)
+4. Puzzle checks — cut entirely per ADR 0010, not kept as warm-up
 5. Citation click-to-scrub (keep inline citations)
 6. Mutation testing in the check gate
 7. Second-agent readers (`capture-opencode`)
