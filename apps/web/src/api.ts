@@ -1,4 +1,11 @@
-import type { ProjectSummary, SessionSummary, StoredEvent } from "@echo/contracts";
+import type {
+  ProjectSummary,
+  SessionSummary,
+  SnapshotFile,
+  SnapshotFileContent,
+  SnapshotSummary,
+  StoredEvent,
+} from "@echo/contracts";
 
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
@@ -16,6 +23,16 @@ export const api = {
     );
     return result.events;
   },
+  snapshots: (sessionId: string) =>
+    getJson<SnapshotSummary[]>(`/api/sessions/${encodeURIComponent(sessionId)}/snapshots`),
+  snapshotFiles: (sessionId: string, commit: string) =>
+    getJson<SnapshotFile[]>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/snapshots/${encodeURIComponent(commit)}/files`,
+    ),
+  fileContent: (sessionId: string, commit: string, path: string) =>
+    getJson<SnapshotFileContent>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/snapshots/${encodeURIComponent(commit)}/blob?path=${encodeURIComponent(path)}`,
+    ),
 };
 
 export function summarizePayload(event: StoredEvent): string {
