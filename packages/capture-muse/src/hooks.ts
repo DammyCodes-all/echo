@@ -109,15 +109,22 @@ export interface HookTranslateResult {
 }
 
 // Pure and fast by design: no I/O, bounded previews, exit-0 caller contract.
-// Anything unattributable or unredactable is dropped with a diagnostic.
+// Anything unattributable or unredactable is dropped with a diagnostic, but
+// the identifiers parsed so far travel along so the spool layer can file the
+// diagnostic instead of losing it.
 export function translateMuseHook(input: HookTranslateInput): HookTranslateResult {
   const diagnostics: string[] = [];
+  const record = isRecord(input.payload) ? input.payload : {};
+  const sessionId = firstString(record, ["session_id", "sessionId"]);
+  const cwd = firstString(record, ["cwd", "working_directory", "workingDirectory", "directory"]);
+  const toolName = firstString(record, ["tool_name", "toolName", "name"]);
+  const projectRoot = resolveHookProject(cwd, input.projects);
   const fail = (diagnostic: string): HookTranslateResult => ({
     dropped: true,
     kind: null,
-    sessionId: null,
-    projectRoot: null,
-    toolName: null,
+    sessionId,
+    projectRoot,
+    toolName,
     redactedPayload: null,
     findings: 0,
     diagnostics: [diagnostic],
@@ -127,11 +134,6 @@ export function translateMuseHook(input: HookTranslateInput): HookTranslateResul
     return fail("unknown_hook_event");
   }
   const kind = KIND_BY_HOOK[input.event as MuseHookName];
-  const record = isRecord(input.payload) ? input.payload : {};
-  const sessionId = firstString(record, ["session_id", "sessionId"]);
-  const cwd = firstString(record, ["cwd", "working_directory", "workingDirectory", "directory"]);
-  const toolName = firstString(record, ["tool_name", "toolName", "name"]);
-  const projectRoot = resolveHookProject(cwd, input.projects);
   if (!projectRoot) return fail("unattributed_project");
 
   const { value: preview, truncated } = boundPreview(input.payload);
