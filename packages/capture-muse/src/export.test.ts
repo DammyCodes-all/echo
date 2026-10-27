@@ -25,23 +25,14 @@ describe("parseExportDocument", () => {
 });
 
 describe("reconcileExport", () => {
-  it("splits added, merged and conflicting keys without inventing content", () => {
-    const result = reconcileExport(
-      new Map([
-        ["s1:3", "same"],
-        ["s1:4", "live Revisions"],
-      ]),
-      [
-        { key: "s1:3", hash: "same", raw: {} },
-        { key: "s1:4", hash: "export Revisions", raw: {} },
-        { key: "s1:9", hash: "new", raw: {} },
-      ],
-    );
-    expect(result.mergedKeys).toEqual(["s1:3"]);
-    expect(result.addedKeys).toEqual(["s1:9"]);
-    expect(result.conflicts).toEqual([
-      { key: "s1:4", liveHash: "live Revisions", exportHash: "export Revisions" },
+  it("merges on shared keys and surfaces export-only keys without inventing content", () => {
+    const result = reconcileExport(new Set(["s1:3", "s1:4"]), [
+      { key: "s1:3", hash: "anything", raw: {} },
+      { key: "s1:4", hash: "anything-else", raw: {} },
+      { key: "s1:9", hash: "new", raw: {} },
     ]);
+    expect(result.mergedKeys).toEqual(["s1:3", "s1:4"]);
+    expect(result.addedKeys).toEqual(["s1:9"]);
   });
 });
 
