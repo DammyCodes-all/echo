@@ -447,3 +447,104 @@ describe("createMuseIngest export reconciliation", () => {
     db.close();
   });
 });
+
+describe("createMuseIngest missing child logs", () => {
+  function wsLine(seq: number, sessionId: string, workspaceRoot: string): string {
+    return JSON.stringify({
+      schema_version: 1,
+      id: `id-${seq}`,
+      stream: { kind: "session", id: sessionId },
+      sequence: seq,
+      recorded_at: 1793097343000000 + seq * 1000,
+      record_type: "event",
+      durability: "durable",
+      causation_id: null,
+      payload_type: "runtime.user_intent.accepted",
+      payload_schema_version: 1,
+      payload: { kind: "accepted", metadata: { workspace_root: workspaceRoot } },
+    });
+  }
+
+  function linkLine(seq: number, sessionId: string, childId: string): string {
+    return JSON.stringify({
+      schema_version: 1,
+      id: `link-${seq}`,
+      stream: { kind: "session", id: sessionId },
+      sequence: seq,
+      recorded_at: 1793097343000000 + seq * 1000,
+      record_type: "event",
+      durability: "durable",
+      causation_id: null,
+      payload_type: "runtime.session",
+      payload_schema_version: 1,
+      payload: {
+        kind: "memory_reminder_child_session_linked",
+        child_session_id: childId,
+        parent_session_id: sessionId,
+      },
+    });
+  }
+
+  function childLine(streamId: string, seq: number, id: string): string {
+    return JSON.stringify({
+      schema_version: 1,
+      id,
+      stream: { kind: "session", id: streamId },
+      sequence: seq,
+      recorded_at: 1793097343000000 + seq * 1000,
+      record_type: "event",
+      durability: "durable",
+      causation_id: null,
+      payload_type: "runtime.session",
+      payload_schema_version: 1,
+      payload: { kind: "completed", task_id: "t9" },
+    });
+  }
+
+  function gapEvents(tapePath: string): Array<{ kind: string; payload: unknown; links: unknown }> {
+    const tape = readFileSync(tapePath, "utf8");
+    return tape
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line) as { kind: string; payload: unknown; links: unknown })
+      .filter((event) => event.kind === "capture.gap");
+  }
+
+  it("writes a capture.gap for a referenced child with no log, but not for a present one", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-gapchild-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-gapchild-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-gapchild-proj-"));
+    const dir = join(sessionsDir, "2026", "10", "28", "ses_gap");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, "session.jsonl"),
+      `${[
+        wsLine(3, "ses_gap", projectRoot),
+        linkLine(4, "ses_gap", "child-9"),
+        linkLine(5, "ses_gap", "child-1"),
+      ].join("\n")}\n`,
+    );
+    const presentDir = join(dir, "subagent", "child-1");
+    mkdirSync(presentDir, { recursive: true });
+    writeFileSync(join(presentDir, "session.jsonl"), `${childLine("child-1", 3, "c1")}\n`);
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    const result = await ingest.runOnce();
+    expect(result.capturedSessions).toBe(1);
+    const tapePath = join(
+      dataDir,
+      "projects",
+      projectIdForDirectory(projectRoot),
+      "sessions",
+      "ses_gap",
+      "tape.jsonl",
+    );
+    const gaps = gapEvents(tapePath);
+    expect(gaps).toHaveLength(1);
+    expect(gaps[0]).toMatchObject({
+      payload: { code: "missing_child", subagent_id: "child-9" },
+    });
+    expect(gaps[0]?.links).toMatchObject({ subagent_id: "child-9", parent_session_id: "ses_gap" });
+    db.close();
+  });
+});
