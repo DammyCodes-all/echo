@@ -1,5 +1,10 @@
 export type { ExportRecord, ExportRunResult, ParsedExport, ReconcileResult } from "./export";
-export { parseExportDocument, reconcileExport, runRedactedExport } from "./export";
+export {
+  classifyExportFailure,
+  parseExportDocument,
+  reconcileExport,
+  runRedactedExport,
+} from "./export";
 export type { FinalizeInput, FinalizeResult } from "./finalize";
 export { finalizeMuseSession } from "./finalize";
 export type { HookTranslateInput, HookTranslateResult, MuseHookName } from "./hooks";
