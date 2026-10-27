@@ -1,0 +1,32 @@
+{
+  "name": "@echo/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "echo-daemon": "dist/index.js"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsup",
+    "start": "node dist/index.js"
+  },
+  "dependencies": {
+    "@echo/capture": "workspace:*",
+    "@echo/capture-muse": "workspace:*",
+    "@echo/checks": "workspace:*",
+    "@echo/config": "workspace:*",
+    "@echo/contracts": "workspace:*",
+    "@echo/core": "workspace:*",
+    "@echo/db": "workspace:*",
+    "@echo/graph": "workspace:*",
+    "@echo/model": "workspace:*",
+    "@echo/notifier": "workspace:*",
+    "@echo/redaction": "workspace:*",
+    "@echo/retrieval": "workspace:*",
+    "@echo/sandbox": "workspace:*",
+    "@echo/snapshots": "workspace:*",
+    "@echo/tape": "workspace:*",
+    "fastify": "^5.12.7"
+  }
+}
