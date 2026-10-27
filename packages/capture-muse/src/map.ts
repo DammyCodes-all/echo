@@ -31,7 +31,7 @@ export function emptyLinks(): TapeLinks {
   };
 }
 
-function isoFromUs(microseconds: number | null): string | null {
+export function isoFromUs(microseconds: number | null): string | null {
   if (microseconds === null) return null;
   return new Date(Math.floor(microseconds / 1000)).toISOString();
 }
@@ -201,6 +201,37 @@ export interface TapeEventInput extends PushInput {
 // Single construction site for Muse-derived tape events: redact at the
 // boundary, hash the redacted content for a stable id, validate the envelope.
 // Shared by the live mapper and export recovery so both produce identical shapes.
+// Encrypted payloads are opaque by design and must never reach the tape
+// (observed as "encrypted_content" alongside readable "text"; field names
+// vary by build, so match loosely — over-stripping is acceptable because
+// every removal is recorded in diagnostics below).
+function stripEncryptedFields(value: unknown): { cleaned: unknown; removed: boolean } {
+  if (Array.isArray(value)) {
+    let removed = false;
+    const cleaned = value.map((entry) => {
+      const stripped = stripEncryptedFields(entry);
+      removed = removed || stripped.removed;
+      return stripped.cleaned;
+    });
+    return { cleaned, removed };
+  }
+  if (value !== null && typeof value === "object") {
+    let removed = false;
+    const cleaned: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(value)) {
+      if (/encrypt/i.test(key)) {
+        removed = true;
+        continue;
+      }
+      const stripped = stripEncryptedFields(entry);
+      removed = removed || stripped.removed;
+      cleaned[key] = stripped.cleaned;
+    }
+    return { cleaned, removed };
+  }
+  return { cleaned: value, removed: false };
+}
+
 export function buildTapeEvent(input: TapeEventInput): {
   event: TapeEvent;
   redactionFailed: boolean;
@@ -208,9 +239,12 @@ export function buildTapeEvent(input: TapeEventInput): {
   let payload: unknown = input.payload;
   let findings = 0;
   const diagnostics = [...(input.diagnostics ?? [])];
+  const stripped = stripEncryptedFields(payload);
+  if (stripped.removed) diagnostics.push("encrypted_content_removed");
+  payload = stripped.cleaned;
   let redactionFailed = false;
   try {
-    const redacted = redactJson(input.payload);
+    const redacted = redactJson(payload);
     payload = redacted.value;
     findings = redacted.findings.length;
   } catch {

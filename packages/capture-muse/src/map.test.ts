@@ -154,4 +154,39 @@ describe("mapMuseToTape", () => {
     expect(result.events[0]?.diagnostics).toContain("missing_source_timestamp");
     expect(result.quality).toBe("partial");
   });
+
+  it("strips encrypted payloads but keeps readable reasoning text", () => {
+    const parsed = parseMuseLines([
+      envelope(3, "id-3", "runtime.session", {
+        kind: "reasoning_committed",
+        message_id: "m1",
+        text: "I will read the file first",
+        encrypted_content: "opaque-bytes-that-must-not-land",
+        nested: { inner: "keep me", encrypted_blob: "more-opaque-bytes" },
+      }),
+    ]);
+    const result = mapMuseToTape(parsed.events, parsed.markers, parsed.invalidLines, CTX);
+    const raw = JSON.stringify(result.events);
+    expect(raw).toContain("I will read the file first");
+    expect(raw).toContain("keep me");
+    expect(raw).not.toContain("opaque-bytes-that-must-not-land");
+    expect(raw).not.toContain("more-opaque-bytes");
+    // No "encrypted_*": <key> pairs may survive anywhere in the event.
+    expect(raw).not.toContain('"encrypted_content":');
+    expect(raw).not.toContain('"encrypted_blob":');
+    expect(result.events[0]?.diagnostics).toContain("encrypted_content_removed");
+  });
+
+  it("adds no stripping diagnostic when nothing is encrypted", () => {
+    const parsed = parseMuseLines([
+      envelope(3, "id-3", "runtime.session", {
+        kind: "reasoning_committed",
+        message_id: "m1",
+        text: "plain reasoning",
+      }),
+    ]);
+    const result = mapMuseToTape(parsed.events, parsed.markers, parsed.invalidLines, CTX);
+    expect(result.events).toHaveLength(1);
+    expect(result.events[0]?.diagnostics).not.toContain("encrypted_content_removed");
+  });
 });
