@@ -37,11 +37,12 @@ mkdirSync(paths.dataDir, { recursive: true });
 const db = openEchoDb(join(paths.dataDir, "echo.sqlite"));
 const app = Fastify({ logger: true });
 const ingest = createIngest({ dataDir: paths.dataDir, db, log: app.log });
+const config = loadEchoConfig();
 const museIngest = createMuseIngest({
   dataDir: paths.dataDir,
   db,
   log: app.log,
-  projects: loadEchoConfig().projects,
+  projects: config.projects,
 });
 
 app.get("/api/health", async () => ({
@@ -141,7 +142,7 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 try {
   await app.listen({ host: HOST, port: resolvePort() });
   ingest.start();
-  museIngest.start(loadEchoConfig().poll_interval_ms);
+  museIngest.start(config.poll_interval_ms);
   const initial = await ingest.runOnce();
   if (initial.eventsAdded > 0) {
     app.log.info({ ...initial }, "ingested opencode sessions");

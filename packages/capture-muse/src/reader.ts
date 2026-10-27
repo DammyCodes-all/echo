@@ -17,6 +17,10 @@ export interface ParsedMuseEvent {
 export interface ParsedMuseMarker {
   stream: MuseStream;
   omissionClass: string | null;
+  // Last event sequence seen in file order before this marker. Lets gap
+  // detection tell marker-adjacent jumps (checkpoint trimming) apart from
+  // genuine loss elsewhere in the stream.
+  afterSequence: number | null;
   raw: unknown;
 }
 
@@ -39,7 +43,10 @@ function asStream(value: unknown): MuseStream | null {
 }
 
 // Marker lines carry omission evidence, never a sequence number.
-function tryParseMarker(parsed: Record<string, unknown>): ParsedMuseMarker | null {
+function tryParseMarker(
+  parsed: Record<string, unknown>,
+  afterSequence: number | null,
+): ParsedMuseMarker | null {
   if (!("retained_marker" in parsed || "omitted_record" in parsed || "omission_class" in parsed)) {
     return null;
   }
@@ -51,7 +58,7 @@ function tryParseMarker(parsed: Record<string, unknown>): ParsedMuseMarker | nul
       : isRecord(parsed.omitted_record) && typeof parsed.omitted_record.omission_class === "string"
         ? parsed.omitted_record.omission_class
         : null;
-  return { stream, omissionClass, raw: parsed };
+  return { stream, omissionClass, afterSequence, raw: parsed };
 }
 
 function tryParseEvent(parsed: Record<string, unknown>): ParsedMuseEvent | null {
@@ -81,6 +88,7 @@ export function parseMuseLines(lines: string[]): ParseResult {
     invalidLines: 0,
     truncatedTail: false,
   };
+  let lastSequence: number | null = null;
   for (const line of lines) {
     if (line === "") continue;
     let parsed: unknown;
@@ -99,7 +107,7 @@ export function parseMuseLines(lines: string[]): ParseResult {
       result.headerFrames++;
       continue;
     }
-    const marker = tryParseMarker(parsed);
+    const marker = tryParseMarker(parsed, lastSequence);
     if (marker) {
       result.markers.push(marker);
       continue;
@@ -110,6 +118,7 @@ export function parseMuseLines(lines: string[]): ParseResult {
       continue;
     }
     result.events.push(event);
+    lastSequence = event.sequence;
   }
   result.events.sort((a, b) => a.sequence - b.sequence);
   return result;
@@ -140,17 +149,26 @@ export interface SequenceGap {
   toSequence: number;
 }
 
-// Marker-adjacent jumps are compaction (expected trimming), not gaps.
-// Only marker-less jumps are returned here.
-export function detectSequenceGaps(sequences: number[], markerCount: number): SequenceGap[] {
+// A jump is compaction only when a marker sits between its endpoints in file
+// order; any other jump is a genuine gap. Markers before the first event
+// (afterSequence null) explain nothing.
+export function detectSequenceGaps(
+  sequences: number[],
+  markers: ParsedMuseMarker[],
+): SequenceGap[] {
   const gaps: SequenceGap[] = [];
-  if (markerCount > 0) return gaps;
   const sorted = [...new Set(sequences)].sort((a, b) => a - b);
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
     const curr = sorted[i];
-    if (prev === undefined || curr === undefined) continue;
-    if (curr > prev + 1) gaps.push({ fromSequence: prev, toSequence: curr });
+    if (prev === undefined || curr === undefined || curr <= prev + 1) continue;
+    const explained = markers.some(
+      (marker) =>
+        marker.afterSequence !== null &&
+        marker.afterSequence >= prev &&
+        marker.afterSequence < curr,
+    );
+    if (!explained) gaps.push({ fromSequence: prev, toSequence: curr });
   }
   return gaps;
 }

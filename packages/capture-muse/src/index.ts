@@ -4,8 +4,8 @@ export type { FinalizeInput, FinalizeResult } from "./finalize";
 export { finalizeMuseSession } from "./finalize";
 export type { HookTranslateInput, HookTranslateResult, MuseHookName } from "./hooks";
 export { MUSE_HOOK_EVENTS, resolveHookProject, translateMuseHook } from "./hooks";
-export type { MuseMapContext, MuseMapResult } from "./map";
-export { ADAPTER_SCHEMA, ADAPTER_VERSION, mapMuseToTape } from "./map";
+export type { MuseMapContext, MuseMapResult, TapeEventInput } from "./map";
+export { ADAPTER_SCHEMA, ADAPTER_VERSION, buildTapeEvent, emptyLinks, mapMuseToTape } from "./map";
 export type {
   MuseStream,
   ParsedMuseEvent,
