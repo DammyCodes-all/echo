@@ -56,23 +56,36 @@ Actions: primary `bg #8C9BFF color #12121F`, secondary `bg #26264A color
 
 ## 4. Tokens
 
-Code source: `apps/web/src/design-tokens.ts` (`duskDarkTokens`). CSS
-variables in `apps/web/src/styles.css` under `@theme` (`--color-dusk-*`,
-`--font-sans`, `--font-mono`).
+Canonical source: `apps/web/src/styles.css` (`@theme`). It holds every visual
+token — all `--color-dusk-*`, `--font-sans/mono`, `--radius-dusk-*`
+(card 28, swatch 14, code 10, uncertainty 22, pill 999) and
+`--shadow-dusk-*` (node glow, fill glow). No component or stylesheet outside
+`@theme` introduces its own colors, radii or shadows.
+`apps/web/src/design-tokens.ts` (`duskDarkTokens`) is a typed mirror for JS
+use only (canvas, d3 attempt tree, charts); nothing in `web` imports other
+packages' styles, and no `zinc/amber/red/cyan/emerald/violet/sky` utilities
+remain in `apps/web/src`.
 
 Palette: `#12121F` base · `#1C1C30` surface · `#2A2A4C` pill ·
-`#26264A` secondary · `#26263F` track · `#EEEEFA` ink · `#A6A6C4` muted ·
-`#8C9BFF` accent · `#C9CEFF` accent-soft text · `#FFB38A` peach (swatch-only
-for now) · `#6FD99A` pass · `#FF8A8A` fail · `#8A8AB0` dead end ·
-`#2E2E4A` rail · `#3E3E5C` dashed border.
+`#26264A` secondary · `#26263F` track · `#2E2E4A` rail · `#3E3E5C` faint ·
+`#8A8AB0` dead end · `#EEEEFA` ink · `#A6A6C4` muted · `#8C9BFF` accent ·
+`#C9CEFF` accent-soft · `rgba(140,155,255,0.14)` accent wash ·
+`#FFB38A` peach + wash · `#6FD99A` pass + wash · `#FF8A8A` fail + wash ·
+`rgba(255,255,255,0.06/0.12)` hairlines. Hairline utilities
+(`border-dusk-hairline`, `border-dusk-hairline-strong`) carry the border color;
+width/style stay structural Tailwind (`border`, `border-dashed`).
 
 Type: `Plus Jakarta Sans 400/500/600` UI, `JetBrains Mono 400/500` code.
-Eyebrow `13px ls 0.14em #A6A6C4`; display `46/1.1 500 ls -0.02em`; card title
-`28 500 ls -0.01em`; body `17/1.45`; answer `19/1.45 500`; question `15px`;
-meta `14px`; caption `11px` (palette labels).
+Sizes and tracking also live in `@theme` (`--text-dusk-*`,
+`--tracking-dusk-*`): eyebrow `13px ls 0.14em`; display `46/1.1 ls -0.02em`;
+card title `28/1.2 ls -0.01em`; body `17/1.45`; answer `19/1.45`;
+meta `14px`. Cards use the card-title size with `font-medium`; components use
+the `text-dusk-*` / `tracking-dusk-*` utilities, not one-off values.
 
-Shape: card `28`, swatch `46px h / 14`, code `10`, uncertainty `22`, pill
-`999`. Page `36` padding, stack `20` gap.
+One necessary exception: the diff viewer passes `theme: "pierre-dark"` to
+`@pierre/diffs` for code syntax highlighting (third-party prop, not an Echo
+theme). Selected-hunk outline and all surrounding chrome are Dusk tokens
+(`outline-dusk-accent`). A custom Shiki theme in Dusk hues replaces it later.
 
 Do not invent new accent colors. Peach stays reserved until a real highlight
 use lands. Status colors never carry body copy.
