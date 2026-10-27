@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@echo/contracts": "workspace:*",
+    "@pierre/diffs": "^1.6.1",
     "@tanstack/react-query": "^5.90.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
