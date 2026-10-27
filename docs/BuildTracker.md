@@ -69,3 +69,10 @@ notes.
 - status: blocked
 - evidence: none yet — inputs not in hand
 - notes: Blocks spec item 2 and everything downstream of real capture (export reconciliation, demo tape). Synthetic fixtures stand in until it lands.
+
+## 2026-10-28 — Ownership checks replace puzzle checks
+
+- item: ADR 0010; checks package kinds; spec §3/§7, plan, ARCHITECTURE §check-design
+- status: done
+- evidence: `pnpm exec vitest run packages/checks` → 9 passed; `tsc`, `biome` clean
+- notes: Both puzzle kinds cut with no warm-up round — models answer them unsupervised, so they prove no ownership (new age, new bar). Five kinds ramp consequence → decision → tradeoff → blast_radius → teach_back. Exact grading for runnable only; rubric kinds grade against a rubric, never exact-matched. Attempt tree promoted to primary question source.
