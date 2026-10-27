@@ -18,6 +18,7 @@ export interface FinalizeResult {
   events: TapeEvent[];
   quality: CaptureQuality;
   diagnostics: string[];
+  reconciled: { added: number; merged: number; schemaVersion: number | null } | null;
 }
 
 // Pure composition of reader + map + export reconciliation.
@@ -63,6 +64,7 @@ export function finalizeMuseSession(input: FinalizeInput): FinalizeResult {
   });
   const events = [...mapped.events];
   let quality = mapped.quality;
+  let reconciled: FinalizeResult["reconciled"] = null;
 
   if (input.exportDoc !== undefined) {
     const parsed = parseExportDocument(input.exportDoc);
@@ -71,9 +73,14 @@ export function finalizeMuseSession(input: FinalizeInput): FinalizeResult {
     for (const record of [...live.events, ...childEvents]) {
       liveKeys.add(`${record.stream.id}:${record.sequence}`);
     }
-    const reconciled = reconcileExport(liveKeys, parsed.records);
+    const merged = reconcileExport(liveKeys, parsed.records);
+    reconciled = {
+      added: merged.addedKeys.length,
+      merged: merged.mergedKeys.length,
+      schemaVersion: parsed.schemaVersion,
+    };
     const byKey = new Map(parsed.records.map((record) => [record.key, record]));
-    for (const key of reconciled.addedKeys) {
+    for (const key of merged.addedKeys) {
       const record = byKey.get(key);
       if (!record) continue;
       const { event } = buildTapeEvent({
@@ -97,11 +104,11 @@ export function finalizeMuseSession(input: FinalizeInput): FinalizeResult {
       events.push(event);
     }
     diagnostics.push(
-      `export_reconciled:added=${reconciled.addedKeys.length}:merged=${reconciled.mergedKeys.length}`,
+      `export_reconciled:added=${merged.addedKeys.length}:merged=${merged.mergedKeys.length}`,
     );
-    if (reconciled.addedKeys.length > 0) quality = "partial";
+    if (merged.addedKeys.length > 0) quality = "partial";
   }
 
   if (diagnostics.length > 0 && quality === "full") quality = "partial";
-  return { events, quality, diagnostics };
+  return { events, quality, diagnostics, reconciled };
 }

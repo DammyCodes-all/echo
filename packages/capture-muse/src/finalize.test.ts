@@ -86,4 +86,32 @@ describe("finalizeMuseSession", () => {
     expect(recovered[0]?.source.origin).toBe("export");
     expect(recovered[0]?.diagnostics).toContain("export_recovery");
   });
+
+  it("reports the reconcile summary for the daemon marker", () => {
+    const liveContent = [
+      envelope(3, "id-3", "runtime.user_intent.accepted", { kind: "accepted" }),
+    ].join("\n");
+    const withoutExport = finalizeMuseSession({
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      liveContent: `${liveContent}\n`,
+    });
+    expect(withoutExport.reconciled).toBeNull();
+    const withExport = finalizeMuseSession({
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      liveContent: `${liveContent}\n`,
+      exportDoc: {
+        export_schema_version: 1,
+        events: [
+          { kind: "record", envelope: { stream: { id: "ses_parent" }, sequence: 3 } },
+          { kind: "record", envelope: { stream: { id: "ses_parent" }, sequence: 9 } },
+        ],
+        diagnostics: [],
+      },
+    });
+    expect(withExport.reconciled).toEqual({ added: 1, merged: 1, schemaVersion: 1 });
+  });
 });
