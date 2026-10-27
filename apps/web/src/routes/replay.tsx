@@ -29,6 +29,9 @@ export function ReplayPage() {
   });
   const [hunks, setHunks] = useState<HunkEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  // Scrub position: the event time the file-state panel shows. Null follows
+  // the latest snapshot.
+  const [scrubTs, setScrubTs] = useState<string | null>(null);
   const onHunks = useCallback((path: string, fileHunks: Hunk[]) => {
     setHunks((previous) => [
       ...previous.filter((hunk) => hunk.path !== path),
@@ -55,6 +58,15 @@ export function ReplayPage() {
             <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Timeline</p>
             <span className="font-mono text-[10px] text-dusk-muted">
               {events.data?.length ?? 0} events
+              {scrubTs !== null ? (
+                <button
+                  type="button"
+                  onClick={() => setScrubTs(null)}
+                  className="ml-2 rounded-dusk-code bg-dusk-pill px-1.5 py-0.5 text-dusk-accent-soft"
+                >
+                  scrubbed · clear
+                </button>
+              ) : null}
             </span>
           </div>
           {events.isPending ? <p className="p-6 text-sm text-dusk-muted">Loading tape…</p> : null}
@@ -66,21 +78,27 @@ export function ReplayPage() {
           ) : null}
           <ol className="max-h-[560px] divide-y divide-dusk-hairline overflow-auto">
             {events.data?.map((event) => (
-              <li
-                key={event.record_key ?? event.event_id}
-                className="flex items-start gap-3 px-6 py-3 text-sm"
-              >
-                <span className="w-8 shrink-0 pt-0.5 text-right font-mono text-[10px] text-dusk-muted">
-                  {event.position_seq}
-                </span>
-                <span
-                  className={`shrink-0 rounded-dusk-code px-1.5 py-0.5 font-mono text-[10px] ${kindClass(event.kind)}`}
+              <li key={event.record_key ?? event.event_id}>
+                <button
+                  type="button"
+                  title="Scrub file state to this moment"
+                  onClick={() => setScrubTs(event.ts)}
+                  className={`flex w-full items-start gap-3 px-6 py-3 text-left text-sm ${
+                    scrubTs === event.ts ? "bg-dusk-pill" : "hover:bg-dusk-pill/60"
+                  }`}
                 >
-                  {event.kind}
-                </span>
-                <span className="min-w-0 flex-1 break-words pt-0.5 text-dusk-ink">
-                  {summarizePayload(event)}
-                </span>
+                  <span className="w-8 shrink-0 pt-0.5 text-right font-mono text-[10px] text-dusk-muted">
+                    {event.position_seq}
+                  </span>
+                  <span
+                    className={`shrink-0 rounded-dusk-code px-1.5 py-0.5 font-mono text-[10px] ${kindClass(event.kind)}`}
+                  >
+                    {event.kind}
+                  </span>
+                  <span className="min-w-0 flex-1 break-words pt-0.5 text-dusk-ink">
+                    {summarizePayload(event)}
+                  </span>
+                </button>
               </li>
             ))}
           </ol>
@@ -91,10 +109,11 @@ export function ReplayPage() {
             events={events.data ?? []}
             selectedPath={selectedPath}
             onSelect={setSelectedPath}
+            sessionId={sessionId}
           />
         </div>
       </div>
-      <FileStatePanel sessionId={sessionId} />
+      <FileStatePanel sessionId={sessionId} asOfTs={scrubTs} />
       <DiffPanel
         sessionId={sessionId}
         selectedPath={selectedPath}

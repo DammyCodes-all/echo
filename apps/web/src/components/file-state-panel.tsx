@@ -6,7 +6,14 @@ function shortOid(commitOid: string): string {
   return commitOid.slice(0, 8);
 }
 
-export function FileStatePanel({ sessionId }: { sessionId: string }) {
+export function FileStatePanel({
+  sessionId,
+  asOfTs = null,
+}: {
+  sessionId: string;
+  /** Scrub position: show the latest snapshot at or before this time. */
+  asOfTs?: string | null;
+}) {
   const [commit, setCommit] = useState<string | null>(null);
   const [path, setPath] = useState<string | null>(null);
 
@@ -14,7 +21,14 @@ export function FileStatePanel({ sessionId }: { sessionId: string }) {
     queryKey: ["snapshots", sessionId],
     queryFn: () => api.snapshots(sessionId),
   });
-  const activeCommit = commit ?? snapshots.data?.at(-1)?.commitOid ?? null;
+  // Manual selection wins; otherwise the scrub position resolves to the
+  // nearest snapshot at or before it, else the latest snapshot.
+  const scrubbedCommit =
+    asOfTs !== null
+      ? ([...(snapshots.data ?? [])].filter((snapshot) => snapshot.takenAt <= asOfTs).at(-1)
+          ?.commitOid ?? null)
+      : null;
+  const activeCommit = commit ?? scrubbedCommit ?? snapshots.data?.at(-1)?.commitOid ?? null;
 
   const files = useQuery({
     queryKey: ["snapshot-files", sessionId, activeCommit],
