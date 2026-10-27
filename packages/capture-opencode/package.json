@@ -1,0 +1,18 @@
+{
+  "name": "@echo/capture-opencode",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@echo/capture": "workspace:*",
+    "@echo/contracts": "workspace:*",
+    "@echo/core": "workspace:*",
+    "@echo/db": "workspace:*",
+    "@echo/redaction": "workspace:*",
+    "@echo/snapshots": "workspace:*",
+    "@echo/tape": "workspace:*"
+  }
+}
