@@ -59,29 +59,21 @@ export function parseExportDocument(doc: unknown): ParsedExport {
 export interface ReconcileResult {
   addedKeys: string[];
   mergedKeys: string[];
-  conflicts: Array<{ key: string; liveHash: string; exportHash: string }>;
 }
 
-// Key-level merge only: live wins content, export wins completeness.
-// Callers convert added/conflicting records; this function never invents content.
-export function reconcileExport(
-  live: Map<string, string>,
-  exported: ExportRecord[],
-): ReconcileResult {
+// Key-level merge only: a shared key means the live tape already holds the
+// record, so the export copy is redundant. Content comparison is deliberately
+// absent: live lines and export frames never share a hash domain (native
+// envelope UUIDs vs sha256 of reframed entries), so byte equality here would
+// always read as conflict.
+export function reconcileExport(liveKeys: Set<string>, exported: ExportRecord[]): ReconcileResult {
   const addedKeys: string[] = [];
   const mergedKeys: string[] = [];
-  const conflicts: ReconcileResult["conflicts"] = [];
   for (const record of exported) {
-    const liveHash = live.get(record.key);
-    if (liveHash === undefined) {
-      addedKeys.push(record.key);
-    } else if (liveHash === record.hash) {
-      mergedKeys.push(record.key);
-    } else {
-      conflicts.push({ key: record.key, liveHash, exportHash: record.hash });
-    }
+    if (liveKeys.has(record.key)) mergedKeys.push(record.key);
+    else addedKeys.push(record.key);
   }
-  return { addedKeys, mergedKeys, conflicts };
+  return { addedKeys, mergedKeys };
 }
 
 export type ExportRunResult =

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { isAbsolute, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import type { TapeEventKind } from "@echo/contracts";
 import { redactJson } from "@echo/redaction";
 
@@ -68,15 +68,9 @@ export function resolveHookProject(cwd: string | null, projects: string[]): stri
   const normalized = resolve(cwd);
   for (const project of projects) {
     const root = resolve(project);
+    // resolve() normalizes separators and trailing slashes, so a prefix
+    // check suffices on the supported Linux/macOS targets.
     if (normalized === root || normalized.startsWith(`${root}/`)) return root;
-    // Windows drive-letter roots resolve with backslashes; compare relatively.
-    if (
-      isAbsolute(root) &&
-      relative(root, normalized) !== "" &&
-      !relative(root, normalized).startsWith("..")
-    ) {
-      return root;
-    }
   }
   return null;
 }
