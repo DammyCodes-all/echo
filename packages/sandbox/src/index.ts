@@ -14,7 +14,7 @@ import { runWasm } from "./wasm";
 export { runBwrap } from "./bwrap";
 export { CONTAINER_IMAGE, runContainer } from "./container";
 export { detectBackends, refreshBackends } from "./detect";
-export { runWasm, WASM_ENGINE_HINT } from "./wasm";
+export { runWasm } from "./wasm";
 export type { BackendInfo, BackendName, RunRequest, RunResult };
 export { normalizeStdout, resolveLimits };
 

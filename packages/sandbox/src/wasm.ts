@@ -2,9 +2,6 @@ import type { QuickJSContext, QuickJSHandle, QuickJSWASMModule } from "quickjs-e
 import { getQuickJS } from "quickjs-emscripten";
 import { type BackendInfo, type RunRequest, type RunResult, resolveLimits } from "./types";
 
-export const WASM_ENGINE_HINT =
-  "install a QuickJS WASM engine (e.g. quickjs-emscripten), then wire runWasm in packages/sandbox/src/wasm.ts";
-
 let modulePromise: Promise<QuickJSWASMModule> | null = null;
 
 function loadModule(): Promise<QuickJSWASMModule> {
@@ -133,6 +130,10 @@ export async function runWasm(request: RunRequest): Promise<RunResult> {
       owned.push(consoleHandle);
       context.setProp(consoleHandle, "log", logHandle);
       context.setProp(consoleHandle, "error", errorHandle);
+      // Backend parity with Node: info goes to stdout, warn/debug to stderr.
+      context.setProp(consoleHandle, "info", logHandle);
+      context.setProp(consoleHandle, "warn", errorHandle);
+      context.setProp(consoleHandle, "debug", errorHandle);
       context.setProp(context.global, "console", consoleHandle);
 
       const evaluated = context.evalCode(request.code, "main.mjs");

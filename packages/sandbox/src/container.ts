@@ -13,7 +13,8 @@ function succeeded(cmd: string, args: string[], timeoutMs: number): boolean {
   }
 }
 
-function firstLine(output: Buffer | string): string {
+function firstLine(output: Buffer | string | null | undefined): string {
+  if (output === null || output === undefined) return "";
   return output.toString("utf8").trim().split("\n")[0] ?? "";
 }
 
