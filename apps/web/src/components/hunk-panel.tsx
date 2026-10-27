@@ -54,17 +54,17 @@ export function HunkPanel({
   return (
     <section
       aria-label="Hunk inspector"
-      className="rounded-xl border border-zinc-800 bg-zinc-900/30"
+      className="overflow-hidden rounded-dusk-card bg-dusk-surface"
     >
-      <div className="border-b border-zinc-800 px-4 py-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-zinc-500">
+      <div className="border-b border-dusk-hairline px-6 py-4">
+        <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
           Hunk inspector · {hunks.length} hunk{hunks.length === 1 ? "" : "s"}
         </p>
       </div>
       {hunks.length === 0 ? (
-        <p className="p-4 text-sm text-zinc-400">Hunks appear here once the diff loads.</p>
+        <p className="p-6 text-sm text-dusk-muted">Hunks appear here once the diff loads.</p>
       ) : (
-        <ol className="max-h-96 divide-y divide-zinc-800/70 overflow-auto">
+        <ol className="max-h-96 divide-y divide-dusk-hairline overflow-auto">
           {hunks.map((hunk) => {
             const candidates = candidateEvents(hunk.path, events);
             const active = hunk.path === selectedPath;
@@ -73,14 +73,14 @@ export function HunkPanel({
                 <button
                   type="button"
                   onClick={() => onSelect(active ? null : hunk.path)}
-                  className={`block w-full px-4 py-2.5 text-left text-sm ${
-                    active ? "bg-zinc-800" : "hover:bg-zinc-800/50"
+                  className={`block w-full px-6 py-3 text-left text-sm ${
+                    active ? "bg-dusk-pill" : "hover:bg-dusk-pill/60"
                   }`}
                 >
-                  <span className="block truncate font-mono text-[11px] text-zinc-200">
+                  <span className="block truncate font-mono text-[11px] text-dusk-ink">
                     {hunk.path}
                   </span>
-                  <span className="mt-0.5 block font-mono text-[10px] text-zinc-500">
+                  <span className="mt-0.5 block font-mono text-[10px] text-dusk-muted">
                     @@ -{hunk.deletionStart},{hunk.deletionLines} +{hunk.additionStart},
                     {hunk.additionLines} @@ · +{hunk.additionLines} −{hunk.deletionLines}
                   </span>
@@ -90,14 +90,14 @@ export function HunkPanel({
                         <span
                           key={event.event_id}
                           title="uncertain: matched by file path only"
-                          className="rounded bg-amber-400/10 px-1.5 py-0.5 font-mono text-[10px] text-amber-300"
+                          className="rounded-dusk-code bg-dusk-peach-wash px-1.5 py-0.5 font-mono text-[10px] text-dusk-peach"
                         >
                           {eventLabel(event)} · uncertain
                         </span>
                       ))}
                     </span>
                   ) : (
-                    <span className="mt-1 block font-mono text-[10px] text-zinc-600">
+                    <span className="mt-1 block font-mono text-[10px] text-dusk-muted">
                       no tool event references this path
                     </span>
                   )}
