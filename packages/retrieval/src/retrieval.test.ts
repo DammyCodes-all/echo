@@ -1,3 +1,4 @@
+import { TapeEnvelopeSchema, type TapeEvent } from "@echo/contracts";
 import { buildFixtureTape } from "@echo/fixtures";
 import { describe, expect, it } from "vitest";
 import {
@@ -9,6 +10,43 @@ import {
 } from "./index";
 
 const tape = buildFixtureTape();
+
+function makeEvent(seq: number, kind: string, text: string): TapeEvent {
+  return TapeEnvelopeSchema.parse({
+    v: 1,
+    tape_seq: seq,
+    event_id: `fixture-fts-${seq}`,
+    record_key: null,
+    session_id: "sess_fts",
+    project_id: "proj_fts",
+    kind,
+    ts: "2026-10-28T12:00:00.000Z",
+    observed_at: "2026-10-28T12:00:00.000Z",
+    source: {
+      agent: "muse",
+      adapter: "fixture",
+      adapter_version: "0.1.0",
+      build: null,
+      schema: null,
+      record_type: "synthetic",
+      payload_type: null,
+      sequence: seq,
+      durability: "memory",
+      origin: "import",
+    },
+    links: {
+      turn_id: null,
+      tool_call_id: null,
+      batch_id: null,
+      parent_session_id: null,
+      subagent_id: null,
+      snapshot: null,
+    },
+    payload: { text },
+    redaction: { version: "fixture", findings: 0 },
+    diagnostics: [],
+  });
+}
 
 describe("evidence bundle", () => {
   it("retrieves file-related evidence for a why question", () => {
@@ -142,5 +180,21 @@ describe("retrieval improvements", () => {
     expect(tiny.items).toHaveLength(1);
     expect(tiny.items[0]?.evidenceId).toBe("E1");
     expect(tiny.items[0]?.eventId).toBe(full.items[0]?.eventId);
+  });
+});
+
+describe("fts recall", () => {
+  it("stems: running matches a service that runs", () => {
+    // Word overlap sees "running" vs "runs" and refuses; porter sees one stem.
+    const events = [makeEvent(1, "tool.completed", "the service runs nightly")];
+    const bundle = buildEvidenceBundle(events, { question: "Why is it running?" });
+    expect(bundle.items).toHaveLength(1);
+    expect(bundle.items[0]?.eventId).toBe("fixture-fts-1");
+  });
+
+  it("prefix-matches: prett finds the prettier failure", () => {
+    const bundle = buildEvidenceBundle(tape.events, { question: "What does prett mean?" });
+    expect(bundle.items.length).toBeGreaterThan(0);
+    expect(bundle.items.map((item) => item.text).join("\n")).toContain("prettier");
   });
 });

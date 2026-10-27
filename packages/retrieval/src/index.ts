@@ -283,45 +283,45 @@ export function buildEvidenceBundle(
       const { summary, filePath } = doc;
       const mapped = eventKind(event.kind);
       const overlap = fts.overlap(i, terms);
-    let score = overlap + mapped.weight;
-    const fileMatched = queryFile !== null && filePath === queryFile;
-    if (fileMatched) score += 3;
-    if (wantsAttempts && superseded.has(event.event_id)) score += 2;
-    // Kind weight ranks; only term overlap or an explicit file match admits.
-    // Otherwise a tool-heavy tape answers "what is the capital of France?".
-    const relevant = overlap > 0 || fileMatched;
-    if (event.diagnostics.length > 0) {
-      const diagnostic = `diagnostic: ${event.diagnostics.join("; ")}`.slice(0, 200);
+      let score = overlap + mapped.weight;
+      const fileMatched = queryFile !== null && filePath === queryFile;
+      if (fileMatched) score += 3;
+      if (wantsAttempts && superseded.has(event.event_id)) score += 2;
+      // Kind weight ranks; only term overlap or an explicit file match admits.
+      // Otherwise a tool-heavy tape answers "what is the capital of France?".
+      const relevant = overlap > 0 || fileMatched;
+      if (event.diagnostics.length > 0) {
+        const diagnostic = `diagnostic: ${event.diagnostics.join("; ")}`.slice(0, 200);
+        scored.push({
+          item: {
+            evidenceId: "",
+            eventId: event.event_id,
+            kind: "diagnostic",
+            label: "uncertain",
+            ts: event.ts,
+            text: `${summary} — ${diagnostic}`,
+            filePath,
+          },
+          score: score - 1,
+          seq: event.tape_seq,
+          relevant,
+        });
+        continue;
+      }
       scored.push({
         item: {
           evidenceId: "",
           eventId: event.event_id,
-          kind: "diagnostic",
-          label: "uncertain",
+          kind: mapped.kind,
+          label: mapped.label,
           ts: event.ts,
-          text: `${summary} — ${diagnostic}`,
+          text: summary,
           filePath,
         },
-        score: score - 1,
+        score,
         seq: event.tape_seq,
         relevant,
       });
-      continue;
-    }
-    scored.push({
-      item: {
-        evidenceId: "",
-        eventId: event.event_id,
-        kind: mapped.kind,
-        label: mapped.label,
-        ts: event.ts,
-        text: summary,
-        filePath,
-      },
-      score,
-      seq: event.tape_seq,
-      relevant,
-    });
     }
   } finally {
     fts.close();

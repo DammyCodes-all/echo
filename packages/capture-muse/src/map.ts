@@ -31,7 +31,8 @@ export function emptyLinks(): TapeLinks {
   };
 }
 
-function isoFromUs(microseconds: number): string {
+function isoFromUs(microseconds: number | null): string | null {
+  if (microseconds === null) return null;
   return new Date(Math.floor(microseconds / 1000)).toISOString();
 }
 
@@ -108,6 +109,16 @@ function canonicalKind(payloadType: string, innerKind: string | null): TapeEvent
     return "model.call";
   }
   if (payloadType.startsWith("reminder.cleanup_effect")) return "notification";
+  // Session lifecycle lines observed live (e2e Oct 27): fork/side records
+  // omit recorded_at and carry no inner kind. Map them instead of
+  // preserving as unknown — lineage is understood, not drift.
+  if (payloadType === "session.end") return "session.ended";
+  if (payloadType === "session.resumed") return "session.started";
+  if (payloadType === "session.fork.created" || payloadType === "session.fork.turn") {
+    return "session.started";
+  }
+  if (payloadType === "session.side.started") return "subagent.started";
+  if (payloadType === "session.side.boundary") return "notification";
 
   switch (innerKind) {
     case "requested":
@@ -289,6 +300,12 @@ export function mapMuseToTape(
     const diagnostics: string[] = [];
     if (kind === "agent.unknown") {
       diagnostics.push("unknown_payload_type");
+      degraded = true;
+    }
+    // Fork/side lines omit recorded_at; the event is kept with an
+    // observed_at fallback so lineage survives, but quality stays partial.
+    if (record.recordedAtUs === null) {
+      diagnostics.push("missing_source_timestamp");
       degraded = true;
     }
     const links = emptyLinks();
