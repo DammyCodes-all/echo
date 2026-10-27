@@ -5,12 +5,19 @@ export {
   reconcileExport,
   runRedactedExport,
 } from "./export";
-export type { FinalizeInput, FinalizeResult } from "./finalize";
+export type { ChildLog, FinalizeInput, FinalizeResult } from "./finalize";
 export { finalizeMuseSession } from "./finalize";
 export type { HookTranslateInput, HookTranslateResult, MuseHookName } from "./hooks";
 export { MUSE_HOOK_EVENTS, resolveHookProject, translateMuseHook } from "./hooks";
 export type { MuseMapContext, MuseMapResult, TapeEventInput } from "./map";
-export { ADAPTER_SCHEMA, ADAPTER_VERSION, buildTapeEvent, emptyLinks, mapMuseToTape } from "./map";
+export {
+  ADAPTER_SCHEMA,
+  ADAPTER_VERSION,
+  buildTapeEvent,
+  emptyLinks,
+  isoFromUs,
+  mapMuseToTape,
+} from "./map";
 export type {
   MuseStream,
   ParsedMuseEvent,

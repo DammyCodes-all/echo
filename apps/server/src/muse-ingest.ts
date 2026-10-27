@@ -114,8 +114,8 @@ function walkSessionLogs(sessionsDir: string): string[] {
   return found;
 }
 
-function childContents(sessionFile: string): string[] {
-  const out: string[] = [];
+function childContents(sessionFile: string): Array<{ id: string; content: string }> {
+  const out: Array<{ id: string; content: string }> = [];
   const dir = join(dirname(sessionFile), "subagent");
   let children: string[];
   try {
@@ -126,9 +126,11 @@ function childContents(sessionFile: string): string[] {
   for (const child of children) {
     const log = join(dir, child, "session.jsonl");
     try {
-      if (statSync(log).size <= MAX_LOG_BYTES) out.push(readFileSync(log, "utf8"));
+      if (statSync(log).size <= MAX_LOG_BYTES)
+        out.push({ id: child, content: readFileSync(log, "utf8") });
     } catch {
-      // Unreadable child logs are skipped; the parent notes a gap downstream.
+      // Unreadable child logs are skipped; a referenced-but-absent child
+      // surfaces as a capture.gap during finalization instead.
     }
   }
   return out;
@@ -518,6 +520,16 @@ export function createMuseIngest(options: MuseIngestOptions) {
         continue;
       }
       const quality: CaptureQuality = finalized.quality;
+      // Surface finalize diagnostics in daemon logs: per-event diagnostics live
+      // on the tape and gaps get their own capture.gap events, but session-level
+      // notes would otherwise be invisible. Bounded: finalize runs only when the
+      // log changed.
+      if (finalized.diagnostics.length > 0) {
+        log.info(
+          { session_id: sessionId, diagnostics: finalized.diagnostics },
+          "muse finalize diagnostics",
+        );
+      }
       const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
       mkdirSync(dirname(tapePath), { recursive: true });
       upsertProject(db, { id: projectId, root: resolve(root), name: basename(root) });
