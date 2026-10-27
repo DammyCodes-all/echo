@@ -6,6 +6,7 @@ export {
   getSessionEventIds,
   getSessionRecordKeys,
   getSnapshotByCommit,
+  hasEventKind,
   insertSnapshot,
   insertStampedEvents,
   latestSnapshot,
