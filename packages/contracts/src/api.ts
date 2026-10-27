@@ -2,6 +2,7 @@ import { z } from "zod";
 
 export const ErrorCodeSchema = z.enum([
   "invalid_request",
+  "not_found",
   "not_on_tape",
   "insufficient_evidence",
   "ambiguous_question",
@@ -60,3 +61,35 @@ export const StoredEventSchema = z.object({
   redaction: z.object({ version: z.string(), findings: z.number().int().nonnegative() }),
 });
 export type StoredEvent = z.infer<typeof StoredEventSchema>;
+
+export const SnapshotSummarySchema = z.object({
+  commitOid: z.string().min(1),
+  trigger: z.string().min(1),
+  eventId: z.string().nullable(),
+  takenAt: z.string().min(1),
+  fileCount: z.number().int().nonnegative(),
+  totalBytes: z.number().int().nonnegative(),
+  status: z.string().min(1),
+  diagnostics: z.array(z.string()),
+});
+export type SnapshotSummary = z.infer<typeof SnapshotSummarySchema>;
+
+export const SnapshotFileSchema = z.object({
+  path: z.string().min(1),
+  mode: z.string().nullable(),
+  blobOid: z.string().nullable(),
+  size: z.number().nullable(),
+  sha256: z.string().nullable(),
+  captured: z.boolean(),
+  reason: z.string().nullable(),
+});
+export type SnapshotFile = z.infer<typeof SnapshotFileSchema>;
+
+export const SnapshotFileContentSchema = z.object({
+  path: z.string().min(1),
+  blobOid: z.string().min(1),
+  size: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  content: z.string(),
+});
+export type SnapshotFileContent = z.infer<typeof SnapshotFileContentSchema>;
