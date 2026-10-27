@@ -21,8 +21,10 @@ export {
 export type { HookSpoolEntry, SpoolWriteResult, StdinRead } from "./spool";
 export {
   HOOK_SPOOL_CAP,
+  parseSpoolFile,
   readStdinCapped,
   runMuseHook,
   spoolDir,
   spoolEntryKey,
+  spoolRoot,
 } from "./spool";

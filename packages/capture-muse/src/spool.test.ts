@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { HOOK_SPOOL_CAP, runMuseHook, spoolDir, spoolEntryKey } from "./spool";
+import { HOOK_SPOOL_CAP, parseSpoolFile, runMuseHook, spoolDir, spoolEntryKey } from "./spool";
 
 describe("runMuseHook", () => {
   it("spools a translated redacted hook event", () => {
@@ -97,5 +97,47 @@ describe("runMuseHook", () => {
     };
     expect(spoolEntryKey(entry)).toBe(spoolEntryKey(entry));
     expect(spoolEntryKey({ ...entry, payload: { a: 2 } })).not.toBe(spoolEntryKey(entry));
+  });
+
+  it("round-trips written entries and rejects malformed files", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-spool-parse-"));
+    const written = runMuseHook({
+      dataDir,
+      event: "PreToolUse",
+      rawStdin: JSON.stringify({ session_id: "s1", cwd: "/repo", tool_name: "read" }),
+      stdinTruncated: false,
+      projects: ["/repo"],
+      receivedAt: "2026-10-28T10:00:00.000Z",
+    });
+    const parsed = parseSpoolFile(written.path);
+    expect(parsed?.sessionId).toBe("s1");
+    expect(parsed?.kind).toBe("tool.requested");
+    expect(parsed?.dropped).toBe(false);
+
+    const bad = join(dataDir, "bad.json");
+    writeFileSync(bad, "{oops");
+    expect(parseSpoolFile(bad)).toBeNull();
+
+    const wrongShape = join(dataDir, "shape.json");
+    writeFileSync(wrongShape, JSON.stringify({ v: 1, receivedAt: 42 }));
+    expect(parseSpoolFile(wrongShape)).toBeNull();
+
+    const badKind = join(dataDir, "kind.json");
+    writeFileSync(
+      badKind,
+      JSON.stringify({
+        v: 1,
+        receivedAt: "2026-10-28T10:00:00.000Z",
+        sessionId: "s1",
+        projectRoot: "/repo",
+        kind: "not-a-kind",
+        toolName: null,
+        payload: null,
+        findings: 0,
+        diagnostics: [],
+        dropped: false,
+      }),
+    );
+    expect(parseSpoolFile(badKind)).toBeNull();
   });
 });

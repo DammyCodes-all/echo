@@ -1,6 +1,15 @@
-import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { runMuseHook } from "@echo/capture-muse";
+import { projectIdForDirectory } from "@echo/core";
 import { openEchoDb } from "@echo/db";
 import { describe, expect, it } from "vitest";
 import { createMuseIngest } from "./muse-ingest";
@@ -99,5 +108,155 @@ describe("createMuseIngest", () => {
     expect(result.scanned).toBe(0);
     db.close();
     expect(dirname(dataDir)).toContain(tmpdir());
+  });
+});
+
+describe("createMuseIngest spool drain", () => {
+  it("converts spooled hooks into tape events and deletes them", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-spool-proj-"));
+    runMuseHook({
+      dataDir,
+      event: "PreToolUse",
+      rawStdin: JSON.stringify({ session_id: "s1", cwd: projectRoot, tool_name: "read" }),
+      stdinTruncated: false,
+      projects: [projectRoot],
+      receivedAt: "2026-10-28T10:00:00.000Z",
+    });
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    const first = await ingest.runOnce();
+    expect(first.drained).toBe(1);
+    expect(first.eventsAdded).toBe(1);
+    expect(first.unattributed).toBe(0);
+    const spoolRoot = join(dataDir, "spool", "muse", "s1");
+    const remaining = readdirSync(spoolRoot).filter((name) => name.endsWith(".json"));
+    expect(remaining).toHaveLength(0);
+    const second = await ingest.runOnce();
+    expect(second.drained).toBe(0);
+    expect(second.eventsAdded).toBe(0);
+    db.close();
+  });
+
+  it("leaves unattributable spool entries on disk and counts them", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-unattr-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-unattr-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-spool-unattr-proj-"));
+    runMuseHook({
+      dataDir,
+      event: "PreToolUse",
+      rawStdin: JSON.stringify({ cwd: projectRoot, tool_name: "read" }),
+      stdinTruncated: false,
+      projects: [projectRoot],
+      receivedAt: "2026-10-28T10:00:00.000Z",
+    });
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    const result = await ingest.runOnce();
+    expect(result.unattributed).toBe(1);
+    expect(result.drained).toBe(0);
+    expect(result.eventsAdded).toBe(0);
+    const leftovers = readdirSync(join(dataDir, "spool", "muse", "unattributed")).filter((name) =>
+      name.endsWith(".json"),
+    );
+    expect(leftovers).toHaveLength(1);
+    db.close();
+  });
+
+  it("deletes corrupt spool files instead of wedging the poll", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-bad-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-bad-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-spool-bad-proj-"));
+    const dir = join(dataDir, "spool", "muse", "s9");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "bad.json"), "{oops");
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    const result = await ingest.runOnce();
+    expect(result.drained).toBe(0);
+    expect(result.eventsAdded).toBe(0);
+    expect(readdirSync(dir).filter((name) => name.endsWith(".json"))).toHaveLength(0);
+    db.close();
+  });
+
+  it("does not let undrainable spool starve later sessions", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-cap-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-cap-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-spool-cap-proj-"));
+    for (let i = 0; i < 200; i++) {
+      runMuseHook({
+        dataDir,
+        event: "PreToolUse",
+        rawStdin: JSON.stringify({ cwd: projectRoot, tool_name: "read", n: i }),
+        stdinTruncated: false,
+        projects: [projectRoot],
+        receivedAt: "2026-10-28T10:00:00.000Z",
+      });
+    }
+    runMuseHook({
+      dataDir,
+      event: "PreToolUse",
+      rawStdin: JSON.stringify({ session_id: "zzz", cwd: projectRoot, tool_name: "read" }),
+      stdinTruncated: false,
+      projects: [projectRoot],
+      receivedAt: "2026-10-28T10:00:00.000Z",
+    });
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    const result = await ingest.runOnce();
+    expect(result.unattributed).toBe(200);
+    expect(result.drained).toBe(1);
+    expect(result.eventsAdded).toBe(1);
+    db.close();
+  });
+
+  it("merges hook spool with the native log for one session", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-both-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-spool-both-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-spool-both-proj-"));
+    const envelope = (seq: number, id: string): string =>
+      JSON.stringify({
+        schema_version: 1,
+        id,
+        stream: { kind: "session", id: "ses_both" },
+        sequence: seq,
+        recorded_at: 1793097343000000 + seq * 1000,
+        record_type: "event",
+        durability: "durable",
+        causation_id: null,
+        payload_type: "runtime.user_intent.accepted",
+        payload_schema_version: 1,
+        payload: { kind: "accepted", metadata: { workspace_root: projectRoot } },
+      });
+    const dir = join(sessionsDir, "2026", "10", "28", "ses_both");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "session.jsonl"), `${envelope(3, "id-3")}\n`);
+    runMuseHook({
+      dataDir,
+      event: "PreToolUse",
+      rawStdin: JSON.stringify({ session_id: "ses_both", cwd: projectRoot, tool_name: "read" }),
+      stdinTruncated: false,
+      projects: [projectRoot],
+      receivedAt: "2026-10-28T10:00:00.000Z",
+    });
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    const result = await ingest.runOnce();
+    expect(result.drained).toBe(1);
+    expect(result.eventsAdded).toBe(2);
+    const tape = readFileSync(
+      join(
+        dataDir,
+        "projects",
+        projectIdForDirectory(projectRoot),
+        "sessions",
+        "ses_both",
+        "tape.jsonl",
+      ),
+      "utf8",
+    );
+    expect(tape).toContain("hook_spool");
+    db.close();
   });
 });

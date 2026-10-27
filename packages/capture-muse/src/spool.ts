@@ -1,8 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdirSync, readdirSync, readSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { TapeEventKind } from "@echo/contracts";
+import { TapeEventKindSchema } from "@echo/contracts";
 import { translateMuseHook } from "./hooks";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
 
 export interface HookSpoolEntry {
   v: 1;
@@ -20,8 +25,12 @@ export interface HookSpoolEntry {
 export const HOOK_SPOOL_CAP = 500;
 const MAX_STDIN_BYTES = 1024 * 1024;
 
+export function spoolRoot(dataDir: string): string {
+  return join(dataDir, "spool", "muse");
+}
+
 export function spoolDir(dataDir: string, sessionId: string | null): string {
-  return join(dataDir, "spool", "muse", sessionId ?? "unattributed");
+  return join(spoolRoot(dataDir), sessionId ?? "unattributed");
 }
 
 export interface SpoolWriteResult {
@@ -177,4 +186,54 @@ export function spoolEntryKey(entry: {
     )
     .digest("hex")
     .slice(0, 16);
+}
+
+// Defensive read of our own spool format: anything malformed is null, never
+// thrown. The daemon deletes unparseable files (logged) so one bad file can
+// never wedge a whole poll.
+export function parseSpoolFile(absPath: string): HookSpoolEntry | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(absPath, "utf8"));
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || parsed.v !== 1) return null;
+  if (typeof parsed.receivedAt !== "string") return null;
+  if (parsed.sessionId !== null && typeof parsed.sessionId !== "string") return null;
+  if (parsed.projectRoot !== null && typeof parsed.projectRoot !== "string") return null;
+  if (
+    typeof parsed.toolName !== "undefined" &&
+    parsed.toolName !== null &&
+    typeof parsed.toolName !== "string"
+  ) {
+    return null;
+  }
+  if (parsed.kind !== null) {
+    if (TapeEventKindSchema.safeParse(parsed.kind).success !== true) return null;
+  }
+  if (
+    !Array.isArray(parsed.diagnostics) ||
+    parsed.diagnostics.some((entry: unknown) => typeof entry !== "string")
+  ) {
+    return null;
+  }
+  if (typeof parsed.dropped !== "boolean") return null;
+  const kindParsed =
+    parsed.kind === null
+      ? { success: true as const, data: null }
+      : TapeEventKindSchema.safeParse(parsed.kind);
+  if (kindParsed.success !== true) return null;
+  return {
+    v: 1,
+    receivedAt: parsed.receivedAt,
+    sessionId: parsed.sessionId,
+    projectRoot: parsed.projectRoot,
+    kind: kindParsed.data,
+    toolName: typeof parsed.toolName === "string" ? parsed.toolName : null,
+    payload: "payload" in parsed ? parsed.payload : null,
+    findings: typeof parsed.findings === "number" ? parsed.findings : 0,
+    diagnostics: parsed.diagnostics as string[],
+    dropped: parsed.dropped,
+  };
 }
