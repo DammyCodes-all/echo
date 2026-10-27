@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { openEchoDb } from "@echo/db";
@@ -46,12 +46,33 @@ describe("createMuseIngest", () => {
       expect(result.scanned).toBe(2);
       expect(result.capturedSessions).toBe(1);
       expect(result.eventsAdded).toBe(2);
+      expect(result.skipped).toBe(1);
       const again = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
       return again.runOnce().then((second) => {
         expect(second.eventsAdded).toBe(0);
         db.close();
       });
     });
+  });
+
+  it("re-ingests an appended log and skips unchanged files", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-append-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-append-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-append-proj-"));
+    writeSession(sessionsDir, "2026/10/28", "ses_muse_9", [envelope(3, "id-3", projectRoot)]);
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    const first = await ingest.runOnce();
+    expect(first.eventsAdded).toBe(1);
+    const second = await ingest.runOnce();
+    expect(second.eventsAdded).toBe(0);
+    appendFileSync(
+      join(sessionsDir, "2026", "10", "28", "ses_muse_9", "session.jsonl"),
+      `${envelope(4, "id-4", projectRoot)}\n`,
+    );
+    const third = await ingest.runOnce();
+    expect(third.eventsAdded).toBe(1);
+    db.close();
   });
 
   it("resolves the sessions dir from the environment", async () => {

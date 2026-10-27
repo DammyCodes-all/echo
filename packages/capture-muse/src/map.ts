@@ -20,7 +20,7 @@ export interface MuseMapResult {
   quality: CaptureQuality;
 }
 
-function emptyLinks(): TapeLinks {
+export function emptyLinks(): TapeLinks {
   return {
     turn_id: null,
     tool_call_id: null,
@@ -176,6 +176,82 @@ interface PushInput {
   diagnostics?: string[];
 }
 
+export interface TapeEventInput extends PushInput {
+  sessionId: string;
+  projectId: string;
+  build: string | null;
+  observedAt: string;
+  tapeSeq: number;
+  adapterVersion?: string;
+  schema?: string | null;
+  origin?: "live" | "export" | "import";
+}
+
+// Single construction site for Muse-derived tape events: redact at the
+// boundary, hash the redacted content for a stable id, validate the envelope.
+// Shared by the live mapper and export recovery so both produce identical shapes.
+export function buildTapeEvent(input: TapeEventInput): {
+  event: TapeEvent;
+  redactionFailed: boolean;
+} {
+  let payload: unknown = input.payload;
+  let findings = 0;
+  const diagnostics = [...(input.diagnostics ?? [])];
+  let redactionFailed = false;
+  try {
+    const redacted = redactJson(input.payload);
+    payload = redacted.value;
+    findings = redacted.findings.length;
+  } catch {
+    payload = { redaction_failed: true, kind: input.kind };
+    diagnostics.push("redaction_failed");
+    redactionFailed = true;
+  }
+  const eventId = `evt_${createHash("sha256")
+    .update(
+      stableJson({
+        session_id: input.sessionId,
+        record_key: input.recordKey,
+        kind: input.kind,
+        source_ts: input.ts,
+        sequence: input.sequence,
+        links: input.links ?? null,
+        payload,
+        diagnostics,
+      }),
+    )
+    .digest("hex")
+    .slice(0, 24)}`;
+  const event = TapeEnvelopeSchema.parse({
+    v: 1,
+    tape_seq: input.tapeSeq,
+    event_id: eventId,
+    record_key: input.recordKey,
+    session_id: input.sessionId,
+    project_id: input.projectId,
+    kind: input.kind,
+    ts: input.ts ?? input.observedAt,
+    observed_at: input.observedAt,
+    source: {
+      agent: "muse",
+      adapter: "muse-native",
+      adapter_version: input.adapterVersion ?? ADAPTER_VERSION,
+      build: input.build,
+      schema: input.schema ?? ADAPTER_SCHEMA,
+      record_type: input.recordType,
+      payload_type: input.payloadType,
+      sequence: input.sequence,
+      durability: null,
+      origin: input.origin ?? "live",
+    },
+    links: input.links ?? emptyLinks(),
+    payload,
+    redaction: { version: "r1", findings },
+    diagnostics,
+  });
+  return { event, redactionFailed };
+}
+
 export function mapMuseToTape(
   parsedEvents: ParsedMuseEvent[],
   markers: ParsedMuseMarker[],
@@ -189,62 +265,16 @@ export function mapMuseToTape(
   const recordKeyFor = (suffix: string): string => `muse:${ctx.sessionId}:${suffix}`;
 
   const push = (input: PushInput): void => {
-    let payload: unknown = input.payload;
-    let findings = 0;
-    const diagnostics = [...(input.diagnostics ?? [])];
-    try {
-      const redacted = redactJson(input.payload);
-      payload = redacted.value;
-      findings = redacted.findings.length;
-    } catch {
-      payload = { redaction_failed: true, kind: input.kind };
-      diagnostics.push("redaction_failed");
-      degraded = true;
-    }
-    const eventId = `evt_${createHash("sha256")
-      .update(
-        stableJson({
-          session_id: ctx.sessionId,
-          record_key: input.recordKey,
-          kind: input.kind,
-          source_ts: input.ts,
-          sequence: input.sequence,
-          links: input.links ?? null,
-          payload,
-          diagnostics,
-        }),
-      )
-      .digest("hex")
-      .slice(0, 24)}`;
-    events.push(
-      TapeEnvelopeSchema.parse({
-        v: 1,
-        tape_seq: tapeSeq++,
-        event_id: eventId,
-        record_key: input.recordKey,
-        session_id: ctx.sessionId,
-        project_id: ctx.projectId,
-        kind: input.kind,
-        ts: input.ts ?? observedIso,
-        observed_at: observedIso,
-        source: {
-          agent: "muse",
-          adapter: "muse-native",
-          adapter_version: ADAPTER_VERSION,
-          build: ctx.build,
-          schema: ADAPTER_SCHEMA,
-          record_type: input.recordType,
-          payload_type: input.payloadType,
-          sequence: input.sequence,
-          durability: null,
-          origin: "live",
-        },
-        links: input.links ?? emptyLinks(),
-        payload,
-        redaction: { version: "r1", findings },
-        diagnostics,
-      }),
-    );
+    const { event, redactionFailed } = buildTapeEvent({
+      ...input,
+      sessionId: ctx.sessionId,
+      projectId: ctx.projectId,
+      build: ctx.build,
+      observedAt: observedIso,
+      tapeSeq: tapeSeq++,
+    });
+    if (redactionFailed) degraded = true;
+    events.push(event);
   };
 
   let sessionStartedEmitted = false;
@@ -267,6 +297,9 @@ export function mapMuseToTape(
       links.subagent_id = record.stream.id;
       links.parent_session_id = ctx.sessionId;
     }
+    // v1 limit: a batch links only its first call id. The full batch stays in
+    // the redacted payload, but the other calls are unlinkable for hunk
+    // evidence until per-part expansion (as the OpenCode adapter does).
     const toolCallId = toolCallIdFrom(record.payload);
     if (
       toolCallId &&
