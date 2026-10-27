@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@echo/contracts": "workspace:*",
-    "@echo/core": "workspace:*"
+    "@echo/core": "workspace:*",
+    "quickjs-emscripten": "^0.32.0"
   }
 }

@@ -59,7 +59,7 @@ const WASM_NO_NETWORK = `console.log(typeof fetch === "undefined" ? "BLOCKED" : 
 const WASM_ASYNC = `Promise.resolve(7).then((v) => console.log("then:" + v));`;
 // Single large string reliably trips the QuickJS malloc limit; many small
 // allocations do not (spike observation: limit is best-effort in this build).
-const WASM_EAT_MEMORY = `"x".repeat(32 * 1024 * 1024);`;
+const WASM_EAT_MEMORY = `"x".repeat(8 * 1024 * 1024);`;
 
 function backendSuite(
   label: string,
@@ -232,7 +232,7 @@ describe.skipIf(!wasmAvailable)("wasm backend", () => {
   });
 
   it("fails instead of exceeding the memory cap", { timeout: 30_000 }, async () => {
-    const result = await runWasm({ code: WASM_EAT_MEMORY, limits: { memoryMb: 16 } });
+    const result = await runWasm({ code: WASM_EAT_MEMORY, limits: { memoryMb: 4 } });
     expect(result.status).toBe("error");
     expect(result.reason ?? "").toContain("memory");
   });
