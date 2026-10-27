@@ -24,6 +24,19 @@
   --color-dusk-hairline-strong: rgba(255, 255, 255, 0.12);
   --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --text-dusk-eyebrow: 13px;
+  --text-dusk-display: 46px;
+  --text-dusk-display--line-height: 1.1;
+  --text-dusk-card-title: 28px;
+  --text-dusk-card-title--line-height: 1.2;
+  --text-dusk-body: 17px;
+  --text-dusk-body--line-height: 1.45;
+  --text-dusk-answer: 19px;
+  --text-dusk-answer--line-height: 1.45;
+  --text-dusk-meta: 14px;
+  --tracking-dusk-display: -0.02em;
+  --tracking-dusk-card: -0.01em;
+  --tracking-dusk-eyebrow: 0.14em;
   --radius-dusk-card: 28px;
   --radius-dusk-swatch: 14px;
   --radius-dusk-code: 10px;
@@ -54,4 +67,26 @@ body {
 ::selection {
   background-color: var(--color-dusk-accent);
   color: var(--color-dusk-base);
+}
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-dusk-faint);
+  border-radius: var(--radius-dusk-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-dusk-accent);
+  border: 2px solid transparent;
+  background-clip: content-box;
 }
