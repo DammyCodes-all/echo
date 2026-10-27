@@ -69,3 +69,10 @@ notes.
 - status: blocked
 - evidence: none yet — inputs not in hand
 - notes: Blocks spec item 2 and everything downstream of real capture (export reconciliation, demo tape). Synthetic fixtures stand in until it lands.
+
+## 2026-10-27 — Merge origin/main (second divergence)
+
+- item: merge remote model/sandbox/checks/fixtures work into local capture-muse ingest
+- status: done
+- evidence: `git merge origin/main` → clean, no conflicts; full gate green (typecheck, biome 129 files, `pnpm test` → 23 files / 120 passed + 8 skipped, build)
+- notes: Fast-forward-free ort merge, auto-committed as 55ecf62. Local map.ts resolution from prior merge survived byte-identical. 8 skipped tests are pre-existing skips, not from this merge.
