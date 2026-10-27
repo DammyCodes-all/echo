@@ -1,7 +1,12 @@
+import type { Hunk } from "@pierre/diffs";
 import { useQuery } from "@tanstack/react-query";
+import { useCallback, useState } from "react";
 import { useParams } from "react-router";
 import { api, summarizePayload } from "../api";
-import { Panel, ScaffoldPage } from "../components/scaffold-page";
+import { DiffPanel } from "../components/diff-panel";
+import { FileStatePanel } from "../components/file-state-panel";
+import { type HunkEntry, HunkPanel } from "../components/hunk-panel";
+import { ScaffoldPage } from "../components/scaffold-page";
 
 function kindClass(kind: string): string {
   if (kind === "turn.failed") return "bg-red-400/10 text-red-300";
@@ -22,12 +27,27 @@ export function ReplayPage() {
     queryFn: () => api.events(sessionId),
     refetchInterval: 4000,
   });
+  const [hunks, setHunks] = useState<HunkEntry[]>([]);
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const onHunks = useCallback((path: string, fileHunks: Hunk[]) => {
+    setHunks((previous) => [
+      ...previous.filter((hunk) => hunk.path !== path),
+      ...fileHunks.map((hunk, hunkIndex) => ({
+        path,
+        hunkIndex,
+        deletionStart: hunk.deletionStart,
+        deletionLines: hunk.deletionLines,
+        additionStart: hunk.additionStart,
+        additionLines: hunk.additionLines,
+      })),
+    ]);
+  }, []);
 
   return (
     <ScaffoldPage
       eyebrow="Session replay"
       title="Captured actions"
-      description="The raw tape for this session, oldest first. File state, diff and the hunk inspector come next."
+      description="The raw tape for this session, oldest first, with file state, diff and hunk inspector below."
     >
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/30">
@@ -66,10 +86,21 @@ export function ReplayPage() {
           </ol>
         </div>
         <div className="space-y-4">
-          <Panel label="File state" />
-          <Panel label="Diff and hunk inspector" />
+          <HunkPanel
+            hunks={hunks}
+            events={events.data ?? []}
+            selectedPath={selectedPath}
+            onSelect={setSelectedPath}
+          />
         </div>
       </div>
+      <FileStatePanel sessionId={sessionId} />
+      <DiffPanel
+        sessionId={sessionId}
+        selectedPath={selectedPath}
+        onSelectPath={setSelectedPath}
+        onHunks={onHunks}
+      />
     </ScaffoldPage>
   );
 }
