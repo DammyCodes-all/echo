@@ -18,3 +18,11 @@ export {
   parseMuseContent,
   parseMuseLines,
 } from "./reader";
+export type { HookSpoolEntry, SpoolWriteResult, StdinRead } from "./spool";
+export {
+  HOOK_SPOOL_CAP,
+  readStdinCapped,
+  runMuseHook,
+  spoolDir,
+  spoolEntryKey,
+} from "./spool";

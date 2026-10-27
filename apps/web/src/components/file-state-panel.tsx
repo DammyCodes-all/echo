@@ -31,13 +31,13 @@ export function FileStatePanel({ sessionId }: { sessionId: string }) {
   });
 
   return (
-    <section aria-label="File state" className="rounded-xl border border-zinc-800 bg-zinc-900/30">
-      <div className="flex items-center justify-between gap-2 border-b border-zinc-800 px-4 py-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-zinc-500">File state</p>
+    <section aria-label="File state" className="rounded-dusk-card bg-dusk-surface">
+      <div className="flex items-center justify-between gap-2 border-b border-dusk-hairline px-6 py-4">
+        <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">File state</p>
         {snapshots.data && snapshots.data.length > 0 ? (
           <select
             aria-label="Snapshot"
-            className="max-w-44 truncate rounded border border-zinc-700 bg-zinc-900 px-1 py-0.5 font-mono text-[11px] text-zinc-300"
+            className="max-w-44 truncate rounded-dusk-code border border-dusk-hairline-strong bg-dusk-surface px-1 py-0.5 font-mono text-[11px] text-dusk-ink"
             value={activeCommit ?? ""}
             onChange={(event) => {
               setCommit(event.target.value);
@@ -53,29 +53,31 @@ export function FileStatePanel({ sessionId }: { sessionId: string }) {
         ) : null}
       </div>
 
-      {snapshots.isPending ? <p className="p-4 text-sm text-zinc-400">Loading snapshots…</p> : null}
+      {snapshots.isPending ? (
+        <p className="p-6 text-sm text-dusk-muted">Loading snapshots…</p>
+      ) : null}
       {snapshots.isError ? (
-        <p className="p-4 text-sm text-red-300">Could not load snapshots.</p>
+        <p className="p-6 text-sm text-dusk-fail">Could not load snapshots.</p>
       ) : null}
       {snapshots.data && snapshots.data.length === 0 ? (
-        <p className="p-4 text-sm text-zinc-400">No snapshots captured for this session yet.</p>
+        <p className="p-6 text-sm text-dusk-muted">No snapshots captured for this session yet.</p>
       ) : null}
 
       {activeCommit && files.data ? (
         <div className="grid gap-0 md:grid-cols-[minmax(0,220px)_minmax(0,1fr)]">
-          <ol className="max-h-72 overflow-auto border-zinc-800 md:border-r">
+          <ol className="max-h-72 overflow-auto border-dusk-hairline md:border-r">
             {files.data.map((file) => (
               <li key={file.path}>
                 <button
                   type="button"
                   disabled={!file.captured}
                   onClick={() => setPath(file.path)}
-                  className={`block w-full truncate px-4 py-1.5 text-left font-mono text-[11px] ${
+                  className={`block w-full truncate px-6 py-2 text-left font-mono text-[11px] ${
                     file.path === activePath
-                      ? "bg-zinc-800 text-zinc-100"
+                      ? "bg-dusk-pill text-dusk-ink"
                       : file.captured
-                        ? "text-zinc-300 hover:bg-zinc-800/50"
-                        : "cursor-not-allowed text-zinc-600"
+                        ? "text-dusk-muted hover:bg-dusk-pill/60 hover:text-dusk-ink"
+                        : "cursor-not-allowed text-dusk-muted/60"
                   }`}
                 >
                   {file.path}
@@ -85,17 +87,19 @@ export function FileStatePanel({ sessionId }: { sessionId: string }) {
             ))}
           </ol>
           <div className="min-w-0">
-            {content.isPending ? <p className="p-4 text-sm text-zinc-400">Loading file…</p> : null}
+            {content.isPending ? (
+              <p className="p-6 text-sm text-dusk-muted">Loading file…</p>
+            ) : null}
             {content.isError ? (
-              <p className="p-4 text-sm text-red-300">Could not load file content.</p>
+              <p className="p-6 text-sm text-dusk-fail">Could not load file content.</p>
             ) : null}
             {content.data ? (
               <div>
-                <p className="truncate border-b border-zinc-800 px-4 py-1.5 font-mono text-[10px] text-zinc-500">
+                <p className="truncate border-b border-dusk-hairline px-6 py-2 font-mono text-[10px] text-dusk-muted">
                   {content.data.path} · {content.data.size} B
                   {content.data.truncated ? " · truncated preview" : ""}
                 </p>
-                <pre className="max-h-64 overflow-auto p-4 font-mono text-[11px] leading-5 text-zinc-200">
+                <pre className="max-h-64 overflow-auto p-6 font-mono text-[11px] leading-5 text-dusk-ink">
                   {content.data.content}
                 </pre>
               </div>
@@ -105,7 +109,7 @@ export function FileStatePanel({ sessionId }: { sessionId: string }) {
       ) : null}
 
       {activeCommit && snapshots.data ? (
-        <p className="border-t border-zinc-800 px-4 py-2 font-mono text-[10px] text-zinc-600">
+        <p className="border-t border-dusk-hairline px-6 py-2 font-mono text-[10px] text-dusk-muted">
           {snapshots.data.find((snapshot) => snapshot.commitOid === activeCommit)?.trigger} ·{" "}
           {formatTime(
             snapshots.data.find((snapshot) => snapshot.commitOid === activeCommit)?.takenAt ?? "",

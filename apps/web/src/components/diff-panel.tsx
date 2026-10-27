@@ -74,22 +74,24 @@ function FileDiffView({
 
   if (!comparable) {
     return (
-      <p className="px-4 py-2 font-mono text-[11px] text-zinc-500">
+      <p className="px-6 py-3 font-mono text-[11px] text-dusk-muted">
         {path} — not comparable ({oldFile?.reason ?? newFile?.reason ?? "uncaptured"})
       </p>
     );
   }
   if (oldContent.isPending || newContent.isPending || !fileDiff) {
-    return <p className="px-4 py-2 font-mono text-[11px] text-zinc-500">{path} — loading…</p>;
+    return <p className="px-6 py-3 font-mono text-[11px] text-dusk-muted">{path} — loading…</p>;
   }
   if (oldContent.isError || newContent.isError) {
-    return <p className="px-4 py-2 font-mono text-[11px] text-red-300">{path} — failed to load</p>;
+    return (
+      <p className="px-4 py-2 font-mono text-[11px] text-dusk-fail">{path} — failed to load</p>
+    );
   }
   return (
     <button
       type="button"
       onClick={() => onSelect(selected ? null : path)}
-      className={`block w-full text-left ${selected ? "outline outline-1 outline-cyan-400" : ""}`}
+      className={`block w-full text-left ${selected ? "outline outline-1 outline-dusk-accent" : ""}`}
     >
       <FileDiff fileDiff={fileDiff} options={{ theme: "pierre-dark", diffStyle: "unified" }} />
     </button>
@@ -134,16 +136,16 @@ export function DiffPanel({
     selectedPath && changed ? changed.filter((entry) => entry.path === selectedPath) : changed;
 
   return (
-    <section aria-label="Diff" className="rounded-xl border border-zinc-800 bg-zinc-900/30">
-      <div className="flex items-center justify-between border-b border-zinc-800 px-4 py-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-zinc-500">
+    <section aria-label="Diff" className="rounded-dusk-card bg-dusk-surface">
+      <div className="flex items-center justify-between border-b border-dusk-hairline px-6 py-4">
+        <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
           Diff · first to final snapshot
         </p>
         {selectedPath ? (
           <button
             type="button"
             onClick={() => onSelectPath(null)}
-            className="font-mono text-[11px] text-cyan-300 hover:text-cyan-200"
+            className="font-mono text-[11px] text-dusk-accent hover:text-dusk-accent-soft"
           >
             show all
           </button>
@@ -151,15 +153,15 @@ export function DiffPanel({
       </div>
 
       {snapshots.isPending || oldFiles.isPending || newFiles.isPending ? (
-        <p className="p-4 text-sm text-zinc-400">Loading diff…</p>
+        <p className="p-6 text-sm text-dusk-muted">Loading diff…</p>
       ) : null}
       {snapshots.data && snapshots.data.length < 2 ? (
-        <p className="p-4 text-sm text-zinc-400">
+        <p className="p-6 text-sm text-dusk-muted">
           The diff needs two snapshots; this session has {snapshots.data.length}.
         </p>
       ) : null}
       {changed && changed.length === 0 ? (
-        <p className="p-4 text-sm text-zinc-400">No file changes between the snapshots.</p>
+        <p className="p-6 text-sm text-dusk-muted">No file changes between the snapshots.</p>
       ) : null}
 
       {visible && oldCommit && newCommit
