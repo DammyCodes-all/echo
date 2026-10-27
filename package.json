@@ -1,0 +1,29 @@
+{
+  "name": "echo",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.15.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --filter @echo/server --filter @echo/web dev",
+    "dev:server": "pnpm --filter @echo/server dev",
+    "dev:web": "pnpm --filter @echo/web dev",
+    "build": "pnpm --filter @echo/web build && pnpm --filter @echo/server build && pnpm --filter @echo/cli build",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.6.3",
+    "@types/node": "^26.6.5",
+    "tsup": "^9.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.5"
+  }
+}

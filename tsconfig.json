@@ -1,0 +1,27 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "types": ["node"],
+    "paths": {
+      "@echo/checks": ["./packages/checks/src/index.ts"],
+      "@echo/config": ["./packages/config/src/index.ts"],
+      "@echo/contracts": ["./packages/contracts/src/index.ts"],
+      "@echo/core": ["./packages/core/src/index.ts"],
+      "@echo/capture": ["./packages/capture/src/index.ts"],
+      "@echo/capture-muse": ["./packages/capture-muse/src/index.ts"],
+      "@echo/capture-opencode": ["./packages/capture-opencode/src/index.ts"],
+      "@echo/db": ["./packages/db/src/index.ts"],
+      "@echo/fixtures": ["./packages/fixtures/src/index.ts"],
+      "@echo/graph": ["./packages/graph/src/index.ts"],
+      "@echo/model": ["./packages/model/src/index.ts"],
+      "@echo/notifier": ["./packages/notifier/src/index.ts"],
+      "@echo/redaction": ["./packages/redaction/src/index.ts"],
+      "@echo/retrieval": ["./packages/retrieval/src/index.ts"],
+      "@echo/sandbox": ["./packages/sandbox/src/index.ts"],
+      "@echo/snapshots": ["./packages/snapshots/src/index.ts"],
+      "@echo/tape": ["./packages/tape/src/index.ts"]
+    }
+  },
+  "include": ["apps/**/*.ts", "apps/**/*.tsx", "packages/**/*.ts", "eval/**/*.ts", "*.ts"],
+  "exclude": ["node_modules", "**/dist"]
+}
