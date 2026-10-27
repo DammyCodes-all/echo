@@ -3,7 +3,10 @@
 Date: 2026-10-28. Related Phase-0 item: "one structured-output call to
 Muse Spark, validate schema adherence and latency" (BUILD-PLAN §3, Phase 0).
 
-**Result: PASS.** One tiny probe call, 29 tokens total, ~2.8 s latency.
+**Result: PASS.** Tiny probe, 29 tokens total, ~2.8 s latency — plus a
+structured-output probe, schema adhered, ~7.7 s latency (see addendum).
+
+## Observed (no key material recorded)
 
 ## Observed (no key material recorded)
 
@@ -31,7 +34,18 @@ Muse Spark, validate schema adherence and latency" (BUILD-PLAN §3, Phase 0).
 
 ## Still open
 
-- Structured-output adherence (JSON schema / strict mode) — not yet attempted.
 - Billing/rate-limit behavior under the event credits.
 - Whether the plain `muse-spark-1.3` id also resolves (irrelevant now that
   the contributor id is confirmed; no further probe spent).
+
+## Addendum: structured-output probe (same day)
+
+- Asked for exactly `{"answer": "ok", "citations": ["1"]}` with no other
+  text, validated by a caller-supplied parser. **Schema adhered on the
+  first attempt** — no retry needed (`requestJson` in `packages/model`
+  retries once with a larger budget only on `length`-with-null-content).
+- Usage: 39 prompt tokens, 586 completion tokens, **564 of them reasoning**.
+  Even a trivial JSON answer burns ~560 reasoning tokens, so the 2048
+  default in `modelConfigFromEnv` is a floor, not headroom. Structured
+  calls should keep schemas machine-small.
+- Latency ~7.7 s wall clock for the structured call.

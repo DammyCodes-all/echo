@@ -65,9 +65,17 @@ yields `unavailable`, never a fake pass. macOS works via Docker Desktop
 or (once wired) WASM. Windows is out of project scope (Linux + macOS per
 ARCHITECTURE §1); the WASM rung would technically run there.
 
-## Still open (Phase 5, not this spike)
+## Addendum: WASM rung landed (same day)
 
-esbuild bundling of TS snippets + harness, the verification gate (reference
-twice, static policy, buggy baseline), grading flow, calibration, and the
-`verification_json` evidence record. The runner interface here is the seam
-they build on.
+- `quickjs-emscripten@0.32.0` installed; `runWasm` is a real runner now
+  (console capture, interrupt-handler timeout, memory limit, async-job
+  drain, clean disposal). Ladder is docker → bwrap → wasm; 8 wasm tests
+  green alongside the docker/bwrap suites (28 sandbox tests total).
+- New observations: `Buffer.alloc` lesson applies doubly — QuickJS
+  `Uint8Array` allocations don't trip the malloc limit at all, so the wasm
+  memory test uses a single large string (8 MiB under a 4 MiB cap, reliably
+  OOMs). Sync `evalCode` rejects top-level await (SyntaxError), so wasm
+  checks must use `.then` chains. Only `log/info` → stdout and
+  `error/warn/debug` → stderr are exposed, matching Node's split.
+- Of the "still open" list above, the verification gate (reference twice)
+  and grading flow now exist as a prototype in `packages/checks`.
