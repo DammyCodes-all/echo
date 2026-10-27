@@ -1,4 +1,5 @@
 import type { StoredEvent } from "@echo/contracts";
+import { getOpenedHunks, markHunkOpened } from "../opened-hunks";
 
 export interface HunkEntry {
   path: string;
@@ -45,12 +46,15 @@ export function HunkPanel({
   events,
   selectedPath,
   onSelect,
+  sessionId,
 }: {
   hunks: HunkEntry[];
   events: StoredEvent[];
   selectedPath: string | null;
   onSelect: (path: string | null) => void;
+  sessionId?: string;
 }) {
+  const opened = sessionId !== undefined ? new Set(getOpenedHunks(sessionId)) : new Set<string>();
   return (
     <section
       aria-label="Hunk inspector"
@@ -68,17 +72,27 @@ export function HunkPanel({
           {hunks.map((hunk) => {
             const candidates = candidateEvents(hunk.path, events);
             const active = hunk.path === selectedPath;
+            const hunkKey = `${hunk.path}:${hunk.hunkIndex}`;
+            const wasOpened = opened.has(hunkKey);
             return (
-              <li key={`${hunk.path}:${hunk.hunkIndex}`}>
+              <li key={hunkKey}>
                 <button
                   type="button"
-                  onClick={() => onSelect(active ? null : hunk.path)}
+                  onClick={() => {
+                    if (sessionId !== undefined) markHunkOpened(sessionId, hunkKey);
+                    onSelect(active ? null : hunk.path);
+                  }}
                   className={`block w-full px-6 py-3 text-left text-sm ${
                     active ? "bg-dusk-pill" : "hover:bg-dusk-pill/60"
                   }`}
                 >
                   <span className="block truncate font-mono text-[11px] text-dusk-ink">
                     {hunk.path}
+                    {wasOpened ? (
+                      <span className="ml-2 rounded-dusk-code bg-dusk-track px-1.5 py-0.5 font-mono text-[10px] text-dusk-muted">
+                        opened
+                      </span>
+                    ) : null}
                   </span>
                   <span className="mt-0.5 block font-mono text-[10px] text-dusk-muted">
                     @@ -{hunk.deletionStart},{hunk.deletionLines} +{hunk.additionStart},
