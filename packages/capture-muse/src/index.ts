@@ -1,14 +1,20 @@
-export { ADAPTER_SCHEMA, ADAPTER_VERSION, mapMuseToTape } from "./map";
+export type { ExportRecord, ExportRunResult, ParsedExport, ReconcileResult } from "./export";
+export { parseExportDocument, reconcileExport, runRedactedExport } from "./export";
+export type { FinalizeInput, FinalizeResult } from "./finalize";
+export { finalizeMuseSession } from "./finalize";
+export type { HookTranslateInput, HookTranslateResult, MuseHookName } from "./hooks";
+export { MUSE_HOOK_EVENTS, resolveHookProject, translateMuseHook } from "./hooks";
 export type { MuseMapContext, MuseMapResult } from "./map";
+export { ADAPTER_SCHEMA, ADAPTER_VERSION, mapMuseToTape } from "./map";
+export type {
+  MuseStream,
+  ParsedMuseEvent,
+  ParsedMuseMarker,
+  ParseResult,
+  SequenceGap,
+} from "./reader";
 export {
   detectSequenceGaps,
   parseMuseContent,
   parseMuseLines,
-} from "./reader";
-export type {
-  MuseStream,
-  ParseResult,
-  ParsedMuseEvent,
-  ParsedMuseMarker,
-  SequenceGap,
 } from "./reader";

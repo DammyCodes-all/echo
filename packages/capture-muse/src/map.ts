@@ -50,18 +50,41 @@ function innerKindOf(payloadType: string, payload: unknown): string | null {
   return null;
 }
 
+function firstArrayId(value: unknown, keys: string[]): string | null {
+  if (!Array.isArray(value)) return null;
+  const first = value[0];
+  if (first === null || typeof first !== "object" || Array.isArray(first)) return null;
+  const record = first as Record<string, unknown>;
+  for (const key of keys) {
+    const id = record[key];
+    if (typeof id === "string" && id.length > 0) return id;
+  }
+  return null;
+}
+
 function toolCallIdFrom(payload: unknown): string | null {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return null;
   const record = payload as Record<string, unknown>;
   const direct = record.tool_call_id;
   if (typeof direct === "string" && direct.length > 0) return direct;
+  // Spike shapes: assistant_tool_calls_committed.tool_calls[].call_id,
+  // tool_result_batch_committed.results[].tool_call_id.
+  const fromCalls = firstArrayId(record.tool_calls, ["call_id", "tool_call_id"]);
+  if (fromCalls) return fromCalls;
+  const fromResults = firstArrayId(record.results, ["tool_call_id", "call_id"]);
+  if (fromResults) return fromResults;
   for (const key of ["event", "record"]) {
     const nested = record[key];
     if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
-      const id = (nested as Record<string, unknown>).tool_call_id;
+      const nestedRecord = nested as Record<string, unknown>;
+      const id = nestedRecord.tool_call_id;
       if (typeof id === "string" && id.length > 0) return id;
-      const callId = (nested as Record<string, unknown>).call_id;
+      const callId = nestedRecord.call_id;
       if (typeof callId === "string" && callId.length > 0) return callId;
+      const nestedCalls = firstArrayId(nestedRecord.tool_calls, ["call_id", "tool_call_id"]);
+      if (nestedCalls) return nestedCalls;
+      const nestedResults = firstArrayId(nestedRecord.results, ["tool_call_id", "call_id"]);
+      if (nestedResults) return nestedResults;
     }
   }
   return null;
@@ -74,7 +97,10 @@ function canonicalKind(payloadType: string, innerKind: string | null): TapeEvent
   if (payloadType === "tool_batch.effect.terminal") return "tool.completed";
   if (payloadType === "approval_wait.effect.started") return "approval.requested";
   if (payloadType === "approval_wait.effect.terminal") return "approval.decided";
-  if (payloadType === "runtime.user_intent.accepted" || payloadType === "runtime.user_intent.materialized") {
+  if (
+    payloadType === "runtime.user_intent.accepted" ||
+    payloadType === "runtime.user_intent.materialized"
+  ) {
     return "prompt.submitted";
   }
   if (payloadType === "runtime.command_intake.received") return "prompt.submitted";
@@ -175,22 +201,21 @@ export function mapMuseToTape(
       diagnostics.push("redaction_failed");
       degraded = true;
     }
-    const eventId =
-      `evt_${createHash("sha256")
-        .update(
-          stableJson({
-            session_id: ctx.sessionId,
-            record_key: input.recordKey,
-            kind: input.kind,
-            source_ts: input.ts,
-            sequence: input.sequence,
-            links: input.links ?? null,
-            payload,
-            diagnostics,
-          }),
-        )
-        .digest("hex")
-        .slice(0, 24)}`;
+    const eventId = `evt_${createHash("sha256")
+      .update(
+        stableJson({
+          session_id: ctx.sessionId,
+          record_key: input.recordKey,
+          kind: input.kind,
+          source_ts: input.ts,
+          sequence: input.sequence,
+          links: input.links ?? null,
+          payload,
+          diagnostics,
+        }),
+      )
+      .digest("hex")
+      .slice(0, 24)}`;
     events.push(
       TapeEnvelopeSchema.parse({
         v: 1,
@@ -243,7 +268,10 @@ export function mapMuseToTape(
       links.parent_session_id = ctx.sessionId;
     }
     const toolCallId = toolCallIdFrom(record.payload);
-    if (toolCallId && (kind === "tool.requested" || kind === "tool.completed" || kind === "tool.failed")) {
+    if (
+      toolCallId &&
+      (kind === "tool.requested" || kind === "tool.completed" || kind === "tool.failed")
+    ) {
       links.tool_call_id = toolCallId;
     }
     push({
