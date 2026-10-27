@@ -1,5 +1,5 @@
-import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import { readStdinCapped, runMuseHook } from "@echo/capture-muse";
+import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 
 export interface HookRunInput {
   agent: string;

@@ -187,6 +187,9 @@ importers:
 
   apps/cli:
     dependencies:
+      '@echo/capture-muse':
+        specifier: workspace:*
+        version: link:../../packages/capture-muse
       '@echo/config':
         specifier: workspace:*
         version: link:../../packages/config

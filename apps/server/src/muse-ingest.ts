@@ -1,11 +1,19 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
-import { finalizeMuseSession } from "@echo/capture-muse";
+import {
+  buildTapeEvent,
+  emptyLinks,
+  finalizeMuseSession,
+  parseSpoolFile,
+  spoolEntryKey,
+  spoolRoot,
+} from "@echo/capture-muse";
 import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
+  getSession,
   getSessionEventIds,
   insertStampedEvents,
   maxTapeSeq,
@@ -32,9 +40,12 @@ export interface MuseIngestResult {
   capturedSessions: number;
   eventsAdded: number;
   skipped: number;
+  drained: number;
+  unattributed: number;
 }
 
 const MAX_LOG_BYTES = 128 * 1024 * 1024;
+const MAX_SPOOL_PER_POLL = 200;
 
 export function resolveMuseSessionsDir(env: NodeJS.ProcessEnv = process.env): string {
   if (env.MUSE_SESSIONS_DIR) return env.MUSE_SESSIONS_DIR;
@@ -138,19 +149,160 @@ export function createMuseIngest(options: MuseIngestOptions) {
   const sessionsDir = options.sessionsDir ?? resolveMuseSessionsDir();
   let timer: NodeJS.Timeout | null = null;
   let running = false;
+  let lastUnattributed = 0;
   // Size+mtime of files already fully processed. A poll skips re-reading,
   // re-parsing and re-hashing unchanged logs; the tape already holds their
   // events. Set only on success so failures retry next poll.
   const seen = new Map<string, { size: number; mtimeMs: number }>();
 
   function emptyResult(): MuseIngestResult {
-    return { scanned: 0, capturedSessions: 0, eventsAdded: 0, skipped: 0 };
+    return {
+      scanned: 0,
+      capturedSessions: 0,
+      eventsAdded: 0,
+      skipped: 0,
+      drained: 0,
+      unattributed: 0,
+    };
+  }
+
+  // Shared append path for scanned log events and drained spool events:
+  // sequence from the current max, one fsync per batch, insert count back.
+  function persistFresh(sessionId: string, tapePath: string, fresh: TapeEvent[]): number {
+    if (fresh.length === 0) return 0;
+    let seq = maxTapeSeq(db, sessionId);
+    for (const event of fresh) {
+      seq += 1;
+      event.tape_seq = seq;
+    }
+    const writer = new TapeWriter(tapePath);
+    try {
+      for (const event of fresh) writer.append(event);
+      writer.flush();
+    } finally {
+      writer.close();
+    }
+    return insertStampedEvents(db, sessionId, fresh);
+  }
+
+  // Hook spool drain. Runs before the log scan so a hook-only session gets a
+  // minimal row first and the scan's upsert enriches it afterwards — never the
+  // reverse. Files are deleted only after a successful insert; a crash between
+  // the two replays into the same deterministic event ids and dedupes.
+  function drainSpool(result: MuseIngestResult, observedIso: string): void {
+    const root = spoolRoot(dataDir);
+    let dirs: string[];
+    try {
+      dirs = readdirSync(root).sort();
+    } catch {
+      return; // no spool yet
+    }
+    let processed = 0;
+    for (const dirName of dirs) {
+      const dir = join(root, dirName);
+      let files: string[];
+      try {
+        files = readdirSync(dir)
+          .filter((name) => name.endsWith(".json"))
+          .sort();
+      } catch {
+        continue;
+      }
+      for (const file of files) {
+        if (processed >= MAX_SPOOL_PER_POLL) return;
+        const abs = join(dir, file);
+        const entry = parseSpoolFile(abs);
+        if (!entry) {
+          log.error({ spool_file: abs }, "muse spool entry unparseable, dropping");
+          try {
+            rmSync(abs);
+          } catch {
+            // Leave it; the cap bounds the damage and the next poll retries.
+          }
+          continue;
+        }
+        const sessionId = entry.sessionId;
+        const projectRoot = entry.projectRoot;
+        if (
+          !sessionId ||
+          !projectRoot ||
+          !projects.some((candidate) => isUnder(projectRoot, candidate))
+        ) {
+          result.unattributed += 1;
+          continue; // leave on disk; the write-time cap bounds it
+        }
+        // Budget covers only entries that reach ingestion: files that can
+        // never drain must not starve drainable ones behind the cap.
+        processed += 1;
+        const projectId = projectIdForDirectory(resolve(projectRoot));
+        const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
+        try {
+          const { event } = buildTapeEvent({
+            kind: entry.kind ?? "capture.gap",
+            payload: entry.payload ?? { hook_dropped: true },
+            payloadType: "hook",
+            recordType: "hook",
+            sequence: null,
+            ts: entry.receivedAt,
+            recordKey: `muse:${sessionId}:hook:${spoolEntryKey(entry)}`,
+            links: emptyLinks(),
+            diagnostics: [...entry.diagnostics, "hook_spool"],
+            sessionId,
+            projectId,
+            build: null,
+            observedAt: observedIso,
+            tapeSeq: 0,
+            schema: "hook/v1",
+            origin: "live",
+          });
+          if (!getSession(db, sessionId)) {
+            mkdirSync(dirname(tapePath), { recursive: true });
+            upsertProject(db, {
+              id: projectId,
+              root: resolve(projectRoot),
+              name: basename(projectRoot),
+            });
+            upsertSession(db, {
+              id: sessionId,
+              projectId,
+              agent: "muse",
+              model: null,
+              directory: projectRoot,
+              title: null,
+              startedAt: entry.receivedAt,
+              tapePath,
+              captureQuality: "degraded",
+            });
+          }
+          if (getSessionEventIds(db, sessionId).has(event.event_id)) {
+            try {
+              rmSync(abs);
+            } catch {
+              // Already ingested; a delete retry happens next poll.
+            }
+            continue;
+          }
+          result.eventsAdded += persistFresh(sessionId, tapePath, [event]);
+          result.drained += 1;
+          try {
+            rmSync(abs);
+          } catch (error) {
+            log.error({ err: String(error), spool_file: abs }, "muse spool delete failed");
+          }
+        } catch (error) {
+          // Transient (DB/IO): leave the file; the next poll retries.
+          log.error({ err: String(error), session_id: sessionId }, "muse spool entry failed");
+        }
+      }
+    }
   }
 
   async function scan(): Promise<MuseIngestResult> {
     const result = emptyResult();
-    if (projects.length === 0 || !existsSync(sessionsDir)) return result;
+    if (projects.length === 0) return result;
     const observedAt = new Date().toISOString();
+    drainSpool(result, observedAt);
+    if (!existsSync(sessionsDir)) return result;
     const found = new Set(walkSessionLogs(sessionsDir));
     for (const key of seen.keys()) {
       if (!found.has(key)) seen.delete(key);
@@ -230,19 +382,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
       const existing = getSessionEventIds(db, sessionId);
       const fresh = finalized.events.filter((event: TapeEvent) => !existing.has(event.event_id));
       if (fresh.length > 0) {
-        let seq = maxTapeSeq(db, sessionId);
-        for (const event of fresh) {
-          seq += 1;
-          event.tape_seq = seq;
-        }
-        const writer = new TapeWriter(tapePath);
-        try {
-          for (const event of fresh) writer.append(event);
-          writer.flush();
-        } finally {
-          writer.close();
-        }
-        result.eventsAdded += insertStampedEvents(db, sessionId, fresh);
+        result.eventsAdded += persistFresh(sessionId, tapePath, fresh);
         result.capturedSessions += 1;
       }
       seen.set(sessionFile, fingerprint);
@@ -265,7 +405,19 @@ export function createMuseIngest(options: MuseIngestOptions) {
     timer = setInterval(() => {
       void runOnce()
         .then((result) => {
-          if (result.eventsAdded > 0) log.info({ ...result }, "ingested muse sessions");
+          if (result.eventsAdded > 0) {
+            log.info({ ...result }, "ingested muse sessions");
+          } else if (result.unattributed !== lastUnattributed) {
+            // Unattributed spool only grows through misconfiguration; report
+            // the new total once instead of spamming every poll.
+            lastUnattributed = result.unattributed;
+            if (result.unattributed > 0) {
+              log.info(
+                { unattributed: result.unattributed },
+                "muse spool entries need attribution",
+              );
+            }
+          }
         })
         .catch((error) => {
           log.error({ err: String(error) }, "muse ingest failed");
