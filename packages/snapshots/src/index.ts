@@ -1,4 +1,4 @@
-export { findRepositoryRoot } from "./git";
+export { findRepositoryRoot, readShadowBlob } from "./git";
 export { loadManifest, type ManifestEntry, type SnapshotManifest } from "./manifest";
 export {
   DEFAULT_SNAPSHOT_LIMITS,

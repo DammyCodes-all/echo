@@ -236,3 +236,8 @@ export async function readSourceBlob(root: string, oid: string): Promise<Uint8Ar
   const { blob } = await git.readBlob({ fs, dir: root, gitdir, oid });
   return blob;
 }
+
+export async function readShadowBlob(shadowDir: string, oid: string): Promise<Uint8Array> {
+  const { blob } = await git.readBlob({ fs, dir: shadowDir, gitdir: shadowDir, oid });
+  return blob;
+}
