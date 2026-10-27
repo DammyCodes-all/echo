@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { finalizeMuseSession } from "@echo/capture-muse";
 import type { CaptureQuality, TapeEvent } from "@echo/contracts";
+import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
   getSessionEventIds,
@@ -31,6 +31,7 @@ export interface MuseIngestResult {
   scanned: number;
   capturedSessions: number;
   eventsAdded: number;
+  skipped: number;
 }
 
 const MAX_LOG_BYTES = 128 * 1024 * 1024;
@@ -40,11 +41,11 @@ export function resolveMuseSessionsDir(env: NodeJS.ProcessEnv = process.env): st
   return join(env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "muse", "sessions");
 }
 
-// Same project identity as the OpenCode adapter (prj_<sha16 of directory)):
-// session rows join across agents on this id.
-export function museProjectIdForDirectory(directory: string): string {
-  return `prj_${createHash("sha256").update(directory).digest("hex").slice(0, 16)}`;
-}
+// Project identity is shared with the OpenCode adapter via
+// projectIdForDirectory: identical inputs join. Note the OpenCode mapper
+// hashes the agent's session directory, so a session run in a subdirectory
+// joins under a different id there; Muse ingest always resolves to the
+// enabled project root first.
 
 function isUnder(directory: string, root: string): boolean {
   const normalizedDirectory = resolve(directory);
@@ -137,31 +138,66 @@ export function createMuseIngest(options: MuseIngestOptions) {
   const sessionsDir = options.sessionsDir ?? resolveMuseSessionsDir();
   let timer: NodeJS.Timeout | null = null;
   let running = false;
+  // Size+mtime of files already fully processed. A poll skips re-reading,
+  // re-parsing and re-hashing unchanged logs; the tape already holds their
+  // events. Set only on success so failures retry next poll.
+  const seen = new Map<string, { size: number; mtimeMs: number }>();
 
   function emptyResult(): MuseIngestResult {
-    return { scanned: 0, capturedSessions: 0, eventsAdded: 0 };
+    return { scanned: 0, capturedSessions: 0, eventsAdded: 0, skipped: 0 };
   }
 
   async function scan(): Promise<MuseIngestResult> {
     const result = emptyResult();
     if (projects.length === 0 || !existsSync(sessionsDir)) return result;
     const observedAt = new Date().toISOString();
-    for (const sessionFile of walkSessionLogs(sessionsDir)) {
+    const found = new Set(walkSessionLogs(sessionsDir));
+    for (const key of seen.keys()) {
+      if (!found.has(key)) seen.delete(key);
+    }
+    for (const sessionFile of found) {
       result.scanned += 1;
+      let fingerprint: { size: number; mtimeMs: number };
+      try {
+        const stat = statSync(sessionFile);
+        fingerprint = { size: stat.size, mtimeMs: stat.mtimeMs };
+      } catch (error) {
+        log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
+        continue;
+      }
+      if (fingerprint.size > MAX_LOG_BYTES) {
+        result.skipped += 1;
+        continue;
+      }
+      const previous = seen.get(sessionFile);
+      if (
+        previous !== undefined &&
+        previous.size === fingerprint.size &&
+        previous.mtimeMs === fingerprint.mtimeMs
+      ) {
+        continue;
+      }
       let content: string;
       try {
-        if (statSync(sessionFile).size > MAX_LOG_BYTES) continue;
         content = readFileSync(sessionFile, "utf8");
       } catch (error) {
         log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
         continue;
       }
       const workspaceRoot = extractWorkspaceRoot(content);
-      if (!workspaceRoot) continue;
+      if (!workspaceRoot) {
+        result.skipped += 1;
+        seen.set(sessionFile, fingerprint);
+        continue;
+      }
       const root = projects.find((candidate) => isUnder(workspaceRoot, candidate));
-      if (!root) continue;
+      if (!root) {
+        result.skipped += 1;
+        seen.set(sessionFile, fingerprint);
+        continue;
+      }
       const sessionId = basename(dirname(sessionFile));
-      const projectId = museProjectIdForDirectory(resolve(root));
+      const projectId = projectIdForDirectory(resolve(root));
       let finalized: ReturnType<typeof finalizeMuseSession> | undefined;
       try {
         finalized = finalizeMuseSession({
@@ -209,6 +245,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
         result.eventsAdded += insertStampedEvents(db, sessionId, fresh);
         result.capturedSessions += 1;
       }
+      seen.set(sessionFile, fingerprint);
     }
     return result;
   }

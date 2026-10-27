@@ -49,6 +49,7 @@ describe("parseMuseLines", () => {
     expect(parsed.events).toHaveLength(2);
     expect(parsed.markers).toHaveLength(1);
     expect(parsed.markers[0]?.omissionClass).toBe("checkpoint_trim");
+    expect(parsed.markers[0]?.afterSequence).toBe(3);
     expect(parsed.invalidLines).toBe(1);
     expect(parsed.events.map((event) => event.sequence)).toEqual([3, 5]);
   });
@@ -71,9 +72,23 @@ describe("parseMuseLines", () => {
 });
 
 describe("detectSequenceGaps", () => {
-  it("returns marker-less jumps and ignores marker-adjacent jumps", () => {
-    expect(detectSequenceGaps([3, 4, 7], 0)).toEqual([{ fromSequence: 4, toSequence: 7 }]);
-    expect(detectSequenceGaps([3, 4, 7], 1)).toEqual([]);
-    expect(detectSequenceGaps([3, 3, 4], 0)).toEqual([]);
+  const marker = (afterSequence: number | null) => ({
+    stream: { kind: "session", id: "ses_parent" },
+    omissionClass: "checkpoint_trim",
+    afterSequence,
+    raw: {},
+  });
+  it("returns jumps with no marker between their endpoints", () => {
+    expect(detectSequenceGaps([3, 4, 7], [])).toEqual([{ fromSequence: 4, toSequence: 7 }]);
+    expect(detectSequenceGaps([3, 3, 4], [])).toEqual([]);
+  });
+  it("suppresses only jumps the marker sits inside", () => {
+    expect(detectSequenceGaps([3, 4, 7], [marker(4)])).toEqual([]);
+    expect(detectSequenceGaps([3, 4, 7, 12], [marker(4)])).toEqual([
+      { fromSequence: 7, toSequence: 12 },
+    ]);
+    expect(detectSequenceGaps([3, 4, 7], [marker(null)])).toEqual([
+      { fromSequence: 4, toSequence: 7 },
+    ]);
   });
 });

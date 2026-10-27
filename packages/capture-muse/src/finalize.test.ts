@@ -58,4 +58,32 @@ describe("finalizeMuseSession", () => {
     expect(result.quality).toBe("partial");
     expect(result.diagnostics.some((entry) => entry.startsWith("export_reconciled"))).toBe(true);
   });
+
+  it("preserves export-only records as agent.unknown with export origin", () => {
+    const liveContent = [
+      envelope(3, "id-3", "runtime.user_intent.accepted", { kind: "accepted" }),
+    ].join("\n");
+    const result = finalizeMuseSession({
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      liveContent: `${liveContent}\n`,
+      exportDoc: {
+        export_schema_version: 1,
+        events: [
+          { kind: "record", envelope: { stream: { id: "ses_parent" }, sequence: 3 } },
+          { kind: "record", envelope: { stream: { id: "ses_parent" }, sequence: 9 } },
+        ],
+        diagnostics: [],
+      },
+    });
+    expect(result.quality).toBe("partial");
+    const recovered = result.events.filter(
+      (event) => event.record_key === "muse:ses_parent:export:ses_parent:9",
+    );
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.kind).toBe("agent.unknown");
+    expect(recovered[0]?.source.origin).toBe("export");
+    expect(recovered[0]?.diagnostics).toContain("export_recovery");
+  });
 });
