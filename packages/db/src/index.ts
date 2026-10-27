@@ -1,1 +1,25 @@
-export {};
+export { type EchoDb, openEchoDb, withTransaction } from "./database";
+export { MIGRATIONS, type Migration } from "./migrations";
+export {
+  appendEvents,
+  getSessionEventIds,
+  getSessionRecordKeys,
+  insertSnapshot,
+  insertStampedEvents,
+  latestSnapshot,
+  listProjects,
+  listSessions,
+  listSnapshotFiles,
+  listSnapshots,
+  maxSourceSequence,
+  maxTapeSeq,
+  type ProjectSummary,
+  readEvents,
+  type SessionSummary,
+  type SnapshotFileRow,
+  type SnapshotInsert,
+  type SnapshotRow,
+  type StoredEvent,
+  upsertProject,
+  upsertSession,
+} from "./repositories";
