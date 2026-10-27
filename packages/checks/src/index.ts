@@ -17,7 +17,7 @@ export interface RankedHunk {
 }
 
 // Small static patterns only (ARCHITECTURE: three similar lines beat an
-// early helper; no model call in ranking — the model drafts questions later).
+// early helper — no model call in ranking; the model drafts questions later).
 const RISK_PATTERNS: Array<{ id: string; pattern: RegExp; weight: number }> = [
   { id: "error-handling", pattern: /\bcatch\b|\bthrow\b|\.catch\(|onError/i, weight: 30 },
   { id: "auth-secret", pattern: /token|secret|password|api[_-]?key|credential/i, weight: 30 },
@@ -46,27 +46,92 @@ export function rankHunks(hunks: HunkInput[]): RankedHunk[] {
   return ranked.sort((a, b) => b.score - a.score || a.hunk.path.localeCompare(b.hunk.path));
 }
 
-export type CheckKind = "predict_output" | "spot_bug";
+/** Ownership check kinds, easiest first (ADR 0010). Puzzle kinds were cut:
+ *  a model answers them unsupervised, so they prove no ownership. */
+export type OwnershipKind = "consequence" | "decision" | "tradeoff" | "blast_radius" | "teach_back";
+
+export const KIND_DIFFICULTY: Record<OwnershipKind, number> = {
+  consequence: 1,
+  decision: 2,
+  tradeoff: 3,
+  blast_radius: 4,
+  teach_back: 5,
+};
+
+export const KIND_DESCRIPTIONS: Record<OwnershipKind, string> = {
+  consequence: "What did this change cost or open up?",
+  decision: "Why this approach over the reverted alternative?",
+  tradeoff: "What price was accepted for this choice?",
+  blast_radius: "What breaks if this changes, and why does it break there?",
+  teach_back: "Explain it so a new teammate can act on it.",
+};
+
+export interface Demonstration {
+  /** Self-contained snippet that performs the breakage. */
+  code: string;
+  /** What the sandbox actually observed (normalized line endings). */
+  observedStdout: string;
+}
 
 export interface Check {
   id: string;
-  kind: CheckKind;
-  /** Self-contained runnable snippet under test. */
-  code: string;
+  kind: OwnershipKind;
   question: string;
-  /** Expected stdout (normalized line endings) when the reference runs. */
-  referenceStdout: string;
+  /** Hunk paths this check is grounded in; answers cite them. */
+  evidencePaths: string[];
+  /** Falsifiable points an answer must hit. Never vibes. */
+  rubric: string[];
+  /** Blast_radius only: the sandbox-established ground truth behind the rubric. */
+  demonstration: Demonstration | null;
 }
 
-export function makePredictCheck(code: string, referenceStdout: string): Check {
-  const id = `chk_${createHash("sha256").update(code).digest("hex").slice(0, 12)}`;
+function checkId(kind: OwnershipKind, question: string): string {
+  return `chk_${createHash("sha256").update(`${kind}:${question}`).digest("hex").slice(0, 12)}`;
+}
+
+/**
+ * All five kinds grade against the rubric — including blast_radius (ADR
+ * 0010): the questions are deep and system-level, so no string match can
+ * judge them. The sandbox keeps one job: establishing what actually breaks,
+ * which grounds the rubric. The model judges whether the user's explanation
+ * matches that ground truth.
+ */
+export function makeCheck(
+  kind: OwnershipKind,
+  question: string,
+  evidencePaths: string[],
+  rubric: string[],
+  demonstration?: Demonstration,
+): Check {
+  if (rubric.length === 0) throw new Error("checks require a non-empty rubric");
+  const demo =
+    demonstration === undefined
+      ? null
+      : {
+          code: demonstration.code,
+          observedStdout: demonstration.observedStdout.replace(/\r\n/g, "\n"),
+        };
+  if (kind === "blast_radius" && demo === null) {
+    throw new Error("blast_radius checks require a sandbox demonstration");
+  }
+  if (kind !== "blast_radius" && demo !== null) {
+    throw new Error("only blast_radius checks carry a demonstration");
+  }
   return {
-    id,
-    kind: "predict_output",
-    code,
-    question: "What does this snippet print to stdout?",
-    referenceStdout: referenceStdout.replace(/\r\n/g, "\n"),
+    id: checkId(kind, question),
+    kind,
+    question,
+    evidencePaths,
+    rubric,
+    demonstration: demo,
   };
+}
+
+/** Easiest-first session order: concrete and local before systemic. */
+export function orderForSession(checks: Check[]): Check[] {
+  return [...checks].sort(
+    (a, b) => KIND_DIFFICULTY[a.kind] - KIND_DIFFICULTY[b.kind] || a.id.localeCompare(b.id),
+  );
 }
 
 export interface RunnerResult {
@@ -80,33 +145,58 @@ export interface Verification {
 }
 
 /**
- * The verification gate (BUILD-PLAN Phase 5): the reference must pass twice
- * with byte-identical stdout before a check may be asked. Any divergence or
- * failure invalidates the check — a flaky reference is a product failure, not
- * a question.
+ * Execution still establishes truth (BUILD-PLAN Phase 5): for blast_radius,
+ * the demonstration must run twice with byte-identical normalized stdout
+ * matching the recorded observation before the check may be asked. A flaky
+ * demonstration invalidates the check. Open kinds verify by evidence review
+ * (rubric points traceable to the tape) — the ambiguity-review model call
+ * lands with question generation in Phase 4/5.
  */
-export async function verifyCheck(
+export async function verifyDemonstration(
   check: Check,
   run: (code: string) => Promise<RunnerResult>,
   passes = 2,
 ): Promise<Verification> {
+  if (check.demonstration === null) {
+    return {
+      verified: check.rubric.length > 0 && check.evidencePaths.length > 0,
+      reason:
+        check.rubric.length > 0 && check.evidencePaths.length > 0
+          ? null
+          : "open checks need a rubric and evidence paths",
+    };
+  }
   const outputs: string[] = [];
   for (let i = 0; i < passes; i++) {
-    const result = await run(check.code);
+    const result = await run(check.demonstration.code);
     if (result.status !== "ok") {
-      return { verified: false, reason: `reference ${result.status} on pass ${i + 1}` };
+      return { verified: false, reason: `demonstration ${result.status} on pass ${i + 1}` };
     }
     outputs.push(result.stdout.replace(/\r\n/g, "\n"));
   }
   for (let i = 1; i < outputs.length; i++) {
     if (outputs[i] !== outputs[0]) {
-      return { verified: false, reason: "reference output diverged between passes" };
+      return { verified: false, reason: "demonstration output diverged between passes" };
     }
   }
-  if (outputs[0] !== check.referenceStdout) {
-    return { verified: false, reason: "reference output does not match the recorded answer" };
+  if (outputs[0] !== check.demonstration.observedStdout) {
+    return { verified: false, reason: "demonstration does not match the recorded observation" };
   }
   return { verified: true, reason: null };
+}
+
+export interface RubricHit {
+  point: string;
+  hit: boolean;
+  /**
+   * Passage from the answer supporting the judgment. Must occur in the
+   * answer verbatim — the package verifies that mechanically. But it only
+   * has to *mean* the point, not restate it: paraphrase counts. This splits
+   * the job: code checks the excerpt is real, the model judges the meaning.
+   */
+  excerpt: string | null;
+  /** One line on why the excerpt means the point (or why it misses). */
+  why: string | null;
 }
 
 export interface Grade {
@@ -114,13 +204,34 @@ export interface Grade {
   reason: string | null;
 }
 
-/** Exact match on normalized stdout. Wrong-and-certain is the headline event,
- *  so grading never awards partial credit. */
-export function gradeAnswer(check: Check, stdout: string, status: string): Grade {
-  if (status !== "ok") return { correct: false, reason: `ran ${status}, expected ok` };
-  const normalized = stdout.replace(/\r\n/g, "\n");
-  if (normalized === check.referenceStdout) return { correct: true, reason: null };
-  return { correct: false, reason: "stdout does not match the reference output" };
+/**
+ * Rubric rule, applied to every kind: correct iff every point is hit with
+ * a real excerpt from the answer. Meaning counts, wording doesn't — but an
+ * unsupported judgment counts for nothing. The model fills the hits later;
+ * the package owns the rule so a generous grader cannot pass a partial
+ * answer. Wrong-and-certain stays the headline event, so grading never
+ * awards partial credit.
+ */
+export function gradeRubric(check: Check, answerText: string, hits: RubricHit[]): Grade {
+  if (hits.length !== check.rubric.length) {
+    return {
+      correct: false,
+      reason: `expected ${check.rubric.length} rubric judgments, got ${hits.length}`,
+    };
+  }
+  for (let i = 0; i < hits.length; i++) {
+    const hit = hits[i];
+    if (hit === undefined || hit.point !== check.rubric[i]) {
+      return { correct: false, reason: "rubric judgments do not match the rubric" };
+    }
+    if (!hit.hit || hit.excerpt === null || hit.excerpt.length === 0) {
+      return { correct: false, reason: `rubric point missed: ${hit.point}` };
+    }
+    if (!answerText.includes(hit.excerpt)) {
+      return { correct: false, reason: `supporting passage not found in answer: ${hit.point}` };
+    }
+  }
+  return { correct: true, reason: null };
 }
 
 /** Top-N riskiest hunks become check candidates. */

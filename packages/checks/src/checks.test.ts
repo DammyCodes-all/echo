@@ -1,13 +1,15 @@
 import { runWasm } from "@echo/sandbox";
 import { describe, expect, it } from "vitest";
 import {
-  gradeAnswer,
+  gradeRubric,
   type HunkInput,
-  makePredictCheck,
+  KIND_DIFFICULTY,
+  makeCheck,
+  orderForSession,
   type RunnerResult,
   rankHunks,
   selectChecks,
-  verifyCheck,
+  verifyDemonstration,
 } from "./index";
 
 const risky: HunkInput = {
@@ -50,36 +52,129 @@ describe("check targeting", () => {
   });
 });
 
-describe("verification gate", () => {
-  it("passes a deterministic reference twice", { timeout: 30_000 }, async () => {
-    const check = makePredictCheck('console.log("seven");', "seven\n");
-    const verification = await verifyCheck(check, wasmRunner);
-    expect(verification).toEqual({ verified: true, reason: null });
+describe("ownership kinds", () => {
+  it("orders easiest first: consequence to teach_back", () => {
+    expect(KIND_DIFFICULTY.consequence).toBeLessThan(KIND_DIFFICULTY.decision);
+    expect(KIND_DIFFICULTY.decision).toBeLessThan(KIND_DIFFICULTY.tradeoff);
+    expect(KIND_DIFFICULTY.tradeoff).toBeLessThan(KIND_DIFFICULTY.blast_radius);
+    expect(KIND_DIFFICULTY.blast_radius).toBeLessThan(KIND_DIFFICULTY.teach_back);
+    const ordered = orderForSession([
+      makeCheck("teach_back", "Explain auth.", ["src/auth.ts"], ["token checked first"]),
+      makeCheck(
+        "blast_radius",
+        "What breaks if the guard is removed, and why there?",
+        ["src/auth.ts"],
+        ["unauthenticated requests pass through", "the guard was the only check"],
+        { code: 'console.log("unguarded");', observedStdout: "unguarded\n" },
+      ),
+      makeCheck("consequence", "What did this open up?", ["src/auth.ts"], ["null passes through"]),
+    ]);
+    expect(ordered.map((check) => check.kind)).toEqual([
+      "consequence",
+      "blast_radius",
+      "teach_back",
+    ]);
   });
 
-  it("rejects a reference whose recorded answer is wrong", { timeout: 30_000 }, async () => {
-    const check = makePredictCheck('console.log("seven");', "eight\n");
-    const verification = await verifyCheck(check, wasmRunner);
-    expect(verification.verified).toBe(false);
-    expect(verification.reason).toContain("recorded answer");
+  it("refuses checks without a rubric", () => {
+    expect(() => makeCheck("decision", "Why?", ["a.ts"], [])).toThrowError(/rubric/);
   });
 
-  it("rejects a reference that times out", { timeout: 30_000 }, async () => {
-    const check = makePredictCheck("for (;;) {}", "");
-    const verification = await verifyCheck(check, async () => ({
-      status: "timeout",
-      stdout: "",
-    }));
-    expect(verification.verified).toBe(false);
-    expect(verification.reason).toContain("timeout");
+  it("requires a demonstration for blast_radius and forbids it elsewhere", () => {
+    expect(() => makeCheck("blast_radius", "What breaks?", ["a.ts"], ["x breaks"])).toThrowError(
+      /demonstration/,
+    );
+    expect(() =>
+      makeCheck("decision", "Why?", ["a.ts"], ["x"], {
+        code: 'console.log("x");',
+        observedStdout: "x\n",
+      }),
+    ).toThrowError(/only blast_radius/);
   });
 });
 
-describe("grading", () => {
-  it("accepts exact stdout and rejects anything else", () => {
-    const check = makePredictCheck('console.log("seven");', "seven\n");
-    expect(gradeAnswer(check, "seven\n", "ok").correct).toBe(true);
-    expect(gradeAnswer(check, "seven", "ok").correct).toBe(false);
-    expect(gradeAnswer(check, "", "timeout").correct).toBe(false);
+describe("demonstration gate", () => {
+  it("passes a stable demonstration twice", { timeout: 30_000 }, async () => {
+    const check = makeCheck(
+      "blast_radius",
+      "What breaks if the guard is removed, and why there?",
+      ["src/auth.ts"],
+      ["unauthenticated requests pass through"],
+      { code: 'console.log("unguarded");', observedStdout: "unguarded\n" },
+    );
+    const verification = await verifyDemonstration(check, wasmRunner);
+    expect(verification).toEqual({ verified: true, reason: null });
+  });
+
+  it("rejects a demonstration that does not match the observation", {
+    timeout: 30_000,
+  }, async () => {
+    const check = makeCheck("blast_radius", "What breaks?", ["src/auth.ts"], ["it throws"], {
+      code: 'console.log("unguarded");',
+      observedStdout: "throws\n",
+    });
+    const verification = await verifyDemonstration(check, wasmRunner);
+    expect(verification.verified).toBe(false);
+    expect(verification.reason).toContain("recorded observation");
+  });
+
+  it("verifies open checks structurally", async () => {
+    const check = makeCheck("tradeoff", "What did we pay?", ["a.ts"], ["spawn cost"]);
+    const verification = await verifyDemonstration(check, wasmRunner);
+    expect(verification).toEqual({ verified: true, reason: null });
+  });
+});
+
+describe("rubric grading", () => {
+  it("passes on meaning, not wording — but the support must be real", () => {
+    const check = makeCheck(
+      "consequence",
+      "What opened up?",
+      ["a.ts"],
+      ["null passes", "no throw"],
+    );
+    const answer = "Null values flow through and nothing raises an error.";
+    expect(
+      gradeRubric(check, answer, [
+        {
+          point: "null passes",
+          hit: true,
+          excerpt: "Null values flow through",
+          why: "says nulls pass",
+        },
+        {
+          point: "no throw",
+          hit: true,
+          excerpt: "nothing raises an error",
+          why: "says no error raised",
+        },
+      ]).correct,
+    ).toBe(true);
+    // Paraphrase hits; invented support fails even when marked hit.
+    expect(
+      gradeRubric(check, answer, [
+        {
+          point: "null passes",
+          hit: true,
+          excerpt: "Null values flow through",
+          why: "ok",
+        },
+        { point: "no throw", hit: true, excerpt: "it throws loudly", why: "invented" },
+      ]),
+    ).toEqual({
+      correct: false,
+      reason: "supporting passage not found in answer: no throw",
+    });
+    expect(
+      gradeRubric(check, answer, [
+        {
+          point: "null passes",
+          hit: true,
+          excerpt: "Null values flow through",
+          why: "ok",
+        },
+        { point: "no throw", hit: false, excerpt: null, why: "not mentioned" },
+      ]).correct,
+    ).toBe(false);
   });
 });
