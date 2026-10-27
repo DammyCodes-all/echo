@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseExportDocument, reconcileExport, runRedactedExport } from "./export";
+import {
+  classifyExportFailure,
+  parseExportDocument,
+  reconcileExport,
+  runRedactedExport,
+} from "./export";
 
 describe("parseExportDocument", () => {
   it("mints keys from stream identity and flags unknown schemas", () => {
@@ -41,5 +46,20 @@ describe("runRedactedExport", () => {
     const result = runRedactedExport("ses_missing", "muse-binary-that-does-not-exist");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.diagnostic).toBe("export_unavailable");
+  });
+});
+
+describe("classifyExportFailure", () => {
+  it("latches off only on a missing binary, retries timeouts and crashes", () => {
+    expect(classifyExportFailure(Object.assign(new Error("spawn"), { code: "ENOENT" }))).toBe(
+      "export_unavailable",
+    );
+    // Verified against node: timeouts surface as status null + ETIMEDOUT.
+    expect(classifyExportFailure(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" }))).toBe(
+      "export_failed",
+    );
+    expect(classifyExportFailure(new Error("boom"))).toBe("export_failed");
+    expect(classifyExportFailure(undefined)).toBe("export_failed");
+    expect(classifyExportFailure(null)).toBe("export_failed");
   });
 });

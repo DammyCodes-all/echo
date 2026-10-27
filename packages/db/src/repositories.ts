@@ -149,6 +149,13 @@ export function getSessionEventIds(db: EchoDb, sessionId: string): Set<string> {
   return new Set(rows.map((row) => row.id));
 }
 
+export function hasEventKind(db: EchoDb, sessionId: string, kind: string): boolean {
+  const row = db
+    .prepare("SELECT 1 AS ok FROM events WHERE session_id = ? AND kind = ? LIMIT 1")
+    .get(sessionId, kind) as { ok: number } | undefined;
+  return row !== undefined;
+}
+
 export function maxTapeSeq(db: EchoDb, sessionId: string): number {
   const row = db
     .prepare("SELECT COALESCE(MAX(tape_seq), 0) AS maxSeq FROM events WHERE session_id = ?")

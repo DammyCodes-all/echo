@@ -82,6 +82,17 @@ export type ExportRunResult =
 
 // Thin wrapper, never throws: a missing binary or failed export is a
 // diagnostic, and live capture remains the tape.
+export function classifyExportFailure(error: unknown): "export_unavailable" | "export_failed" {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "ENOENT"
+  ) {
+    return "export_unavailable";
+  }
+  return "export_failed";
+}
+
 export function runRedactedExport(sessionId: string, museBin = "muse"): ExportRunResult {
   let dir: string;
   try {
@@ -101,7 +112,10 @@ export function runRedactedExport(sessionId: string, museBin = "muse"): ExportRu
     );
     if (result.status !== 0) {
       rmSync(dir, { recursive: true, force: true });
-      return { ok: false, diagnostic: result.error ? "export_unavailable" : "export_failed" };
+      // Only a missing binary is permanent (and worth latching off for the
+      // rest of the boot). Timeouts and other spawn failures are transient:
+      // both surface as result.error, so discriminate on the code.
+      return { ok: false, diagnostic: classifyExportFailure(result.error) };
     }
     return {
       ok: true,

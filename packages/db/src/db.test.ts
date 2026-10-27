@@ -8,6 +8,7 @@ import {
   getSession,
   getSessionEventIds,
   getSnapshotByCommit,
+  hasEventKind,
   insertSnapshot,
   latestSnapshot,
   listProjects,
@@ -104,6 +105,9 @@ describe("repositories", () => {
     expect(page.map((row) => row.tape_seq)).toEqual([1, 2]);
     expect(page[0]?.kind).toBe("tool.completed");
     expect(page[0]?.tool_call_id).toBe("prt_0");
+    expect(hasEventKind(db, "ses_1", "tool.completed")).toBe(true);
+    expect(hasEventKind(db, "ses_1", "capture.reconciled")).toBe(false);
+    expect(hasEventKind(db, "ses_missing", "tool.completed")).toBe(false);
     db.close();
   });
 
