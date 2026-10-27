@@ -83,3 +83,31 @@ notes.
 - status: done
 - evidence: `pnpm exec vitest run packages/checks` → 9 passed; `tsc`, `biome` clean
 - notes: Both puzzle kinds cut with no warm-up round — models answer them unsupervised, so they prove no ownership (new age, new bar). Five kinds ramp consequence → decision → tradeoff → blast_radius → teach_back. Exact grading for runnable only; rubric kinds grade against a rubric, never exact-matched. Attempt tree promoted to primary question source.
+
+## 2026-10-28 — Q&A retrieval + citation validation (first slice)
+
+- item: Phase 4 retrieval remainder — in-memory evidence bundle, pre-model refusal, citation validation
+- status: done
+- evidence: `pnpm typecheck && pnpm lint && pnpm test && pnpm build` → 24 files / 137 passed, 130 files lint-clean; `pnpm exec vitest run packages/retrieval` → 6 passed
+- notes: Deterministic scoring (word overlap gates, kind weight ranks, tape_seq tiebreak); quotes must occur verbatim, quoteless claims stay weak. Caught and fixed during tests: kind weight alone admitted irrelevant events. SQLite FTS5 replaces the inside later without changing the answer shape. Also: AGENTS.md now lets agents run installs themselves, falling back to a user one-liner on failure.
+
+## 2026-10-28 — Retrieval upgrades: summaries, attempt bonus, token budget
+
+- item: Phase 4 retrieval polish — per-kind summaries, reverted-attempt bonus, best-first character budget
+- status: done
+- evidence: full gate green → 24 files / 140 passed, 130 files lint-clean; `pnpm exec vitest run packages/retrieval` → 9 passed
+- notes: Summaries now keep exit codes, commit oids, agent-said text, gap codes. Try-first questions boost superseded writes (earliest attempt ranks first, proven on fixture). Bundle fills best-first within ~48k chars, top hit always survives. Fixed a wrong test assumption (only one fixture line mentions format). FTS5 + embeddings deliberately deferred.
+
+## 2026-10-28 — Strip encrypted reasoning from OpenCode imports
+
+- item: `capture-opencode/map.ts` sanitizeEvidence; live-tape verification
+- status: done
+- evidence: full gate green → 24 files / 142 passed; live import of `ses_e81ec7e…` → 0 live ciphertext blobs (24 keys, all `[withheld]`); retrieval probes correct (Downloads read top-hit, France refused)
+- notes: Ciphertext hid in two places — reasoning parts and tool-result content embedding serialized conversations as text. Readable rationale kept as agent-stated; empty reasoning dropped; string-embedded blobs scrubbed to `[withheld]` keeping strings parseable. Live session is still growing (1158 → 1186 events across trial runs).
+
+## 2026-10-28 — Merge origin/main (third divergence)
+
+- item: merge remote ingest/export reconciliation into local ownership-checks work
+- status: done
+- evidence: `git merge origin/main` → BuildTracker append-append conflict resolved by keeping both entries; gate green (typecheck clean, biome 129 files, `pnpm test` → 23 files / 131 passed, build)
+- notes: Base cc69334, merged as 695e620. Only docs/BuildTracker.md conflicted; code sides disjoint (local checks/docs, remote muse-ingest/export/finalize/db).

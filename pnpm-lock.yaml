@@ -457,6 +457,10 @@ importers:
       '@echo/db':
         specifier: workspace:*
         version: link:../db
+    devDependencies:
+      '@echo/fixtures':
+        specifier: workspace:*
+        version: link:../fixtures
 
   packages/sandbox:
     dependencies:
