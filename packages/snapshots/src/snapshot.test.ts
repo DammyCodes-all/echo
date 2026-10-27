@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import git from "isomorphic-git";
 import { describe, expect, it } from "vitest";
+import { readShadowBlob } from "./git";
 import { loadManifest } from "./manifest";
 import { snapshotGitTree, snapshotWorkingTree } from "./snapshot";
 
@@ -244,6 +245,28 @@ describe("snapshotGitTree", () => {
     });
     expect(result.fileCount).toBe(1);
     expect(result.files.map((file) => file.path)).toEqual(["src/app.ts"]);
+  });
+
+  it("reads captured blobs back out of the shadow repo", async () => {
+    const { root, dataDir, shadowDir } = projectionDir();
+    write(root, "README.md", "hello\n");
+
+    const result = await snapshotWorkingTree({
+      shadowDir,
+      root,
+      dataDir,
+      sessionId: "ses_1",
+      projectId: "prj_1",
+      trigger: "baseline",
+      eventId: "evt_snap_1",
+      takenAt: TAKE_AT,
+    });
+    const entry = result.files.find((file) => file.path === "README.md");
+    expect(entry?.blobOid).toMatch(/^[0-9a-f]{40}$/);
+
+    const blob = await readShadowBlob(shadowDir, entry?.blobOid as string);
+    expect(Buffer.from(blob).toString("utf8")).toBe("hello\n");
+    await expect(readShadowBlob(shadowDir, "0".repeat(40))).rejects.toThrow();
   });
 
   it("fails loudly when the source commit is gone", async () => {
