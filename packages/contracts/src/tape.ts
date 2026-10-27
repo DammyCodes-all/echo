@@ -68,6 +68,8 @@ export const TapeEnvelopeSchema = z.object({
   v: z.literal(1),
   tape_seq: z.number().int().nonnegative(),
   event_id: z.string().min(1),
+  // source-record identity: revisions of one record share it, distinct events do not
+  record_key: z.string().min(1).nullable().default(null),
   session_id: z.string().min(1),
   project_id: z.string().min(1),
   kind: TapeEventKindSchema,
