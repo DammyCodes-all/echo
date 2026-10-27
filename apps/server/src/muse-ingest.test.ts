@@ -12,7 +12,7 @@ import { runMuseHook } from "@echo/capture-muse";
 import { projectIdForDirectory } from "@echo/core";
 import { openEchoDb } from "@echo/db";
 import { describe, expect, it } from "vitest";
-import { createMuseIngest } from "./muse-ingest";
+import { createMuseIngest, shouldExportSession } from "./muse-ingest";
 
 const log = { info: () => {}, error: () => {} };
 
@@ -257,6 +257,193 @@ describe("createMuseIngest spool drain", () => {
       "utf8",
     );
     expect(tape).toContain("hook_spool");
+    db.close();
+  });
+});
+
+describe("shouldExportSession", () => {
+  it("exports only quiescent sessions with unreconciled live events", () => {
+    expect(shouldExportSession({ stablePolls: 2, hasEvents: true, reconciled: false })).toBe(true);
+    expect(shouldExportSession({ stablePolls: 5, hasEvents: true, reconciled: false })).toBe(true);
+    expect(shouldExportSession({ stablePolls: 1, hasEvents: true, reconciled: false })).toBe(false);
+    expect(shouldExportSession({ stablePolls: 2, hasEvents: false, reconciled: false })).toBe(
+      false,
+    );
+    expect(shouldExportSession({ stablePolls: 2, hasEvents: true, reconciled: true })).toBe(false);
+  });
+});
+
+describe("createMuseIngest export reconciliation", () => {
+  function streamEnvelope(
+    streamId: string,
+    seq: number,
+    id: string,
+    workspaceRoot: string,
+  ): string {
+    return JSON.stringify({
+      schema_version: 1,
+      id,
+      stream: { kind: "session", id: streamId },
+      sequence: seq,
+      recorded_at: 1793097343000000 + seq * 1000,
+      record_type: "event",
+      durability: "durable",
+      causation_id: null,
+      payload_type: "runtime.user_intent.accepted",
+      payload_schema_version: 1,
+      payload: { kind: "accepted", metadata: { workspace_root: workspaceRoot } },
+    });
+  }
+
+  function writeMuseStub(dir: string, name: string, body: string): string {
+    const path = join(dir, name);
+    writeFileSync(path, body, { mode: 0o755 });
+    return path;
+  }
+
+  function exportFixture(events: unknown[], schemaVersion = 1): string {
+    return JSON.stringify({ export_schema_version: schemaVersion, events, diagnostics: [] });
+  }
+
+  it("exports quiescent sessions once and records reconciliation", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-export-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-export-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-export-proj-"));
+    const dir = join(sessionsDir, "2026", "10", "28", "ses_exp");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(`${dir}/session.jsonl`, `${streamEnvelope("ses_exp", 3, "id-3", projectRoot)}\n`);
+    const exportJson = exportFixture([
+      { kind: "record", envelope: { stream: { id: "ses_exp" }, sequence: 3 } },
+      { kind: "record", envelope: { stream: { id: "ses_exp" }, sequence: 9 } },
+    ]);
+    const museBin = writeMuseStub(
+      dataDir,
+      "muse-stub.sh",
+      `#!/bin/sh\nout="";\nwhile [ $# -gt 0 ]; do\n  if [ "$1" = "--out" ]; then out="$2"; shift 2; else shift; fi\ndone\ncat > "$out" <<'EXPORT_EOF'\n${exportJson}\nEXPORT_EOF\n`,
+    );
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({
+      dataDir,
+      db,
+      log,
+      sessionsDir,
+      projects: [projectRoot],
+      museBin,
+    });
+    expect((await ingest.runOnce()).eventsAdded).toBe(1);
+    expect((await ingest.runOnce()).eventsAdded).toBe(0);
+    const reconciled = await ingest.runOnce();
+    expect(reconciled.reconciled).toBe(1);
+    expect(reconciled.eventsAdded).toBe(2);
+    const tape = readFileSync(
+      join(
+        dataDir,
+        "projects",
+        projectIdForDirectory(projectRoot),
+        "sessions",
+        "ses_exp",
+        "tape.jsonl",
+      ),
+      "utf8",
+    );
+    const reconciledLines = tape.split("\n").filter((line) => line.includes("capture.reconciled"));
+    expect(reconciledLines).toHaveLength(1);
+    expect(JSON.parse(reconciledLines[0] as string).payload).toMatchObject({
+      added: 1,
+      merged: 1,
+      export_schema_version: 1,
+    });
+    expect(tape).toContain("agent.unknown");
+    const quiet = await ingest.runOnce();
+    expect(quiet.eventsAdded).toBe(0);
+    expect(quiet.reconciled).toBe(0);
+    db.close();
+  });
+
+  it("keeps the live tape and retries when export fails", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-export-fail-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-export-fail-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-export-fail-proj-"));
+    const dir = join(sessionsDir, "2026", "10", "28", "ses_fail");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      `${dir}/session.jsonl`,
+      `${streamEnvelope("ses_fail", 3, "id-3", projectRoot)}\n`,
+    );
+    const museBin = writeMuseStub(dataDir, "muse-fail.sh", "#!/bin/sh\nexit 3\n");
+    const errors: unknown[][] = [];
+    const loudLog = {
+      info: () => {},
+      error: (...args: unknown[]) => {
+        errors.push(args);
+      },
+    };
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({
+      dataDir,
+      db,
+      log: loudLog,
+      sessionsDir,
+      projects: [projectRoot],
+      museBin,
+    });
+    expect((await ingest.runOnce()).eventsAdded).toBe(1);
+    expect((await ingest.runOnce()).eventsAdded).toBe(0);
+    await ingest.runOnce();
+    expect(
+      errors.filter((args) => JSON.stringify(args).includes("muse export failed")),
+    ).toHaveLength(1);
+    await ingest.runOnce();
+    expect(
+      errors.filter((args) => JSON.stringify(args).includes("muse export failed")),
+    ).toHaveLength(2);
+    const tape = readFileSync(
+      join(
+        dataDir,
+        "projects",
+        projectIdForDirectory(projectRoot),
+        "sessions",
+        "ses_fail",
+        "tape.jsonl",
+      ),
+      "utf8",
+    );
+    expect(tape).not.toContain("capture.reconciled");
+    db.close();
+  });
+
+  it("flags a missing export binary once per boot", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-export-missing-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-export-missing-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-export-missing-proj-"));
+    const dir = join(sessionsDir, "2026", "10", "28", "ses_nobin");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      `${dir}/session.jsonl`,
+      `${streamEnvelope("ses_nobin", 3, "id-3", projectRoot)}\n`,
+    );
+    const errors: unknown[][] = [];
+    const loudLog = {
+      info: () => {},
+      error: (...args: unknown[]) => {
+        errors.push(args);
+      },
+    };
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({
+      dataDir,
+      db,
+      log: loudLog,
+      sessionsDir,
+      projects: [projectRoot],
+      museBin: "/nonexistent/muse-binary-xyz",
+    });
+    for (let i = 0; i < 6; i++) {
+      await ingest.runOnce();
+    }
+    expect(
+      errors.filter((args) => JSON.stringify(args).includes("muse export unavailable")),
+    ).toHaveLength(1);
     db.close();
   });
 });

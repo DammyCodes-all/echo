@@ -6,6 +6,7 @@ import {
   emptyLinks,
   finalizeMuseSession,
   parseSpoolFile,
+  runRedactedExport,
   spoolEntryKey,
   spoolRoot,
 } from "@echo/capture-muse";
@@ -15,6 +16,7 @@ import {
   type EchoDb,
   getSession,
   getSessionEventIds,
+  hasEventKind,
   insertStampedEvents,
   maxTapeSeq,
   upsertProject,
@@ -33,6 +35,7 @@ export interface MuseIngestOptions {
   log: MuseIngestLogger;
   sessionsDir?: string;
   projects: string[];
+  museBin?: string;
 }
 
 export interface MuseIngestResult {
@@ -42,10 +45,24 @@ export interface MuseIngestResult {
   skipped: number;
   drained: number;
   unattributed: number;
+  reconciled: number;
 }
 
 const MAX_LOG_BYTES = 128 * 1024 * 1024;
 const MAX_SPOOL_PER_POLL = 200;
+// Idle polls before a session counts as quiescent: with the default 3s poll
+// interval this is ~6s of log silence, past the 1.5s finalization window.
+export const QUIESCENT_POLLS = 2;
+
+export interface ExportCandidate {
+  stablePolls: number;
+  hasEvents: boolean;
+  reconciled: boolean;
+}
+
+export function shouldExportSession(candidate: ExportCandidate): boolean {
+  return candidate.stablePolls >= QUIESCENT_POLLS && candidate.hasEvents && !candidate.reconciled;
+}
 
 export function resolveMuseSessionsDir(env: NodeJS.ProcessEnv = process.env): string {
   if (env.MUSE_SESSIONS_DIR) return env.MUSE_SESSIONS_DIR;
@@ -150,10 +167,17 @@ export function createMuseIngest(options: MuseIngestOptions) {
   let timer: NodeJS.Timeout | null = null;
   let running = false;
   let lastUnattributed = 0;
+  // Set once per boot when the muse binary is missing: export_unavailable is
+  // environmental, not per-session, so retrying every poll only spams the log.
+  let exportBroken = false;
   // Size+mtime of files already fully processed. A poll skips re-reading,
   // re-parsing and re-hashing unchanged logs; the tape already holds their
   // events. Set only on success so failures retry next poll.
   const seen = new Map<string, { size: number; mtimeMs: number }>();
+  // Consecutive unchanged polls per log. Reaching QUIESCENT_POLLS means the
+  // session went quiet; reset to 0 whenever the file changes or processing
+  // fails so only stably-quiet sessions reconcile.
+  const stable = new Map<string, number>();
 
   function emptyResult(): MuseIngestResult {
     return {
@@ -163,6 +187,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
       skipped: 0,
       drained: 0,
       unattributed: 0,
+      reconciled: 0,
     };
   }
 
@@ -297,6 +322,129 @@ export function createMuseIngest(options: MuseIngestOptions) {
     }
   }
 
+  // Export reconciliation for one quiescent session per poll, at most.
+  // Runs after the scan so the live tape is current. Skips sessions that were
+  // never ingested (no project attribution), have no events, or already carry
+  // a capture.reconciled marker. Failures keep the live tape and retry later,
+  // except a missing binary which is flagged once per boot.
+  function exportOnce(result: MuseIngestResult, observedIso: string, found: Set<string>): void {
+    if (exportBroken) return;
+    const museBin = options.museBin ?? "muse";
+    for (const sessionFile of [...found].sort()) {
+      const sessionId = basename(dirname(sessionFile));
+      if (
+        !shouldExportSession({
+          stablePolls: stable.get(sessionFile) ?? 0,
+          hasEvents: getSessionEventIds(db, sessionId).size > 0,
+          reconciled: hasEventKind(db, sessionId, "capture.reconciled"),
+        })
+      ) {
+        continue;
+      }
+      let content: string;
+      try {
+        const stat = statSync(sessionFile);
+        if (stat.size > MAX_LOG_BYTES) continue;
+        content = readFileSync(sessionFile, "utf8");
+      } catch (error) {
+        log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
+        continue;
+      }
+      const run = runRedactedExport(sessionId, museBin);
+      if (!run.ok) {
+        if (run.diagnostic === "export_unavailable") {
+          exportBroken = true;
+          log.error({ session_id: sessionId }, "muse export unavailable, skipping");
+        } else {
+          log.error({ session_id: sessionId }, "muse export failed");
+        }
+        return;
+      }
+      try {
+        // NOTE: pass the raw document here. finalizeMuseSession parses it
+        // itself; parsing it twice (e.g. via parseExportFile first) yields an
+        // empty reconcile because the parsed shape has no export envelope.
+        let exportDoc: unknown;
+        try {
+          exportDoc = JSON.parse(readFileSync(run.docPath, "utf8"));
+        } catch {
+          log.error({ session_id: sessionId }, "muse export unparseable");
+          return;
+        }
+        const row = getSession(db, sessionId);
+        if (!row) {
+          // Session row vanished mid-poll; the next scan re-creates it.
+          return;
+        }
+        const finalized = finalizeMuseSession({
+          sessionId,
+          projectId: row.projectId,
+          build: null,
+          liveContent: content,
+          childContents: childContents(sessionFile),
+          exportDoc,
+          observedAt: new Date(observedIso),
+        });
+        const tapePath = join(
+          dataDir,
+          "projects",
+          row.projectId,
+          "sessions",
+          sessionId,
+          "tape.jsonl",
+        );
+        const existing = getSessionEventIds(db, sessionId);
+        const fresh = finalized.events.filter((event) => !existing.has(event.event_id));
+        const { event: reconciledEvent } = buildTapeEvent({
+          kind: "capture.reconciled",
+          payload: {
+            added: finalized.reconciled?.added ?? 0,
+            merged: finalized.reconciled?.merged ?? 0,
+            export_schema_version: finalized.reconciled?.schemaVersion ?? null,
+          },
+          payloadType: "export",
+          recordType: "reconcile",
+          sequence: null,
+          ts: observedIso,
+          recordKey: `muse:${sessionId}:export:reconciled`,
+          links: emptyLinks(),
+          diagnostics: finalized.diagnostics
+            .filter((entry) => entry.startsWith("export_"))
+            .slice(0, 16),
+          sessionId,
+          projectId: row.projectId,
+          build: null,
+          observedAt: observedIso,
+          tapeSeq: 0,
+          schema: null,
+          origin: "live",
+        });
+        const all = [...fresh];
+        if (!existing.has(reconciledEvent.event_id)) all.push(reconciledEvent);
+        result.eventsAdded += persistFresh(sessionId, tapePath, all);
+        if (finalized.reconciled) {
+          upsertSession(db, {
+            id: sessionId,
+            projectId: row.projectId,
+            agent: "muse",
+            model: null,
+            directory: extractWorkspaceRoot(content),
+            title: null,
+            startedAt: finalized.events[0]?.ts ?? null,
+            tapePath,
+            captureQuality: finalized.quality,
+          });
+          result.reconciled += 1;
+        }
+      } catch (error) {
+        log.error({ err: String(error), session_id: sessionId }, "muse export reconcile failed");
+      } finally {
+        run.cleanup();
+      }
+      return;
+    }
+  }
+
   async function scan(): Promise<MuseIngestResult> {
     const result = emptyResult();
     if (projects.length === 0) return result;
@@ -306,6 +454,9 @@ export function createMuseIngest(options: MuseIngestOptions) {
     const found = new Set(walkSessionLogs(sessionsDir));
     for (const key of seen.keys()) {
       if (!found.has(key)) seen.delete(key);
+    }
+    for (const key of stable.keys()) {
+      if (!found.has(key)) stable.delete(key);
     }
     for (const sessionFile of found) {
       result.scanned += 1;
@@ -327,6 +478,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
         previous.size === fingerprint.size &&
         previous.mtimeMs === fingerprint.mtimeMs
       ) {
+        stable.set(sessionFile, (stable.get(sessionFile) ?? 0) + 1);
         continue;
       }
       let content: string;
@@ -362,6 +514,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
         });
       } catch (error) {
         log.error({ err: String(error), session_id: sessionId }, "muse finalize failed");
+        stable.set(sessionFile, 0);
         continue;
       }
       const quality: CaptureQuality = finalized.quality;
@@ -386,7 +539,9 @@ export function createMuseIngest(options: MuseIngestOptions) {
         result.capturedSessions += 1;
       }
       seen.set(sessionFile, fingerprint);
+      stable.set(sessionFile, 0);
     }
+    exportOnce(result, observedAt, found);
     return result;
   }
 
