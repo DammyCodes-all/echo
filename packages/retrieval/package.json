@@ -10,5 +10,8 @@
     "@echo/contracts": "workspace:*",
     "@echo/core": "workspace:*",
     "@echo/db": "workspace:*"
+  },
+  "devDependencies": {
+    "@echo/fixtures": "workspace:*"
   }
 }

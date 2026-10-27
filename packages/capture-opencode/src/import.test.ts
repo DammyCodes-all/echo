@@ -159,6 +159,10 @@ describe("importOpenCodeSession", () => {
     });
     const responsePayload = response?.payload as { parts: Array<{ type: string }> };
     expect(responsePayload.parts.map((part) => part.type)).toEqual(["reasoning"]);
+    // Readable rationale stays; the part carries nothing else (no native blob).
+    expect(response?.payload).toMatchObject({
+      parts: [{ type: "reasoning", text: "I should read the file first." }],
+    });
 
     const tool = result.events[3];
     expect(tool?.links.tool_call_id).toBe("prt_1");
@@ -271,6 +275,118 @@ describe("importOpenCodeSession", () => {
     const pending = result.events.find((event) => event.links.tool_call_id === "prt_3");
     expect(pending?.kind).toBe("tool.requested");
     expect(pending?.diagnostics).toContain("tool_pending");
+  });
+
+  it("strips encrypted reasoning but keeps readable rationale", () => {
+    const db = makeStore();
+    db.prepare("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?)").run(
+      "msg_enc",
+      SESSION_ID,
+      "assistant",
+      95,
+      1793097820000,
+      JSON.stringify({
+        agent: "build",
+        time: { created: 1793097820000 },
+        content: [
+          {
+            type: "reasoning",
+            text: "",
+            native: { itemId: "rs_1", reasoningEncryptedContent: "Q-PaDc2lhdGhlY2lwaGVy" },
+          },
+          {
+            type: "reasoning",
+            text: "I will check the config.",
+            native: { phase: "thinking" },
+          },
+          { type: "text", text: "Checking the config now." },
+          // Tool results embed the preceding conversation, ciphertext included.
+          {
+            type: "tool",
+            id: "prt_enc",
+            name: "read",
+            state: {
+              status: "completed",
+              input: { path: "echo.json" },
+              content: [
+                {
+                  type: "reasoning",
+                  text: "",
+                  native: { reasoningEncryptedContent: "Q-PaDc2lhdGhlY2lwaGVy" },
+                },
+                { type: "text", text: "config contents" },
+              ],
+            },
+          },
+        ],
+      }),
+    );
+
+    const result = importSession(db);
+    db.close();
+
+    expect(JSON.stringify(result.events)).not.toContain("reasoningEncryptedContent");
+    expect(JSON.stringify(result.events)).not.toContain("rs_1");
+    const response = result.events.find(
+      (event) => event.record_key === `opencode:${SESSION_ID}:msg:msg_enc`,
+    );
+    expect(response?.kind).toBe("model.response");
+    expect(response?.payload).toMatchObject({
+      parts: [
+        { type: "reasoning", text: "I will check the config." },
+        { type: "text", text: "Checking the config now." },
+      ],
+    });
+    const tool = result.events.find(
+      (event) => event.record_key === `opencode:${SESSION_ID}:msg:msg_enc:tool:prt_enc`,
+    );
+    expect(tool?.kind).toBe("tool.completed");
+    expect(tool?.payload).toMatchObject({
+      content: [{ type: "text", text: "config contents" }],
+    });
+  });
+
+  it("scrubs ciphertext embedded in string tool content", () => {
+    const db = makeStore();
+    db.prepare("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?)").run(
+      "msg_strembed",
+      SESSION_ID,
+      "assistant",
+      96,
+      1793097830000,
+      JSON.stringify({
+        time: { created: 1793097830000 },
+        content: [
+          {
+            type: "tool",
+            id: "prt_strembed",
+            name: "read",
+            state: {
+              status: "completed",
+              input: { path: "notes.txt" },
+              content:
+                'prior context {\n "type": "reasoning",\n "text": "",\n "reasoningEncryptedContent": "Q-PaDc2lhdGhlY2lwaGVy"\n}',
+            },
+          },
+        ],
+      }),
+    );
+
+    const result = importSession(db);
+    db.close();
+
+    expect(JSON.stringify(result.events)).not.toContain("Q-PaDc2lhdGhlY2lwaGVy");
+    const tool = result.events.find(
+      (event) => event.record_key === `opencode:${SESSION_ID}:msg:msg_strembed:tool:prt_strembed`,
+    );
+    const payload = tool?.payload as { content: string };
+    expect(payload.content).toContain('"reasoningEncryptedContent":"[withheld]"');
+    // Still parses: the scrub swaps only the value, braces and commas untouched.
+    const embedded = payload.content.slice(
+      payload.content.indexOf("{"),
+      payload.content.lastIndexOf("}") + 1,
+    );
+    expect(() => JSON.parse(embedded)).not.toThrow();
   });
 
   it("lists sessions with their directory for project matching", () => {

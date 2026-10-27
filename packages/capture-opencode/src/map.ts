@@ -110,6 +110,47 @@ function toolKind(status: unknown): TapeEventKind {
   return "tool.requested";
 }
 
+function sanitizeEvidence(value: unknown): unknown {
+  // Encrypted reasoning is opaque: excluded from the tape (ARCHITECTURE
+  // §13) and dead weight in bundles — ~1.5 kB of unmatchable ciphertext
+  // per blob that can even win word-overlap. It hides in two places:
+  // reasoning parts, and tool-result content that embeds the preceding
+  // conversation. Readable rationale stays as agent-stated evidence.
+  if (Array.isArray(value)) {
+    const cleaned: unknown[] = [];
+    for (const entry of value) {
+      const out = sanitizeEvidence(entry);
+      if (out !== undefined) cleaned.push(out);
+    }
+    return cleaned;
+  }
+  if (typeof value === "string") {
+    // Tool results sometimes embed serialized conversations as text, not
+    // structure. Scrub the ciphertext value in place so the string stays
+    // valid for any downstream JSON.parse.
+    return value.replace(
+      /"reasoningEncryptedContent"\s*:\s*"((?:[^"\\]|\\.)*)"/g,
+      '"reasoningEncryptedContent":"[withheld]"',
+    );
+  }
+  if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (record.type === "reasoning") {
+      return typeof record.text === "string" && record.text.length > 0
+        ? { type: "reasoning", text: record.text }
+        : undefined;
+    }
+    const out: Record<string, unknown> = {};
+    for (const [key, entry] of Object.entries(record)) {
+      if (key === "reasoningEncryptedContent") continue;
+      const cleaned = sanitizeEvidence(entry);
+      if (cleaned !== undefined) out[key] = cleaned;
+    }
+    return out;
+  }
+  return value;
+}
+
 export function importOpenCodeSession(
   db: DatabaseSync,
   session: OpenCodeSessionSummary,
@@ -287,7 +328,12 @@ export function importOpenCodeSession(
     if (message.type === "assistant") {
       const parts = partsOf(message);
       const toolParts = parts.filter((part) => part.type === "tool");
-      const textParts = parts.filter((part) => part.type !== "tool");
+      const textParts = parts
+        .filter((part) => part.type !== "tool")
+        .map((part) => sanitizeEvidence(part))
+        .filter(
+          (part): part is Record<string, unknown> => part !== null && typeof part === "object",
+        );
       const snapshot = snapshotFrom(message.data.snapshot);
       if (baselineOid === null && snapshot) baselineOid = snapshot.start_oid;
       const firstTextTs = textParts
@@ -318,8 +364,8 @@ export function importOpenCodeSession(
           payload: {
             name: part.name ?? null,
             status: status ?? null,
-            input: state.input ?? null,
-            content: state.content ?? null,
+            input: state.input == null ? null : sanitizeEvidence(state.input),
+            content: state.content == null ? null : sanitizeEvidence(state.content),
             executed: part.executed ?? null,
             native: part.native ?? null,
           },
