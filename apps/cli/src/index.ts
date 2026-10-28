@@ -4,6 +4,8 @@ import { loadEchoConfig, resolveEchoPaths, saveEchoConfig } from "@echo/config";
 import { Command } from "commander";
 import { runHookCommand } from "./hook";
 import { installMuseHooks, resolveEchoCliBin, resolveMuseSettingsPath } from "./hooks-install";
+import { runDoctor } from "./doctor";
+import { runRecordSession } from "./record";
 
 const program = new Command();
 
@@ -126,6 +128,53 @@ hooks
     } catch (error) {
       process.stderr.write(
         `hooks install failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exitCode = 1;
+    }
+  });
+
+program
+  .command("record")
+  .argument("[museArgs...]", "arguments passed through to muse")
+  .option("--muse-bin <path>", "muse binary (default: muse)")
+  .description("run an interactive muse session under Echo capture (exit code passes through)")
+  // Wrapper flags (--muse-bin) are parsed; everything else passes through
+  // untouched, so muse owns its flag parsing entirely.
+  .allowUnknownOption()
+  // A recorded session is a user-invoked foreground process: the child's
+  // exit code is the result, and only a wrapper failure is exit 1.
+  .action(async (museArgs: string[], options: { museBin?: string }) => {
+    const result = await runRecordSession({ museBin: options.museBin, museArgs });
+    if (!result.ok) {
+      process.stderr.write(`record failed: ${result.diagnostic} (${result.detail})\n`);
+      process.exitCode = 1;
+      return;
+    }
+    if (result.signal) {
+      process.stderr.write(`record ended on ${result.signal}\n`);
+    }
+    process.exitCode = result.exitCode;
+  });
+
+program
+  .command("doctor")
+  .description("check capture prerequisites and report Muse build drift")
+  .option("--muse-bin <path>", "muse binary (default: muse)")
+  .action((options: { museBin?: string }) => {
+    try {
+      const paths = resolveEchoPaths();
+      const config = loadEchoConfig();
+      const report = runDoctor({
+        dataDir: paths.dataDir,
+        projects: config.projects,
+        museBin: options.museBin,
+        configFile: paths.configFile,
+      });
+      for (const line of report.lines) process.stdout.write(`${line}\n`);
+      for (const warning of report.warnings) process.stdout.write(`warning: ${warning}\n`);
+    } catch (error) {
+      process.stderr.write(
+        `doctor failed: ${error instanceof Error ? error.message : String(error)}\n`,
       );
       process.exitCode = 1;
     }
