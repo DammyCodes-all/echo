@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
-import { loadEchoConfig, saveEchoConfig } from "@echo/config";
+import { importMuseSession } from "@echo/capture-muse";
+import { loadEchoConfig, resolveEchoPaths, saveEchoConfig } from "@echo/config";
 import { Command } from "commander";
 import { runHookCommand } from "./hook";
+import { installMuseHooks, resolveEchoCliBin, resolveMuseSettingsPath } from "./hooks-install";
 
 const program = new Command();
 
@@ -47,6 +49,43 @@ program
   });
 
 program
+  .command("import")
+  .argument("<session-id|path>", "Muse session id or path to a native session.jsonl")
+  .description("import an existing Muse session (final state only, marks import_only)")
+  .option("--project <path>", "working-tree root to attribute and snapshot")
+  .option("--export <path>", "already-redacted export file to reconcile")
+  .option("--sessions-dir <dir>", "override the Muse sessions directory")
+  // Import is a user-invoked maintenance command: nonzero exits are visible
+  // config/user errors, mirroring the enable/disable commands.
+  .action(
+    async (
+      target: string,
+      options: { project?: string; export?: string; sessionsDir?: string },
+    ) => {
+      try {
+        const { dataDir } = resolveEchoPaths();
+        const isPath = target.endsWith(".jsonl") || target.includes("/");
+        const result = await importMuseSession({
+          dataDir,
+          sessionId: isPath ? undefined : target,
+          path: isPath ? target : undefined,
+          sessionsDir: options.sessionsDir,
+          projectRoot: options.project ? resolve(options.project) : undefined,
+          exportPath: options.export,
+        });
+        process.stdout.write(
+          `imported ${result.sessionId} (${result.eventsAdded} events, snapshot ${result.snapshotCommit.slice(0, 12)}, import_only)\n`,
+        );
+      } catch (error) {
+        process.stderr.write(
+          `import failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        process.exitCode = 1;
+      }
+    },
+  );
+
+program
   .command("hook")
   .argument("<agent>", "agent the hook belongs to (muse)")
   .argument("<event>", "hook event name, e.g. PreToolUse")
@@ -57,6 +96,39 @@ program
   .action((agent: string, event: string) => {
     const result = runHookCommand({ agent, event });
     if (result.exitCode !== 0) process.exitCode = result.exitCode;
+  });
+
+const hooks = program
+  .command("hooks")
+  .description("manage agent hook integration (idempotent, never blocks the agent)");
+
+hooks
+  .command("install")
+  .description("install Echo command hooks into Muse settings (merges, backs up once)")
+  .option("--settings-path <path>", "override the Muse settings.json path")
+  .option("--cli-bin <path>", "override the absolute echo-cli binary path")
+  // Installer failures are visible config errors, so a nonzero exit is
+  // correct here. This is unrelated to the hook receiver's never-block
+  // contract (only exit code 2 blocks), which stays exit-0.
+  .action((options: { settingsPath?: string; cliBin?: string }) => {
+    try {
+      const settingsPath = options.settingsPath ?? resolveMuseSettingsPath();
+      const cliBin = options.cliBin ?? resolveEchoCliBin();
+      const result = installMuseHooks({ settingsPath, cliBin });
+      if (result.changed) {
+        process.stdout.write(
+          `hooks installed: ${result.eventsInstalled.length} events -> ${result.settingsPath}\n`,
+        );
+      } else {
+        process.stdout.write(`hooks already installed: ${result.settingsPath}\n`);
+      }
+      if (result.backupPath) process.stdout.write(`backup: ${result.backupPath}\n`);
+    } catch (error) {
+      process.stderr.write(
+        `hooks install failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exitCode = 1;
+    }
   });
 
 program.parse();
