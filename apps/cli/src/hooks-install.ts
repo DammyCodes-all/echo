@@ -10,7 +10,10 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { MUSE_HOOK_EVENTS } from "@echo/capture-muse";
 
-export const ECHO_HOOK_MARKER = "hook muse";
+// Anchored to the shape museHookEntry emits (`"<bin>" hook muse <event>`):
+// an unrelated user entry that merely mentions hooks in prose is never
+// treated as stale Echo state.
+export const ECHO_HOOK_MARKER = '" hook muse ';
 
 export interface HookEntry {
   type: string;
