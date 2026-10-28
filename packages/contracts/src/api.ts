@@ -552,6 +552,7 @@ export const StoredCheckMcqQuestionSchema =
       .min(2),
     correctOptionId: z.string().min(1),
     distractorSources: z.array(z.string()),
+    explanation: z.string().min(1),
   });
 export type StoredCheckMcqQuestion = z.infer<
   typeof StoredCheckMcqQuestionSchema
@@ -561,6 +562,7 @@ export const StoredCheckFreeTextQuestionSchema =
   StoredCheckQuestionBaseSchema.extend({
     format: z.literal("free_text"),
     rubric: z.array(z.string().min(1)).min(1),
+    explanation: z.string().min(1),
   });
 export type StoredCheckFreeTextQuestion = z.infer<
   typeof StoredCheckFreeTextQuestionSchema
