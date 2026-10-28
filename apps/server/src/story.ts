@@ -1,7 +1,8 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-  type AskVsResult,
+  ARTIFACT_FILE_NAMES,
   type ChangeCard,
   type Detour,
   type DetourCostReason,
@@ -11,13 +12,10 @@ import {
   type SessionStory,
   SessionStorySchema,
   type StoryClaim,
+  type TapeEvent,
   type TapeWatermark,
-  type VerificationBadge,
-  type VerifiedCounts,
-  z,
 } from "@echo/contracts";
 import {
-  type StoredEvent as DbStoredEvent,
   type EchoDb,
   getArtifactRef,
   getSession,
@@ -27,19 +25,99 @@ import {
   setSessionStoryState,
   upsertArtifactRef,
 } from "@echo/db";
-import { type ChatMessage, type ModelConfig, modelConfigFromEnv, requestJson } from "@echo/model";
-import { redactJson } from "@echo/redaction";
-import { buildSessionReview } from "./review-index";
 import {
-  buildFacts,
-  computeWatermark,
+  type ChatMessage,
+  type ModelConfig,
+  ModelError,
+  modelConfigFromEnv,
+  requestJson,
+} from "@echo/model";
+import { redactJson } from "@echo/redaction";
+import {
+  type AttemptFact,
+  buildNarrationMessages,
+  buildSkeletonStory,
+  type ClaimVerdict,
+  dropFailedClaims,
+  extractFacts,
   type FactSet,
-  type StoryFact,
-  skeletonStory,
-} from "./story-facts";
+  type HunkFact,
+  SKELETON_PROMPT_VERSION,
+  STORY_PROMPT_VERSION,
+  validateStoryFacts,
+} from "@echo/story";
+import type { FileAttempt, ReviewHunk } from "@echo/tape";
+import { storedToTape } from "./ask";
+import { buildSessionReview } from "./review-index";
 
-/** Prompt version recorded on model-generated stories. */
-export const STORY_PROMPT_VERSION = "story-v1";
+/**
+ * Model-shape tolerance, applied before schema validation. The server owns
+ * the story envelope (sessionId/generatedAt/generator/tapeWatermark/skeleton)
+ * and stamps real values after validation, so server-owned fields are reset
+ * to placeholders here instead of failing the whole draft on them. Claim
+ * content itself is never normalized — the validator judges every claim.
+ * Exported for unit tests; the only caller is narrate's parse step.
+ */
+export function normalizeDraftShape(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const draft = value as Record<string, unknown>;
+  const normalized: Record<string, unknown> = { ...draft };
+  normalized["tapeWatermark"] = { eventCount: 0, sha256: "server-stamped" };
+  normalized["generator"] = {
+    kind: "model",
+    model: "server-stamped",
+    promptVersion: "server-stamped",
+  };
+  const CLAIM_LABELS = ["observed", "agent_stated", "uncertain"];
+  const PICTURE_BUCKETS = [
+    "solid",
+    "right_but_unsure",
+    "confident_but_wrong",
+    "wrong_and_knew_it",
+    "never_looked",
+  ];
+  const normalizeMoment = (value: unknown): void => {
+    if (value === null || typeof value !== "object" || Array.isArray(value)) return;
+    const copy = value as Record<string, unknown>;
+    if (copy["toolCallId"] === "") copy["toolCallId"] = null;
+    if (copy["ts"] === "") copy["ts"] = null;
+    if (typeof copy["label"] !== "string" || !CLAIM_LABELS.includes(copy["label"])) {
+      copy["label"] = "uncertain";
+    }
+  };
+  const moment = normalized["moment"];
+  if (moment !== null && typeof moment === "object" && !Array.isArray(moment)) {
+    const copy = { ...(moment as Record<string, unknown>) };
+    normalizeMoment(copy);
+    if (copy["previousPicture"] !== null && copy["previousPicture"] !== undefined) {
+      if (!PICTURE_BUCKETS.includes(String(copy["previousPicture"]))) copy["previousPicture"] = null;
+    }
+    normalized["moment"] = copy;
+  }
+  if (Array.isArray(normalized["cards"])) {
+    normalized["cards"] = (normalized["cards"] as unknown[]).map((entry) => {
+      if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
+      const card = { ...(entry as Record<string, unknown>) };
+      for (const field of ["why", "before", "now"]) {
+        const claims = card[field];
+        if (claims !== undefined && !Array.isArray(claims)) {
+          card[field] = claims !== null && typeof claims === "object" ? [claims] : [];
+        }
+      }
+      normalizeMoment(card["moment"]);
+      const history = card["history"];
+      if (history !== null && typeof history === "object" && !Array.isArray(history)) {
+        const copy = { ...(history as Record<string, unknown>) };
+        if (copy["previousPicture"] !== null && copy["previousPicture"] !== undefined) {
+          if (!PICTURE_BUCKETS.includes(String(copy["previousPicture"]))) copy["previousPicture"] = null;
+        }
+        card["history"] = copy;
+      }
+      return card;
+    });
+  }
+  return normalized;
+}
 
 export interface StoryLogger {
   info: (obj: unknown, message?: string) => void;
@@ -56,6 +134,10 @@ export interface StoryServiceOptions {
   /** Injected for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
   env?: NodeJS.ProcessEnv;
+  /** Injected for tests; defaults to the real redaction gate. */
+  redactJsonImpl?: typeof redactJson;
+  /** Injected for tests; defaults to the wall clock. */
+  clock?: () => Date;
 }
 
 export type StoryOutcomeKind =
@@ -70,578 +152,227 @@ export interface StoryOutcome {
   story: SessionStory | null;
 }
 
-// --- Model draft schema (local: zod is not a direct server dependency) ---
-
-const DraftClaimSchema = z.object({
-  text: z.string(),
-  label: z.enum(["observed", "agent_stated", "uncertain"]),
-  factIds: z.array(z.string()),
-});
-export type DraftClaim = z.infer<typeof DraftClaimSchema>;
-
-const DraftCardSchema = z.object({
-  headline: z.string(),
-  constituentHunkIds: z.array(z.string()),
-  constituentActionIds: z.array(z.string()),
-  why: z.array(DraftClaimSchema),
-  before: z.array(DraftClaimSchema),
-  now: z.array(DraftClaimSchema),
-});
-export type DraftCard = z.infer<typeof DraftCardSchema>;
-
-export const StoryDraftSchema = z.object({
-  summary: z.string().min(1).max(280),
-  shortVersion: z.array(DraftClaimSchema).min(1).max(6),
-  askVsResult: z.object({
-    asked: z.array(DraftClaimSchema),
-    delivered: z.array(DraftClaimSchema),
-    extras: z.array(DraftClaimSchema),
-    missing: z.array(DraftClaimSchema),
-  }),
-  cards: z.array(DraftCardSchema).min(1).max(30),
-});
-export type StoryDraft = z.infer<typeof StoryDraftSchema>;
-
-// --- Deterministic validator ---
-
-const FILE_TOKEN = /[\w./-]+\.\w+/g;
-const INT_TOKEN = /\d+/g;
-
-const BADGE_ORDER: Record<VerificationBadge, number> = {
-  nothing: 0,
-  agent_stated: 1,
-  partly_observed: 2,
-  observed: 3,
-};
-
-const HIGH_BLAST_FLAGS = new Set([
-  "auth",
-  "payments",
-  "stored_data",
-  "destructive",
-  "secrets",
-  "production",
-]);
-
-const RISK_SENTENCES: Record<string, string> = {
-  auth: "touches auth code — confirm login and session behavior is unchanged",
-  payments: "touches payment code — confirm retry counts and idempotency",
-  stored_data: "touches stored data or migrations — confirm rollback is safe",
-  destructive: "looks destructive — confirm nothing needed is deleted or revoked",
-  secrets: "touches secrets or credentials — confirm no secret leaks into logs or diffs",
-  production: "touches production or deploy config — confirm the rollout is intended",
-};
-
-const UNVERIFIED_REASON = "no observed test run covers this change";
-
-function truncate(text: string, max: number): string {
-  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+/** Watermark over the ordered tape: event count plus sha256 of event ids. */
+export function computeWatermark(events: Array<{ event_id: string }>): TapeWatermark {
+  const sha256 = createHash("sha256")
+    .update(events.map((event) => event.event_id).join("\n"))
+    .digest("hex");
+  return { eventCount: events.length, sha256 };
 }
-
-interface KnownSets {
-  ids: Set<string>;
-  files: Set<string>;
-  numbers: Set<string>;
-}
-
-function buildKnownSets(facts: FactSet): KnownSets {
-  const ids = new Set<string>();
-  const files = new Set<string>();
-  const numbers = new Set<string>();
-  for (const cluster of facts.promptClusters) ids.add(cluster.id);
-  for (const fact of facts.facts) {
-    ids.add(fact.id);
-    for (const file of fact.files) {
-      files.add(file);
-      const base = file.split("/").pop();
-      if (base) files.add(base);
-    }
-    for (const match of fact.summary.match(INT_TOKEN) ?? []) numbers.add(match);
-  }
-  const kindCounts = new Map<string, number>();
-  for (const fact of facts.facts) {
-    kindCounts.set(fact.kind, (kindCounts.get(fact.kind) ?? 0) + 1);
-  }
-  for (const count of [
-    facts.promptClusters.length,
-    facts.facts.length,
-    facts.routineFactIds.length,
-    ...kindCounts.values(),
-  ]) {
-    numbers.add(String(count));
-  }
-  return { ids, files, numbers };
-}
-
-/** Null when the text is fully grounded; otherwise a short reason. */
-function textViolation(text: string, known: KnownSets): string | null {
-  const fileTokens = text.match(FILE_TOKEN) ?? [];
-  for (const token of fileTokens) {
-    if (known.files.has(token)) continue;
-    // A directory or path prefix of a known file (e.g. "src" for "src/app.ts").
-    let isPrefix = false;
-    for (const file of known.files) {
-      if (file.startsWith(token)) {
-        isPrefix = true;
-        break;
-      }
-    }
-    if (!isPrefix) return `unknown file ${token}`;
-  }
-  // Integers inside file tokens (app2.ts, utf-8) are part of the name, not claims.
-  const rest = text.replace(FILE_TOKEN, " ");
-  for (const num of rest.match(INT_TOKEN) ?? []) {
-    if (!known.numbers.has(num)) return `unknown number ${num}`;
-  }
-  return null;
-}
-
-/** Story fields minus the envelope the orchestrator owns. */
-export interface StoryBody {
-  summary: string;
-  skeleton: false;
-  shortVersion: StoryClaim[];
-  askVsResult: AskVsResult;
-  cards: ChangeCard[];
-  routineSummary: string | null;
-  detours: Detour[];
-  looseEnds: LooseEnd[];
-  blindSpots: string[];
-  gaps: string[];
-  verifiedCounts: VerifiedCounts;
-}
-
-export interface ValidatedDraft {
-  valid: boolean;
-  story: StoryBody | null;
-  /** Content-free gap lines for dropped claims. */
-  dropped: string[];
-  /** Reasons for the single model retry. */
-  errors: string[];
-}
-
-interface CardBuild {
-  card: ChangeCard;
-  draftIndex: number;
-  highRisk: boolean;
-  flagCount: number;
-}
-
-function buildCard(
-  draft: DraftCard,
-  draftIndex: number,
-  factsById: Map<string, StoryFact>,
-  known: KnownSets,
-  dropped: string[],
-  errors: string[],
-): ChangeCard | null {
-  const hunkFacts: StoryFact[] = [];
-  for (const id of draft.constituentHunkIds) {
-    const fact = factsById.get(id);
-    if (fact?.kind !== "hunk") {
-      errors.push(`card ${draftIndex}: unknown or non-hunk constituent ${id}`);
-      return null;
-    }
-    hunkFacts.push(fact);
-  }
-  const actionFacts: StoryFact[] = [];
-  for (const id of draft.constituentActionIds) {
-    const fact = factsById.get(id);
-    if (fact?.kind !== "action") {
-      errors.push(`card ${draftIndex}: unknown or non-action constituent ${id}`);
-      return null;
-    }
-    actionFacts.push(fact);
-  }
-  const headlineViolation = textViolation(draft.headline, known);
-  if (headlineViolation) {
-    dropped.push(`Echo couldn't verify this: ${truncate(draft.headline, 160)}`);
-    errors.push(
-      `card ${draftIndex} headline failed (${headlineViolation}): ${truncate(draft.headline, 80)}`,
-    );
-    return null;
-  }
-
-  const keepClaim = (claim: DraftClaim): StoryClaim | null => {
-    const unknownRef = claim.factIds.find((id) => !known.ids.has(id));
-    if (unknownRef) {
-      dropped.push(`Echo couldn't verify this: ${truncate(claim.text, 160)}`);
-      errors.push(`dropped claim (unknown fact ${unknownRef}): ${truncate(claim.text, 80)}`);
-      return null;
-    }
-    const violation = textViolation(claim.text, known);
-    if (violation) {
-      dropped.push(`Echo couldn't verify this: ${truncate(claim.text, 160)}`);
-      errors.push(`dropped claim (${violation}): ${truncate(claim.text, 80)}`);
-      return null;
-    }
-    return { text: claim.text, label: claim.label, factIds: [...claim.factIds] };
-  };
-
-  const keepClaims = (claims: DraftClaim[]): StoryClaim[] => {
-    const kept: StoryClaim[] = [];
-    for (const claim of claims) {
-      const ok = keepClaim(claim);
-      if (ok) kept.push(ok);
-    }
-    return kept;
-  };
-  const why = keepClaims(draft.why);
-  const before = keepClaims(draft.before);
-  const now = keepClaims(draft.now);
-
-  // The server owns verification: weakest constituent hunk badge. Model
-  // labels can never upgrade it.
-  let verification: VerificationBadge = "nothing";
-  if (hunkFacts.length > 0) {
-    verification = hunkFacts
-      .map((fact) => fact.verification)
-      .reduce((weakest, badge) => (BADGE_ORDER[badge] < BADGE_ORDER[weakest] ? badge : weakest));
-  }
-  const flags = new Set<string>();
-  for (const fact of [...hunkFacts, ...actionFacts]) {
-    for (const flag of fact.riskFlags) {
-      // Attempt-status carrier tokens never enter card risk.
-      if (!flag.startsWith("attempt-status:")) flags.add(flag);
-    }
-  }
-  if (verification === "nothing") flags.add("unverified");
-  const highRisk = [...flags].some((flag) => HIGH_BLAST_FLAGS.has(flag));
-  const riskReasons = [...flags]
-    .filter((flag) => flag !== "unverified")
-    .map(
-      (flag) => RISK_SENTENCES[flag] ?? `flagged ${flag} — confirm before relying on this change`,
-    );
-  if (flags.has("unverified")) riskReasons.push(UNVERIFIED_REASON);
-  const touches = [...new Set([...hunkFacts, ...actionFacts].flatMap((fact) => fact.files))];
-  // checkedBy is scoped to runs plausibly covering this card's hunks:
-  // a run claim only counts when its fact id is linked from a constituent.
-  const allowedRuns = new Set(hunkFacts.flatMap((fact) => fact.testedByRunIds));
-  const checkedBy = [...why, ...before, ...now].filter(
-    (claim) => claim.factIds.length > 0 && claim.factIds.every((id) => allowedRuns.has(id)),
-  );
-  const firstHunk = hunkFacts[0];
-  return {
-    id: firstHunk?.id ?? actionFacts[0]?.id ?? `card-${draftIndex}`,
-    headline: draft.headline,
-    constituentHunkIds: hunkFacts.map((fact) => fact.id),
-    constituentActionIds: actionFacts.map((fact) => fact.id),
-    rank: draftIndex + 1,
-    sessionOrder: draftIndex,
-    highRisk,
-    riskReasons,
-    verification,
-    why,
-    before,
-    now,
-    checkedBy,
-    touches,
-    moment: {
-      eventId: firstHunk?.eventIds[0] ?? null,
-      toolCallId: null,
-      ts: null,
-      excerpt: firstHunk?.summary ?? draft.headline,
-      label: "uncertain",
-    },
-    // Card history is cut-line-deferred: always empty on this slice.
-    history: { priorSessionIds: [], previousPicture: null, note: null },
-  };
-}
-
-function attemptStatusOf(fact: StoryFact): string | null {
-  const token = fact.riskFlags.find((flag) => flag.startsWith("attempt-status:"));
-  return token ? token.slice("attempt-status:".length) : null;
-}
-
-function buildDetours(facts: FactSet): Detour[] {
-  const attempts = facts.facts.filter((fact) => fact.kind === "attempt");
-  const byPath = new Map<string, StoryFact[]>();
-  for (const fact of attempts) {
-    const key = fact.files[0] ?? "";
-    byPath.set(key, [...(byPath.get(key) ?? []), fact]);
-  }
-  const detours: Detour[] = [];
-  for (const fact of attempts) {
-    const status = attemptStatusOf(fact);
-    const group = byPath.get(fact.files[0] ?? "") ?? [];
-    let costReason: DetourCostReason | null = null;
-    if (status === "failed_with_side_effect") costReason = "side_effect";
-    else if (status === "reverted" || status === "replaced") costReason = "reverted";
-    else if (status === "failed" && group.length >= 2) costReason = "repeated_attempt";
-    if (!costReason) continue;
-    detours.push({
-      id: fact.id,
-      headline: fact.summary,
-      claims: [{ text: fact.summary, label: "uncertain", factIds: [fact.id] }],
-      attemptIds: [fact.id],
-      costReason,
-    });
-  }
-  return detours;
-}
-
-function buildLooseEnds(facts: FactSet, cards: ChangeCard[]): LooseEnd[] {
-  const ends: LooseEnd[] = [];
-  const cardByFactId = new Map<string, string>();
-  for (const card of cards) {
-    for (const id of [...card.constituentHunkIds, ...card.constituentActionIds]) {
-      cardByFactId.set(id, card.id);
-    }
-  }
-  for (const fact of facts.facts) {
-    if (/\b(TODO|FIXME|XXX|HACK)\b/.test(fact.summary)) {
-      ends.push({
-        id: `le-todo-${fact.id}`,
-        kind: "todo",
-        claims: [{ text: fact.summary, label: "observed", factIds: [fact.id] }],
-        cardId: cardByFactId.get(fact.id) ?? null,
-      });
-    }
-  }
-  const runCount = facts.facts.filter((fact) => fact.kind === "run").length;
-  if (runCount === 0) {
-    for (const fact of facts.facts) {
-      if (fact.kind !== "hunk" || fact.verification !== "nothing") continue;
-      const file = fact.files[0] ?? "the changed file";
-      ends.push({
-        id: `le-untested-${fact.id}`,
-        kind: "untested",
-        claims: [
-          { text: `no observed test run covers ${file}`, label: "uncertain", factIds: [fact.id] },
-        ],
-        cardId: cardByFactId.get(fact.id) ?? null,
-      });
-    }
-  }
-  return ends;
-}
-
-/**
- * Chronological card order for the risk ↔ session-order toggle: each card
- * takes the earliest tape position among its constituents' evidence events.
- * Cards with no resolvable position sort last, keeping risk order. Exported
- * for tests; the orchestrator applies it after validation on every path.
- */
-export function assignSessionOrder(
-  cards: ChangeCard[],
-  facts: FactSet,
-  events: Array<{ event_id: string; tape_seq: number }>,
-): ChangeCard[] {
-  const seqByEvent = new Map(events.map((event) => [event.event_id, event.tape_seq]));
-  const factsById = new Map(facts.facts.map((fact) => [fact.id, fact]));
-  const keyed = cards.map((card) => {
-    let earliest = Number.POSITIVE_INFINITY;
-    for (const id of [...card.constituentHunkIds, ...card.constituentActionIds]) {
-      for (const eventId of factsById.get(id)?.eventIds ?? []) {
-        const seq = seqByEvent.get(eventId);
-        if (seq !== undefined && seq < earliest) earliest = seq;
-      }
-    }
-    return { card, earliest };
-  });
-  const ordered = [...keyed].sort((a, b) => a.earliest - b.earliest);
-  const position = new Map(ordered.map((entry, index) => [entry.card.id, index]));
-  return cards.map((card) => ({
-    ...card,
-    sessionOrder: position.get(card.id) ?? card.sessionOrder,
-  }));
-}
-
-/**
- * Pure validator: schema-parse, ground every claim against the fact set,
- * never trust the model for verification or risk. Structural failure or zero
- * surviving cards yields valid:false and the caller falls back to skeleton.
- */
-export function validateDraft(draft: unknown, facts: FactSet): ValidatedDraft {
-  const parsed = StoryDraftSchema.safeParse(draft);
-  if (!parsed.success) {
-    return { valid: false, story: null, dropped: [], errors: ["draft schema: invalid structure"] };
-  }
-  const known = buildKnownSets(facts);
-  const factsById = new Map(facts.facts.map((fact) => [fact.id, fact]));
-  const dropped: string[] = [];
-  const errors: string[] = [];
-
-  const keepClaim = (claim: DraftClaim): StoryClaim | null => {
-    const unknownRef = claim.factIds.find((id) => !known.ids.has(id));
-    if (unknownRef) {
-      dropped.push(`Echo couldn't verify this: ${truncate(claim.text, 160)}`);
-      errors.push(`dropped claim (unknown fact ${unknownRef}): ${truncate(claim.text, 80)}`);
-      return null;
-    }
-    const violation = textViolation(claim.text, known);
-    if (violation) {
-      dropped.push(`Echo couldn't verify this: ${truncate(claim.text, 160)}`);
-      errors.push(`dropped claim (${violation}): ${truncate(claim.text, 80)}`);
-      return null;
-    }
-    return { text: claim.text, label: claim.label, factIds: [...claim.factIds] };
-  };
-
-  const keepClaims = (claims: DraftClaim[]): StoryClaim[] => {
-    const kept: StoryClaim[] = [];
-    for (const claim of claims) {
-      const ok = keepClaim(claim);
-      if (ok) kept.push(ok);
-    }
-    return kept;
-  };
-
-  const builds: CardBuild[] = [];
-  const seenIds = new Set<string>();
-  parsed.data.cards.forEach((card, index) => {
-    const built = buildCard(card, index, factsById, known, dropped, errors);
-    if (!built) return;
-    if (seenIds.has(built.id)) built.id = `${built.id}-c${index}`;
-    seenIds.add(built.id);
-    builds.push({
-      card: built,
-      draftIndex: index,
-      highRisk: built.highRisk,
-      flagCount: built.constituentHunkIds.length + built.constituentActionIds.length,
-    });
-  });
-  if (builds.length === 0) {
-    return { valid: false, story: null, dropped, errors };
-  }
-
-  // Deterministic order: high-blast first, then most flags, then draft order.
-  builds.sort(
-    (a, b) =>
-      Number(b.highRisk) - Number(a.highRisk) ||
-      b.flagCount - a.flagCount ||
-      a.draftIndex - b.draftIndex,
-  );
-  const cards = builds.map((build, position) => ({
-    ...build.card,
-    rank: position + 1,
-    sessionOrder: position,
-  }));
-
-  const hunkCount = facts.facts.filter((fact) => fact.kind === "hunk").length;
-  const summaryViolation = textViolation(parsed.data.summary, known);
-  const firstPrompt = facts.promptClusters[0];
-  const summary =
-    summaryViolation || parsed.data.summary.length === 0
-      ? firstPrompt
-        ? firstPrompt.text.slice(0, 140)
-        : `Session with ${hunkCount} changes.`
-      : parsed.data.summary;
-
-  const askVsResult: AskVsResult = {
-    asked: keepClaims(parsed.data.askVsResult.asked),
-    delivered: keepClaims(parsed.data.askVsResult.delivered),
-    extras: keepClaims(parsed.data.askVsResult.extras),
-    missing: keepClaims(parsed.data.askVsResult.missing),
-  };
-  const shortVersion = keepClaims(parsed.data.shortVersion);
-
-  const detours = buildDetours(facts);
-  const looseEnds = buildLooseEnds(facts, cards);
-  const routineSummary =
-    facts.routineFactIds.length > 0
-      ? `${facts.routineFactIds.length} routine changes (formatting, generated files, lockfiles) folded.`
-      : null;
-
-  const verifiedCounts: VerifiedCounts = {
-    observed: 0,
-    partlyObserved: 0,
-    agentStated: 0,
-    nothing: 0,
-    total: cards.length,
-  };
-  for (const card of cards) {
-    if (card.verification === "observed") verifiedCounts.observed += 1;
-    else if (card.verification === "partly_observed") verifiedCounts.partlyObserved += 1;
-    else if (card.verification === "agent_stated") verifiedCounts.agentStated += 1;
-    else verifiedCounts.nothing += 1;
-  }
-
-  return {
-    valid: true,
-    story: {
-      summary,
-      skeleton: false,
-      shortVersion,
-      askVsResult,
-      cards,
-      routineSummary,
-      detours,
-      looseEnds,
-      blindSpots: [],
-      gaps: [...dropped],
-      verifiedCounts,
-    },
-    dropped,
-    errors,
-  };
-}
-
-// --- Model prompt ---
-
-const STORY_SYSTEM_PROMPT = [
-  "Narrate a coding session from FACTS ONLY.",
-  "Narrate ONLY over the provided facts. Every claim must reference fact IDs.",
-  "Never invent files, numbers or names: every file path, number or name in a claim must appear verbatim in the facts.",
-  "Group hunks and actions into behaviour cards, riskiest first (each hunk lists its blast flags; order cards by risk).",
-  "Routine change IDs are folded into one line — never make cards for them.",
-  "Verification badges are assigned by the server; do not assert verification in claims.",
-  `Reply with JSON: {"summary": string (<=280 chars), "shortVersion": [claim x1..6], "askVsResult": {"asked": [claim], "delivered": [claim], "extras": [claim], "missing": [claim]}, "cards": [{"headline": string, "constituentHunkIds": [hunk ids], "constituentActionIds": [action ids], "why": [claim], "before": [claim], "now": [claim]} x1..30]}.`,
-  'Claim shape: {"text": string, "label": "observed"|"agent_stated"|"uncertain", "factIds": [fact ids]}.',
-].join("\n");
-
-function buildStoryPrompt(facts: FactSet): string {
-  const serializable = {
-    sessionId: facts.sessionId,
-    promptClusters: facts.promptClusters,
-    facts: facts.facts.map((fact) => ({
-      id: fact.id,
-      kind: fact.kind,
-      summary: fact.summary,
-      files: fact.files,
-      riskFlags: fact.riskFlags,
-      riskReasons: fact.riskReasons,
-      verification: fact.verification,
-    })),
-    routineFactIds: facts.routineFactIds,
-  };
-  return [
-    `FACTS:\n${JSON.stringify(serializable)}`,
-    `ROUTINE IDS (fold into one line, never card): ${facts.routineFactIds.join(", ") || "(none)"}`,
-  ].join("\n\n");
-}
-
-// --- Orchestrator ---
 
 function storyArtifactPath(dataDir: string, projectId: string, sessionId: string): string {
-  return join(dataDir, "projects", projectId, "sessions", sessionId, "artifacts", "story.json");
+  return join(dataDir, "projects", projectId, "sessions", sessionId, ARTIFACT_FILE_NAMES.story);
+}
+
+function describeVerdict(verdict: ClaimVerdict): string {
+  const at = verdict.location;
+  const where = `${at.area}${at.key ? ` ${at.key}` : ""} ${at.field}[${at.index}]`;
+  return `${where}: ${verdict.errors.join("; ")}`;
+}
+
+const TODO_PATTERN = /\b(TODO|FIXME|XXX|HACK)\b/;
+
+function uniqueId(taken: Set<string>, base: string): string {
+  let id = base;
+  let suffix = 2;
+  while (taken.has(id)) id = `${base}-${suffix++}`;
+  taken.add(id);
+  return id;
 }
 
 /**
- * Boundary normalizer: the db row carries unvalidated JSON in `redaction`.
- * Anything unexpected degrades to an unknown-version marker, never a throw.
+ * Server-owned deterministic enrichment, applied BEFORE validation so every
+ * added claim is checked like a model claim. The engine skeleton covers
+ * reverted/replaced/failed_with_side_effect detours; the repeated-failure
+ * rule (a lone `failed` attempt means little, two on one path means a
+ * dead end) and the TODO/untested loose ends live here, ported from the
+ * pre-merge orchestrator onto the engine FactSet.
  */
-function toFactEvent(event: DbStoredEvent): Parameters<typeof buildFacts>[1][number] {
-  const redaction = event.redaction;
-  const version =
-    redaction !== null &&
-    typeof redaction === "object" &&
-    typeof (redaction as { version?: unknown }).version === "string"
-      ? (redaction as { version: string }).version
-      : "unknown";
-  const findings =
-    redaction !== null &&
-    typeof redaction === "object" &&
-    typeof (redaction as { findings?: unknown }).findings === "number"
-      ? (redaction as { findings: number }).findings
-      : 0;
-  return { ...event, redaction: { version, findings } };
+function enrichStory(facts: FactSet, story: SessionStory): SessionStory {
+  const attempts = facts.facts.filter((fact): fact is AttemptFact => fact.kind === "attempt");
+  const hunks = facts.facts.filter((fact): fact is HunkFact => fact.kind === "hunk");
+
+  const detourTaken = new Set(story.detours.flatMap((detour) => detour.attemptIds));
+  for (const detour of story.detours) detourTaken.add(detour.id);
+  const byPath = new Map<string, AttemptFact[]>();
+  for (const attempt of attempts) {
+    byPath.set(attempt.path, [...(byPath.get(attempt.path) ?? []), attempt]);
+  }
+  const detours: Detour[] = [...story.detours];
+  for (const [path, group] of byPath) {
+    if (group.length < 2) continue;
+    for (const attempt of group) {
+      if (attempt.status !== "failed") continue;
+      if (detourTaken.has(attempt.attemptId)) continue;
+      const costReason: DetourCostReason = "repeated_attempt";
+      detours.push({
+        id: uniqueId(detourTaken, `detour-${attempt.attemptId}`),
+        headline: `Repeated failed attempt on ${path}`,
+        claims: [
+          {
+            text: `${attempt.introducedLines} line(s) introduced, ${attempt.survivingLines} surviving`,
+            label: "observed",
+            factIds: [attempt.id],
+          },
+        ],
+        attemptIds: [attempt.attemptId],
+        costReason,
+      });
+    }
+  }
+
+  const cardByHunkId = new Map<string, string>();
+  for (const card of story.cards) {
+    for (const id of card.constituentHunkIds) cardByHunkId.set(id, card.id);
+  }
+  const looseTaken = new Set(story.looseEnds.map((end) => end.id));
+  const looseEnds: LooseEnd[] = [...story.looseEnds];
+  for (const fact of facts.facts) {
+    if (fact.kind === "hunk") {
+      if (TODO_PATTERN.test(`${fact.addedText}\n${fact.removedText}`)) {
+        looseEnds.push({
+          id: uniqueId(looseTaken, `le-todo-${fact.hunkId}`),
+          kind: "todo",
+          claims: [{ text: `TODO marker in ${fact.path}`, label: "observed", factIds: [fact.id] }],
+          cardId: cardByHunkId.get(fact.hunkId) ?? null,
+        });
+      }
+    } else if (fact.kind === "prompt" || fact.kind === "agent_text") {
+      if (TODO_PATTERN.test(fact.text)) {
+        looseEnds.push({
+          id: uniqueId(looseTaken, `le-todo-${fact.id}`),
+          kind: "todo",
+          claims: [{ text: "TODO marker in session text", label: "observed", factIds: [fact.id] }],
+          cardId: null,
+        });
+      }
+    }
+  }
+  if (!facts.facts.some((fact) => fact.kind === "run")) {
+    for (const hunk of hunks) {
+      looseEnds.push({
+        id: uniqueId(looseTaken, `le-untested-${hunk.hunkId}`),
+        kind: "untested",
+        claims: [
+          {
+            text: `no observed test run covers ${hunk.path}`,
+            label: "uncertain",
+            factIds: [hunk.id],
+          },
+        ],
+        cardId: cardByHunkId.get(hunk.hunkId) ?? null,
+      });
+    }
+  }
+
+  return { ...story, detours, looseEnds };
+}
+
+/**
+ * Deterministic card ordering: risk rank (high-risk first, then most risk
+ * reasons, then id) and chronological sessionOrder (earliest constituent
+ * tape position; cards with no resolvable position sort last).
+ */
+function applyOrdering(facts: FactSet, story: SessionStory, tape: TapeEvent[]): SessionStory {
+  const seenIds = new Set<string>();
+  const cards = story.cards.map((card, index) => {
+    if (seenIds.has(card.id)) return { ...card, id: `${card.id}-c${index}` };
+    seenIds.add(card.id);
+    return card;
+  });
+  const ranked = [...cards].sort(
+    (a, b) =>
+      Number(b.highRisk) - Number(a.highRisk) ||
+      b.riskReasons.length - a.riskReasons.length ||
+      a.id.localeCompare(b.id),
+  );
+  const rankOf = new Map(ranked.map((card, index) => [card.id, index + 1]));
+
+  const seqByEvent = new Map(tape.map((event) => [event.event_id, event.tape_seq]));
+  const attemptsByPath = new Map<string, AttemptFact[]>();
+  for (const fact of facts.facts) {
+    if (fact.kind !== "attempt") continue;
+    attemptsByPath.set(fact.path, [...(attemptsByPath.get(fact.path) ?? []), fact]);
+  }
+  const hunksById = new Map(
+    facts.facts
+      .filter((fact): fact is HunkFact => fact.kind === "hunk")
+      .map((fact) => [fact.hunkId, fact]),
+  );
+  const eventsForToolCall = (toolCallId: string): string[] => {
+    const ids: string[] = [];
+    for (const fact of facts.facts) {
+      if (fact.kind === "run" && fact.toolCallId === toolCallId) ids.push(...fact.eventIds);
+      if (fact.kind === "attempt" && fact.toolCallId === toolCallId && fact.eventId !== null) {
+        ids.push(fact.eventId);
+      }
+    }
+    return ids;
+  };
+  const earliestOf = (card: ChangeCard): number => {
+    let earliest = Number.POSITIVE_INFINITY;
+    const consider = (eventId: string) => {
+      const seq = seqByEvent.get(eventId);
+      if (seq !== undefined && seq < earliest) earliest = seq;
+    };
+    for (const hunkId of card.constituentHunkIds) {
+      for (const attempt of attemptsByPath.get(hunksById.get(hunkId)?.path ?? "") ?? []) {
+        if (attempt.eventId !== null) consider(attempt.eventId);
+      }
+    }
+    for (const toolCallId of card.constituentActionIds) {
+      for (const eventId of eventsForToolCall(toolCallId)) consider(eventId);
+    }
+    return earliest;
+  };
+  const chrono = [...cards].sort((a, b) => earliestOf(a) - earliestOf(b));
+  const orderOf = new Map(chrono.map((card, index) => [card.id, index]));
+  return {
+    ...story,
+    cards: cards.map((card) => ({
+      ...card,
+      rank: rankOf.get(card.id) ?? card.rank,
+      sessionOrder: orderOf.get(card.id) ?? card.sessionOrder,
+    })),
+  };
+}
+
+/**
+ * Deterministic post-processing: server-owned enrichment (see enrichStory)
+ * and card ordering (see applyOrdering) run BEFORE validation so every
+ * added claim is checked like a model claim, then single-regen drop, then
+ * the server-owned blind-spot diagnostics (review + capture quality) merged
+ * without validation — they describe the pipeline, not the session.
+ */
+export function finalizeStory(args: {
+  facts: FactSet;
+  draft: SessionStory;
+  tape: TapeEvent[];
+  reviewDiagnostics: string[];
+  captureQuality: string;
+}): SessionStory {
+  const ordered = applyOrdering(args.facts, enrichStory(args.facts, args.draft), args.tape);
+  const validation = validateStoryFacts(args.facts, ordered);
+  const dropped = dropFailedClaims(validation);
+  const merged = [...dropped.story.blindSpots];
+  for (const line of args.reviewDiagnostics) {
+    if (!merged.includes(line)) merged.push(line);
+  }
+  if (
+    (args.captureQuality === "partial" || args.captureQuality === "import_only") &&
+    !merged.includes("intermediate states may not be captured")
+  ) {
+    merged.push("intermediate states may not be captured");
+  }
+  return SessionStorySchema.parse({ ...dropped.story, blindSpots: merged });
 }
 
 export function createStoryService(deps: StoryServiceDeps, options: StoryServiceOptions = {}) {
   const { db, dataDir, log } = deps;
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const redactJsonImpl = options.redactJsonImpl ?? redactJson;
+  const clock = options.clock ?? (() => new Date());
 
   function modelOff(): boolean {
     return env.ECHO_MODEL === "off";
@@ -657,7 +388,7 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
   }): boolean {
     let scanned: unknown;
     try {
-      scanned = redactJson(input.story).value;
+      scanned = redactJsonImpl(input.story).value;
     } catch (error) {
       // Content-free diagnostic: never log the payload that failed.
       log.error({ session_id: input.sessionId, err: String(error) }, "story redaction gate failed");
@@ -683,14 +414,136 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     return true;
   }
 
+  function toReviewInputs(review: SessionReview): { hunks: ReviewHunk[]; attempts: FileAttempt[] } {
+    return {
+      hunks: review.hunks.map((hunk) => ({
+        id: hunk.id,
+        path: hunk.path,
+        oldStart: hunk.oldStart,
+        oldLines: hunk.oldLines,
+        newStart: hunk.newStart,
+        newLines: hunk.newLines,
+        patch: hunk.patch,
+        addedText: hunk.addedText,
+        removedText: hunk.removedText,
+        addedLines: hunk.addedLines,
+        removedLines: hunk.removedLines,
+      })),
+      attempts: review.attempts.map((attempt) => ({
+        id: attempt.id,
+        path: attempt.path,
+        snapshotId: attempt.snapshotId,
+        commitOid: attempt.commitOid,
+        trigger: attempt.trigger,
+        eventId: attempt.eventId,
+        takenAt: attempt.takenAt,
+        status: attempt.status,
+        confidence: attempt.confidence,
+        introducedLines: attempt.introducedLines,
+        survivingLines: attempt.survivingLines,
+        introducedText: attempt.introducedText,
+        replacementText: attempt.replacementText,
+        finalStart: attempt.finalStart,
+        finalEnd: attempt.finalEnd,
+        detail: attempt.detail,
+        link: attempt.link,
+      })),
+    };
+  }
+
+  async function narrate(
+    config: ModelConfig,
+    facts: FactSet,
+    sessionId: string,
+  ): Promise<{ draft: SessionStory; regenerated: boolean }> {
+    const messages = buildNarrationMessages(facts, sessionId);
+    // The fact set is built from redacted data; the assembled request is
+    // re-scanned before it leaves the process.
+    const redacted = redactJsonImpl([
+      { role: "system", content: messages.system },
+      { role: "user", content: messages.user },
+    ]).value as ChatMessage[];
+    // Very large output budget on the FIRST attempt: reasoning tokens share
+    // it with the visible JSON, and a starved model returns length-finish
+    // with null content. Reasoning is capped separately (medium effort + env
+    // override) so the budget buys draft text, not unbounded thinking.
+    // Single attempt at full width: the parse/validate regens below own the
+    // retry policy, and a second identical 50k call would double the worst
+    // case spend for the same input.
+    const wideMaxTokens = Math.max(config.maxTokens * 2, 50000);
+    const wideConfig = { ...config, maxTokens: wideMaxTokens };
+    const retryMaxTokens = wideMaxTokens;
+    const reasoningEffort = env.META_REASONING_EFFORT ?? "medium";
+    const parse = (value: unknown): SessionStory =>
+      SessionStorySchema.parse(normalizeDraftShape(value));
+    const request = (messages: ChatMessage[]) =>
+      requestJson(wideConfig, messages, parse, { fetchImpl, retryMaxTokens, reasoningEffort });
+    let first: SessionStory;
+    try {
+      first = (await request(redacted)).value;
+    } catch (error) {
+      if (error instanceof ModelError && error.code === "invalid_response") {
+        // Schema failure, not a dead model: one retry with the errors spelled
+        // out, then the normal validate-then-drop path decides the draft.
+        const second = await request([
+          ...redacted,
+          {
+            role: "assistant",
+            content: "I will return only the corrected JSON story, same shape.",
+          },
+          {
+            role: "user",
+            content: `The previous draft failed schema validation: ${error.message.slice(0, 1200)}\nReturn ONLY the full corrected JSON story, same shape.`,
+          },
+        ]);
+        return validateOrRegenerate(second.value, true);
+      }
+      throw error;
+    }
+    return validateOrRegenerate(first, false);
+
+    async function validateOrRegenerate(
+      draft: SessionStory,
+      regenerated: boolean,
+    ): Promise<{ draft: SessionStory; regenerated: boolean }> {
+      const failures = validateStoryFacts(facts, draft).verdicts.filter((v) => !v.valid);
+      if (failures.length === 0) return { draft, regenerated };
+      const fixPrompt = [
+        "The previous draft failed these checks. Fix every failure and return the full corrected JSON story, same shape:",
+        ...failures.map((failure) => `- ${describeVerdict(failure)}`),
+      ].join("\n");
+      try {
+        const second = await requestJson(
+          wideConfig,
+          [
+            ...redacted,
+            { role: "assistant", content: JSON.stringify(draft) },
+            { role: "user", content: fixPrompt },
+          ],
+          parse,
+          { fetchImpl, retryMaxTokens, reasoningEffort },
+        );
+        return { draft: second.value, regenerated: true };
+      } catch {
+        // The regeneration call itself failed; keep the validatable first
+        // draft and let the drop step handle its failed claims.
+        return { draft, regenerated: true };
+      }
+    }
+  }
+
   async function maybeGenerateStory(
     sessionId: string,
     opts: { reason?: string } = {},
   ): Promise<StoryOutcome> {
     const session = getSession(db, sessionId);
     if (!session) return { outcome: "unknown_session", story: null };
-    const events = readAllEvents(db, sessionId);
-    const watermark = computeWatermark(events);
+    const stored = readAllEvents(db, sessionId);
+    const watermark = computeWatermark(stored);
+    const tape = stored.flatMap((event) => {
+      const mapped = storedToTape(session.id, session.projectId, event);
+      return mapped ? [mapped] : [];
+    });
 
     // Read-through cache: a matching watermark means the artifact is current.
     // The review (Git diffs) is only built when regeneration is needed.
@@ -732,31 +585,32 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
         generatedAt: new Date().toISOString(),
       });
     }
-    const facts = buildFacts(review, events.map(toFactEvent));
+    const { hunks, attempts } = toReviewInputs(review);
+    const facts = extractFacts({
+      sessionId,
+      tape,
+      hunks,
+      attempts,
+      tapeEventCount: stored.length,
+    });
     const captureQuality = getSessionSummary(db, sessionId)?.captureQuality ?? "partial";
 
-    const blindSpots = (skeleton: string[]): string[] => {
-      const merged = [...skeleton];
-      for (const line of review.diagnostics) {
-        if (!merged.includes(line)) merged.push(line);
-      }
-      return merged;
-    };
-
     const writeSkeleton = (extraGaps: string[] = []): StoryOutcome => {
-      const base = skeletonStory({ sessionId, facts, watermark, captureQuality });
-      base.cards = assignSessionOrder(base.cards, facts, events);
-      const story = SessionStorySchema.parse({
-        ...base,
-        blindSpots: blindSpots(base.blindSpots),
-        gaps: [...base.gaps, ...extraGaps],
+      const generatedAt = clock().toISOString();
+      const skeleton = buildSkeletonStory(facts, { generatedAt, tapeSha256: watermark.sha256 });
+      const story = finalizeStory({
+        facts,
+        draft: { ...skeleton.story, gaps: [...skeleton.story.gaps, ...extraGaps] },
+        tape,
+        reviewDiagnostics: review.diagnostics,
+        captureQuality,
       });
       if (
         !persistStory({
           projectId: session.projectId,
           sessionId,
           story,
-          generator: "skeleton-v1",
+          generator: SKELETON_PROMPT_VERSION,
           watermark,
           resetStatus: watermarkChanged,
         })
@@ -781,58 +635,27 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
       return writeSkeleton();
     }
 
-    const sendDraft = async (extra: ChatMessage | null): Promise<unknown> => {
-      const messages: ChatMessage[] = [
-        { role: "system", content: STORY_SYSTEM_PROMPT },
-        { role: "user", content: buildStoryPrompt(facts) },
-      ];
-      if (extra) messages.push(extra);
-      // Re-redact the model request: facts derive from redacted tape, but the
-      // assembled prompt is re-scanned before it leaves the process.
-      const redacted = redactJson(messages).value as ChatMessage[];
-      const result = await requestJson(config, redacted, (value: unknown) => value, {
-        fetchImpl,
-        retryMaxTokens: Math.max(config.maxTokens * 2, 8192),
-      });
-      return result.value;
-    };
-
-    let draft: unknown;
+    let draft: SessionStory;
     try {
-      draft = await sendDraft(null);
+      draft = (await narrate(config, facts, sessionId)).draft;
     } catch {
       return writeSkeleton();
     }
-    let validated = validateDraft(draft, facts);
-    if (!validated.valid) {
-      const retryNote: ChatMessage = {
-        role: "user",
-        content: `The previous draft failed validation:\n${validated.errors.slice(0, 12).join("\n")}\nReturn corrected JSON only, grounded in the same facts.`,
-      };
-      try {
-        draft = await sendDraft(retryNote);
-      } catch {
-        return writeSkeleton();
-      }
-      validated = validateDraft(draft, facts);
-      if (!validated.valid || !validated.story) return writeSkeleton();
-    }
-    const body = validated.story;
-    if (!body) return writeSkeleton();
-    body.cards = assignSessionOrder(body.cards, facts, events);
-
-    const story = SessionStorySchema.parse({
-      schemaVersion: 1,
+    const generatedAt = clock().toISOString();
+    const stamped: SessionStory = {
+      ...draft,
       sessionId,
-      generatedAt: new Date().toISOString(),
-      generator: {
-        kind: "model",
-        model: config.model,
-        promptVersion: STORY_PROMPT_VERSION,
-      },
-      tapeWatermark: watermark,
-      ...body,
-      blindSpots: blindSpots(body.blindSpots),
+      generatedAt,
+      generator: { kind: "model", model: config.model, promptVersion: STORY_PROMPT_VERSION },
+      tapeWatermark: { eventCount: facts.tapeEventCount, sha256: watermark.sha256 },
+      skeleton: false,
+    };
+    const story = finalizeStory({
+      facts,
+      draft: stamped,
+      tape,
+      reviewDiagnostics: review.diagnostics,
+      captureQuality,
     });
     if (
       !persistStory({
@@ -861,3 +684,4 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
 }
 
 export type StoryService = ReturnType<typeof createStoryService>;
+export type { StoryClaim };
