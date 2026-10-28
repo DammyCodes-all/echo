@@ -12,4 +12,4 @@ Caveats: synthetic fixture, single session, no real Muse build; intermediates as
 
 Not measured here (need real tapes, stay manual): citation support, refusal rate, check pass rate, time to first check, hunk selection, attempt tree.
 
-Echo commit: 35ab95aafd4d4454903b4b55bb830150b345e809
+Echo commit: 45d7ffb88760ec029173abe60471f4c87cbb126e
