@@ -54,7 +54,8 @@ describe("createMuseIngest", () => {
     return ingest.runOnce().then((result) => {
       expect(result.scanned).toBe(2);
       expect(result.capturedSessions).toBe(1);
-      expect(result.eventsAdded).toBe(2);
+      // 2 log events + 1 baseline file.snapshot on first sight of the session.
+      expect(result.eventsAdded).toBe(3);
       expect(result.skipped).toBe(1);
       const again = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
       return again.runOnce().then((second) => {
@@ -72,7 +73,8 @@ describe("createMuseIngest", () => {
     const db = openEchoDb(join(dataDir, "echo.sqlite"));
     const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
     const first = await ingest.runOnce();
-    expect(first.eventsAdded).toBe(1);
+    // 1 log event + 1 baseline file.snapshot.
+    expect(first.eventsAdded).toBe(2);
     const second = await ingest.runOnce();
     expect(second.eventsAdded).toBe(0);
     appendFileSync(
@@ -128,7 +130,8 @@ describe("createMuseIngest spool drain", () => {
     const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
     const first = await ingest.runOnce();
     expect(first.drained).toBe(1);
-    expect(first.eventsAdded).toBe(1);
+    // 1 hook event + 1 baseline file.snapshot for the first-seen session.
+    expect(first.eventsAdded).toBe(2);
     expect(first.unattributed).toBe(0);
     const spoolRoot = join(dataDir, "spool", "muse", "s1");
     const remaining = readdirSync(spoolRoot).filter((name) => name.endsWith(".json"));
@@ -207,7 +210,8 @@ describe("createMuseIngest spool drain", () => {
     const result = await ingest.runOnce();
     expect(result.unattributed).toBe(200);
     expect(result.drained).toBe(1);
-    expect(result.eventsAdded).toBe(1);
+    // 1 hook event + 1 baseline file.snapshot.
+    expect(result.eventsAdded).toBe(2);
     db.close();
   });
 
@@ -244,7 +248,8 @@ describe("createMuseIngest spool drain", () => {
     const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
     const result = await ingest.runOnce();
     expect(result.drained).toBe(1);
-    expect(result.eventsAdded).toBe(2);
+    // 1 hook event + 1 log event + 1 baseline file.snapshot.
+    expect(result.eventsAdded).toBe(3);
     const tape = readFileSync(
       join(
         dataDir,
@@ -330,7 +335,7 @@ describe("createMuseIngest export reconciliation", () => {
       projects: [projectRoot],
       museBin,
     });
-    expect((await ingest.runOnce()).eventsAdded).toBe(1);
+    expect((await ingest.runOnce()).eventsAdded).toBe(2);
     expect((await ingest.runOnce()).eventsAdded).toBe(0);
     const reconciled = await ingest.runOnce();
     expect(reconciled.reconciled).toBe(1);
@@ -351,6 +356,7 @@ describe("createMuseIngest export reconciliation", () => {
     expect(JSON.parse(reconciledLines[0] as string).payload).toMatchObject({
       added: 1,
       merged: 1,
+      conflicts: 0,
       export_schema_version: 1,
     });
     expect(tape).toContain("agent.unknown");
@@ -387,7 +393,7 @@ describe("createMuseIngest export reconciliation", () => {
       projects: [projectRoot],
       museBin,
     });
-    expect((await ingest.runOnce()).eventsAdded).toBe(1);
+    expect((await ingest.runOnce()).eventsAdded).toBe(2);
     expect((await ingest.runOnce()).eventsAdded).toBe(0);
     await ingest.runOnce();
     expect(
