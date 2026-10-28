@@ -1,0 +1,132 @@
+{
+  "slug": "multi-topic",
+  "sessionId": "sess_fixture_multi",
+  "cards": [
+    {
+      "id": "h_df26a441dfed561b",
+      "headline": "Add a loud greeting, then tone it down before landing",
+      "constituentHunkIds": ["h_df26a441dfed561b"],
+      "constituentActionIds": ["call_home_1", "call_home_2", "call_test_home"],
+      "rank": 1,
+      "sessionOrder": 0,
+      "highRisk": false,
+      "riskReasons": ["reverted attempt: first greeting replaced before landing"],
+      "verification": "observed",
+      "why": [
+        {
+          "text": "Prompt asked for a greeting on the homepage",
+          "label": "observed",
+          "factIds": ["fixture-multi-topic-2"]
+        }
+      ],
+      "before": [
+        {
+          "text": "greeting was \"hi\"",
+          "label": "observed",
+          "factIds": []
+        }
+      ],
+      "now": [
+        {
+          "text": "greeting is \"hello\" with a loud variant committed then toned down",
+          "label": "observed",
+          "factIds": ["fixture-multi-topic-9"]
+        }
+      ],
+      "checkedBy": [
+        {
+          "text": "npm test -- homepage passed",
+          "label": "observed",
+          "factIds": ["fixture-multi-topic-10", "fixture-multi-topic-11"]
+        }
+      ],
+      "touches": ["src/home.ts"],
+      "moment": {
+        "eventId": "fixture-multi-topic-9",
+        "toolCallId": "call_home_2",
+        "ts": "2026-11-02T12:00:09.000Z",
+        "excerpt": "write src/home.ts: greeting \"hello\"",
+        "label": "observed"
+      },
+      "history": {
+        "priorSessionIds": [],
+        "previousPicture": null,
+        "note": null
+      }
+    },
+    {
+      "id": "h_25acecdea696b5b9",
+      "headline": "Fix README typo",
+      "constituentHunkIds": ["h_25acecdea696b5b9"],
+      "constituentActionIds": ["call_readme"],
+      "rank": 2,
+      "sessionOrder": 1,
+      "highRisk": false,
+      "riskReasons": [],
+      "verification": "observed",
+      "why": [
+        {
+          "text": "Prompt asked to fix the typo in the README",
+          "label": "observed",
+          "factIds": ["fixture-multi-topic-5"]
+        }
+      ],
+      "before": [
+        {
+          "text": "README read \"awsome\"",
+          "label": "observed",
+          "factIds": []
+        }
+      ],
+      "now": [
+        {
+          "text": "README reads \"awesome\"",
+          "label": "observed",
+          "factIds": ["fixture-multi-topic-7"]
+        }
+      ],
+      "checkedBy": [],
+      "touches": ["README.md"],
+      "moment": {
+        "eventId": "fixture-multi-topic-7",
+        "toolCallId": "call_readme",
+        "ts": "2026-11-02T12:00:07.000Z",
+        "excerpt": "edit README.md: awsome → awesome",
+        "label": "observed"
+      },
+      "history": {
+        "priorSessionIds": [],
+        "previousPicture": null,
+        "note": null
+      }
+    }
+  ],
+  "detoursIn": [
+    {
+      "id": "detour-home-revert",
+      "headline": "First greeting attempt replaced before landing",
+      "claims": [
+        {
+          "text": "Loud greeting committed then toned down by the second attempt at the same target",
+          "label": "observed",
+          "factIds": ["fixture-multi-topic-4", "fixture-multi-topic-9"]
+        }
+      ],
+      "attemptIds": ["att_8c1c150d50db438c"],
+      "costReason": "reverted"
+    }
+  ],
+  "detoursOut": [
+    {
+      "headline": "Lint run failed on a missing config without touching files",
+      "foldReason": "single failed tool with no file change and no repeat — not a detour",
+      "toolCallId": "call_lint_triv"
+    }
+  ],
+  "looseEnds": [],
+  "blindSpots": [],
+  "suppressChecksFor": [],
+  "routineLine": null,
+  "noCheckNeeded": false,
+  "seededContradictions": []
+}
