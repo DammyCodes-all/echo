@@ -9,7 +9,13 @@ import fs, {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runMuseHook } from "@echo/capture-muse";
-import { getReaderCheckpoint, getSessionBuildPin, listSnapshots, openEchoDb, readEvents } from "@echo/db";
+import {
+  getReaderCheckpoint,
+  getSessionBuildPin,
+  listSnapshots,
+  openEchoDb,
+  readEvents,
+} from "@echo/db";
 import { resolveRepositoryIdentity } from "@echo/snapshots";
 import git from "isomorphic-git";
 import { describe, expect, it } from "vitest";

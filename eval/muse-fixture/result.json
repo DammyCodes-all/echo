@@ -1,11 +1,11 @@
 {
-  "generated_at": "2026-10-28T08:31:03.689Z",
-  "echo_commit": "48a0b33962781d80d14e128df3adf60a92b5543c",
+  "generated_at": "2026-10-28T09:28:51.627Z",
+  "echo_commit": "8bd7ca5f6bac67706b81f4ea327ba5e5794720bb",
   "session_id": "ses_eval_1",
-  "project_id": "prj_db6a8894f1d7d429",
+  "project_id": "prj_4f8dbb5f86d6141e",
   "sample_size": {
-    "tape_events": 34,
-    "snapshots": 7,
+    "tape_events": 31,
+    "snapshots": 4,
     "snapshot_files": 9,
     "hook_events_drained": 12,
     "native_log_lines": 10

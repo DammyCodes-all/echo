@@ -127,3 +127,19 @@ export function runRedactedExport(sessionId: string, museBin = "muse"): ExportRu
     return { ok: false, diagnostic: "export_failed" };
   }
 }
+
+// Best-effort build pinning: the installed Muse version is recorded per
+// session so drift shows up as partial quality instead of silent schema
+// confusion. Never throws; output is opaque (no parsing — the format is
+// unverified) and bounded.
+export function getMuseVersion(museBin = "muse"): string | null {
+  try {
+    const result = spawnSync(museBin, ["--version"], { encoding: "utf8", timeout: 10_000 });
+    if (result.status !== 0) return null;
+    const out = `${result.stdout ?? ""}`.trim();
+    if (!out) return null;
+    return out.slice(0, 256);
+  } catch {
+    return null;
+  }
+}
