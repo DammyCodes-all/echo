@@ -26,6 +26,14 @@ export const ApiErrorSchema = z.object({
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 
+// Canonical card ID (ARCHITECTURE §12): the hunk ID, `h_` + 16 lowercase hex,
+// used end to end for cards and hunks. One schema object under two names so
+// hunk-typed and card-typed fields each read naturally without drifting.
+export const CardIdSchema = z.string().regex(/^h_[0-9a-f]{16}$/);
+export type CardId = z.infer<typeof CardIdSchema>;
+export const HunkIdSchema = CardIdSchema;
+export type HunkId = z.infer<typeof HunkIdSchema>;
+
 export const ProjectSummarySchema = z.object({
   id: z.string().min(1),
   root: z.string().min(1),
@@ -116,7 +124,7 @@ export const SnapshotFileContentSchema = z.object({
 export type SnapshotFileContent = z.infer<typeof SnapshotFileContentSchema>;
 
 export const ReviewHunkSchema = z.object({
-  id: z.string().min(1),
+  id: HunkIdSchema,
   path: z.string().min(1),
   oldStart: z.number().int().nonnegative(),
   oldLines: z.number().int().nonnegative(),
@@ -193,7 +201,7 @@ export const SessionReviewSchema = z.object({
   finalCommit: z.string().nullable(),
   hunks: z.array(ReviewHunkSchema),
   attempts: z.array(FileAttemptSchema),
-  evidenceByHunk: z.record(z.string(), z.array(HunkEvidenceSchema)),
+  evidenceByHunk: z.record(HunkIdSchema, z.array(HunkEvidenceSchema)),
   diagnostics: z.array(z.string()),
   generatedAt: z.string(),
 });
@@ -311,9 +319,9 @@ const ChangeCardHistorySchema = z.object({
 export type ChangeCardHistory = z.infer<typeof ChangeCardHistorySchema>;
 
 export const ChangeCardSchema = z.object({
-  id: z.string().min(1),
+  id: CardIdSchema,
   headline: z.string().min(1),
-  constituentHunkIds: z.array(z.string()),
+  constituentHunkIds: z.array(HunkIdSchema),
   constituentActionIds: z.array(z.string()),
   rank: z.number().int().min(1),
   sessionOrder: z.number().int().nonnegative(),
@@ -349,7 +357,7 @@ export const LooseEndSchema = z.object({
   id: z.string().min(1),
   kind: LooseEndKindSchema,
   claims: z.array(StoryClaimSchema),
-  cardId: z.string().min(1).nullable(),
+  cardId: CardIdSchema.nullable(),
 });
 export type LooseEnd = z.infer<typeof LooseEndSchema>;
 
@@ -411,7 +419,7 @@ export type EngagementTier = z.infer<typeof EngagementTierSchema>;
 
 export const EngagementEventSchema = z.object({
   id: z.string().min(1),
-  cardId: z.string().min(1).nullable(),
+  cardId: CardIdSchema.nullable(),
   kind: EngagementKindSchema,
   occurredAt: z.string().min(1),
 });
@@ -424,13 +432,13 @@ export type RecordEngagementRequest = z.infer<typeof RecordEngagementRequestSche
 
 export const EngagementStateSchema = z.object({
   sessionId: z.string().min(1),
-  tiers: z.record(z.string(), EngagementTierSchema),
+  tiers: z.record(CardIdSchema, EngagementTierSchema),
 });
 export type EngagementState = z.infer<typeof EngagementStateSchema>;
 
 const StoredCheckQuestionBaseSchema = z.object({
   id: z.string().min(1),
-  cardId: z.string().min(1),
+  cardId: CardIdSchema,
   kind: CheckKindSchema,
   question: z.string().min(1),
   evidenceFactIds: z.array(z.string()),
@@ -491,7 +499,7 @@ export const CheckAttemptV2Schema = z.object({
 export type CheckAttemptV2 = z.infer<typeof CheckAttemptV2Schema>;
 
 export const CardPictureSchema = z.object({
-  cardId: z.string().min(1),
+  cardId: CardIdSchema,
   bucket: PictureBucketSchema,
   questionId: z.string().min(1).nullable(),
 });
@@ -530,13 +538,14 @@ export const AskThreadMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["user", "assistant"]),
   text: z.string().min(1),
-  cardId: z.string().min(1).nullable(),
+  cardId: CardIdSchema.nullable(),
   response: AskResponseSchema.nullable(),
   createdAt: z.string().min(1),
 });
 export type AskThreadMessage = z.infer<typeof AskThreadMessageSchema>;
 
 export const AskThreadSchema = z.object({
+  schemaVersion: z.literal(1),
   sessionId: z.string().min(1),
   updatedAt: z.string().min(1),
   messages: z.array(AskThreadMessageSchema),
@@ -588,6 +597,12 @@ export const CheckV2AnswerResponseSchema = z.object({
   }),
 });
 export type CheckV2AnswerResponse = z.infer<typeof CheckV2AnswerResponseSchema>;
+// File layout for generated artifacts under the session dir (ARCHITECTURE §6).
+export const ARTIFACT_FILE_NAMES: Record<ArtifactKind, string> = {
+  story: "story.json",
+  checks_v2: "checks_v2.json",
+  ask_thread: "ask_thread.json",
+};
 
 export const ArtifactRefSchema = z.object({
   sessionId: z.string().min(1),

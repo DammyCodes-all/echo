@@ -29,6 +29,7 @@ import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
+  getArtifactRef,
   getReaderCheckpoint,
   getSession,
   getSessionBuildPin,
@@ -41,6 +42,7 @@ import {
   maxTapeSeq,
   pruneReaderCheckpoints,
   type ReaderCheckpoint,
+  setSessionCheckStatus,
   upsertProject,
   upsertReaderCheckpoint,
   upsertSession,
@@ -84,6 +86,7 @@ export interface MuseIngestResult {
   drained: number;
   unattributed: number;
   reconciled: number;
+  storiesGenerated: number;
 }
 
 const MAX_LOG_BYTES = 128 * 1024 * 1024;
@@ -435,6 +438,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
       drained: 0,
       unattributed: 0,
       reconciled: 0,
+      storiesGenerated: 0,
     };
   }
 

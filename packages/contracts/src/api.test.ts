@@ -1,7 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
+  ARTIFACT_FILE_NAMES,
+  AskThreadSchema,
+  CardIdSchema,
   ChangeCardSchema,
   ChecksV2ResponseSchema,
+  EngagementStateSchema,
+  HunkIdSchema,
   PublicCheckQuestionSchema,
   RecordEngagementRequestSchema,
   SessionStorySchema,
@@ -188,6 +193,62 @@ describe("story-first contracts", () => {
       captureState: "ready",
     });
     expect(bad.success).toBe(false);
+  });
+
+  it("enforces the canonical card ID shape (h_ + 16 hex)", () => {
+    expect(CardIdSchema.safeParse("h_0123456789abcdef").success).toBe(true);
+    expect(HunkIdSchema.safeParse("h_0123456789abcdef").success).toBe(true);
+    for (const bad of [
+      "src/retry.ts:0",
+      "h_0123456789abcde",
+      "h_0123456789abcdef0",
+      "h_0123456789ABCDEF",
+      "0123456789abcdef",
+      "",
+    ]) {
+      expect(CardIdSchema.safeParse(bad).success).toBe(false);
+      expect(HunkIdSchema.safeParse(bad).success).toBe(false);
+    }
+  });
+
+  it("rejects cards with non-canonical ids", () => {
+    expect(ChangeCardSchema.safeParse(minimalCard({ id: "src/retry.ts:0" })).success).toBe(false);
+    expect(ChangeCardSchema.safeParse(minimalCard({ constituentHunkIds: ["nope"] })).success).toBe(
+      false,
+    );
+    expect(
+      ChangeCardSchema.safeParse(minimalCard({ constituentHunkIds: ["h_0123456789abcdef"] }))
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects non-canonical keys in the engagement tiers map", () => {
+    expect(
+      EngagementStateSchema.safeParse({
+        sessionId: "ses_test",
+        tiers: { "src/retry.ts:0": "seen" },
+      }).success,
+    ).toBe(false);
+    expect(
+      EngagementStateSchema.safeParse({
+        sessionId: "ses_test",
+        tiers: { h_0123456789abcdef: "engaged" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("pins the versioned artifact file layout", () => {
+    expect(ARTIFACT_FILE_NAMES).toEqual({
+      story: "story.json",
+      checks_v2: "checks_v2.json",
+      ask_thread: "ask_thread.json",
+    });
+  });
+
+  it("requires schemaVersion 1 on the ask thread", () => {
+    const base = { sessionId: "ses_test", updatedAt: "2026-10-28T10:00:00.000Z", messages: [] };
+    expect(AskThreadSchema.safeParse(base).success).toBe(false);
+    expect(AskThreadSchema.safeParse({ ...base, schemaVersion: 1 }).success).toBe(true);
   });
 
   it("bounds RecordEngagementRequest events to 1..100", () => {

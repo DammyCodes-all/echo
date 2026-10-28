@@ -1,0 +1,92 @@
+{
+  "slug": "payment-retry",
+  "sessionId": "sess_fixture_payment",
+  "cards": [
+    {
+      "id": "h_bd0cd4abb72989df",
+      "headline": "Retry failed payments with exponential backoff",
+      "constituentHunkIds": ["h_bd0cd4abb72989df"],
+      "constituentActionIds": ["call_edit_retry", "call_test_pay"],
+      "rank": 1,
+      "sessionOrder": 0,
+      "highRisk": true,
+      "riskReasons": [
+        "payments: touches src/payments/retry.ts — payment boundary",
+        "unverified: no passing run covers the retry behaviour"
+      ],
+      "verification": "partly_observed",
+      "why": [
+        {
+          "text": "Prompt asked for exponential backoff on failed payments",
+          "label": "observed",
+          "factIds": ["fixture-payment-retry-2"]
+        }
+      ],
+      "before": [
+        {
+          "text": "charge() ran once with no retry",
+          "label": "observed",
+          "factIds": []
+        }
+      ],
+      "now": [
+        {
+          "text": "charge() retries up to 5 times with doubling delay",
+          "label": "observed",
+          "factIds": ["fixture-payment-retry-4"]
+        }
+      ],
+      "checkedBy": [
+        {
+          "text": "npm test -- payments failed after 2 attempts; no passing run observed",
+          "label": "observed",
+          "factIds": ["fixture-payment-retry-5", "fixture-payment-retry-6"]
+        }
+      ],
+      "touches": ["src/payments/retry.ts"],
+      "moment": {
+        "eventId": "fixture-payment-retry-6",
+        "toolCallId": "call_test_pay",
+        "ts": "2026-10-28T12:00:06.000Z",
+        "excerpt": "FAILED after 2 attempts",
+        "label": "observed"
+      },
+      "history": {
+        "priorSessionIds": [],
+        "previousPicture": null,
+        "note": null
+      }
+    }
+  ],
+  "detoursIn": [],
+  "detoursOut": [],
+  "looseEnds": [
+    {
+      "id": "le-payment-success-path",
+      "kind": "untested",
+      "claims": [
+        {
+          "text": "Retry success path has no passing run",
+          "label": "observed",
+          "factIds": ["fixture-payment-retry-6"]
+        }
+      ],
+      "cardId": "h_bd0cd4abb72989df"
+    }
+  ],
+  "blindSpots": [],
+  "suppressChecksFor": [],
+  "routineLine": null,
+  "noCheckNeeded": false,
+  "seededContradictions": [
+    {
+      "claimId": "seeded-retry-count",
+      "claimText": "The retry loop attempts the charge 3 times",
+      "assertedNumber": 3,
+      "observedNumber": 2,
+      "evidenceRunId": "run-payments-test",
+      "disposition": "must-drop",
+      "reason": "tape run output shows 2 attempts before failure; the claim asserts 3 with no supporting record"
+    }
+  ]
+}

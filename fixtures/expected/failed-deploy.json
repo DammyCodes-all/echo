@@ -1,0 +1,90 @@
+{
+  "slug": "failed-deploy",
+  "sessionId": "sess_fixture_deploy",
+  "cards": [
+    {
+      "id": "h_2ef6b6ac1b8f978a",
+      "headline": "Attempted preview deploy (failed, left a partial artifact)",
+      "constituentHunkIds": ["h_2ef6b6ac1b8f978a"],
+      "constituentActionIds": ["call_deploy"],
+      "rank": 1,
+      "sessionOrder": 0,
+      "highRisk": true,
+      "riskReasons": [
+        "production: deploy to the preview environment",
+        "failed_with_side_effect: tool failed after writing dist/preview.txt"
+      ],
+      "verification": "nothing",
+      "why": [
+        {
+          "text": "Prompt asked to deploy the preview build",
+          "label": "observed",
+          "factIds": ["fixture-failed-deploy-2"]
+        }
+      ],
+      "before": [],
+      "now": [
+        {
+          "text": "dist/preview.txt exists partially; deploy exited 1",
+          "label": "observed",
+          "factIds": ["fixture-failed-deploy-4"]
+        }
+      ],
+      "checkedBy": [
+        {
+          "text": "./scripts/deploy-preview.sh failed at chunk 3/9",
+          "label": "observed",
+          "factIds": ["fixture-failed-deploy-3", "fixture-failed-deploy-4"]
+        }
+      ],
+      "touches": ["dist/preview.txt"],
+      "moment": {
+        "eventId": "fixture-failed-deploy-4",
+        "toolCallId": "call_deploy",
+        "ts": "2026-10-31T12:00:04.000Z",
+        "excerpt": "upload failed at chunk 3/9 (dist/preview.txt partial)",
+        "label": "observed"
+      },
+      "history": {
+        "priorSessionIds": [],
+        "previousPicture": null,
+        "note": null
+      }
+    }
+  ],
+  "detoursIn": [
+    {
+      "id": "detour-deploy",
+      "headline": "Preview deploy failed with a partial side effect",
+      "claims": [
+        {
+          "text": "Deploy tool failed after writing a partial artifact",
+          "label": "observed",
+          "factIds": ["fixture-failed-deploy-4"]
+        }
+      ],
+      "attemptIds": ["att_d9e91576f1f75591"],
+      "costReason": "side_effect"
+    }
+  ],
+  "detoursOut": [],
+  "looseEnds": [
+    {
+      "id": "le-deploy-retry",
+      "kind": "todo",
+      "claims": [
+        {
+          "text": "Preview deploy never completed",
+          "label": "observed",
+          "factIds": ["fixture-failed-deploy-4"]
+        }
+      ],
+      "cardId": "h_2ef6b6ac1b8f978a"
+    }
+  ],
+  "blindSpots": [],
+  "suppressChecksFor": [],
+  "routineLine": null,
+  "noCheckNeeded": false,
+  "seededContradictions": []
+}

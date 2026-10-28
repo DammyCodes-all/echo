@@ -27,6 +27,7 @@
     "@echo/retrieval": "workspace:*",
     "@echo/sandbox": "workspace:*",
     "@echo/snapshots": "workspace:*",
+    "@echo/story": "workspace:*",
     "@echo/tape": "workspace:*",
     "dotenv": "^18.0.9",
     "fastify": "^5.12.7",

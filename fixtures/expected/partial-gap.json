@@ -1,0 +1,63 @@
+{
+  "slug": "partial-gap",
+  "sessionId": "sess_fixture_partial",
+  "cards": [
+    {
+      "id": "h_71750330bd8a6073",
+      "headline": "Migrate the session store to SQLite",
+      "constituentHunkIds": ["h_71750330bd8a6073"],
+      "constituentActionIds": ["call_migrate_1"],
+      "rank": 1,
+      "sessionOrder": 0,
+      "highRisk": true,
+      "riskReasons": [
+        "stored_data: touches src/db/store.ts — stored data boundary",
+        "capture gap over the edit region: source sequences 5-8 unobserved"
+      ],
+      "verification": "partly_observed",
+      "why": [
+        {
+          "text": "Prompt asked to migrate the session store to SQLite",
+          "label": "observed",
+          "factIds": ["fixture-partial-gap-2"]
+        }
+      ],
+      "before": [
+        {
+          "text": "store was an in-memory Map",
+          "label": "observed",
+          "factIds": []
+        }
+      ],
+      "now": [
+        {
+          "text": "store is a SQLite-backed Database",
+          "label": "observed",
+          "factIds": ["fixture-partial-gap-5"]
+        }
+      ],
+      "checkedBy": [],
+      "touches": ["src/db/store.ts"],
+      "moment": {
+        "eventId": "fixture-partial-gap-5",
+        "toolCallId": "call_migrate_1",
+        "ts": "2026-11-01T12:00:05.000Z",
+        "excerpt": "write src/db/store.ts ok",
+        "label": "observed"
+      },
+      "history": {
+        "priorSessionIds": [],
+        "previousPicture": null,
+        "note": null
+      }
+    }
+  ],
+  "detoursIn": [],
+  "detoursOut": [],
+  "looseEnds": [],
+  "blindSpots": ["capture gap: source sequences 5-8 unobserved (sequence_jump 4→9)"],
+  "suppressChecksFor": ["h_71750330bd8a6073"],
+  "routineLine": null,
+  "noCheckNeeded": false,
+  "seededContradictions": []
+}

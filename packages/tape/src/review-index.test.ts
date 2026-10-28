@@ -1,3 +1,4 @@
+import { CardIdSchema } from "@echo/contracts";
 import { describe, expect, it } from "vitest";
 import {
   type AttemptLink,
@@ -89,6 +90,18 @@ deleted file mode 100644
     if (!first || !second) throw new Error("fixture hunks missing");
     expect(normalizePatch(first)).toBe(normalizePatch(second));
     expect(hunkIdFor("a.txt", first)).toBe(hunkIdFor("a.txt", second));
+  });
+
+  it("emits IDs the contract-owned card schema accepts", () => {
+    const hunk = parseUnifiedDiffs(`diff --git a/a.txt b/a.txt
+--- a/a.txt
++++ b/a.txt
+@@ -1 +1 @@
+-a
++b
+`)[0]?.hunks[0];
+    if (!hunk) throw new Error("fixture hunk missing");
+    expect(CardIdSchema.safeParse(hunkIdFor("a.txt", hunk)).success).toBe(true);
   });
 });
 

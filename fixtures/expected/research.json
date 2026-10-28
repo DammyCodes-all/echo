@@ -1,0 +1,13 @@
+{
+  "slug": "research",
+  "sessionId": "sess_fixture_research",
+  "cards": [],
+  "detoursIn": [],
+  "detoursOut": [],
+  "looseEnds": [],
+  "blindSpots": [],
+  "suppressChecksFor": [],
+  "routineLine": null,
+  "noCheckNeeded": true,
+  "seededContradictions": []
+}
