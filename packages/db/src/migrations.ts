@@ -79,4 +79,28 @@ CREATE TABLE snapshot_files (
 );
 `,
   },
+  {
+    version: 3,
+    sql: `
+CREATE TABLE reader_checkpoints (
+  session_id TEXT NOT NULL,
+  lane TEXT NOT NULL DEFAULT '',
+  source_path TEXT NOT NULL,
+  inode INTEGER,
+  offset INTEGER NOT NULL DEFAULT 0,
+  last_sequence INTEGER,
+  last_event_ts TEXT,
+  last_marker_after INTEGER,
+  marker_count INTEGER NOT NULL DEFAULT 0,
+  session_started INTEGER NOT NULL DEFAULT 0,
+  schema_version INTEGER,
+  adapter_version TEXT,
+  build TEXT,
+  status TEXT NOT NULL DEFAULT 'active',
+  error TEXT,
+  last_read_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, lane)
+);
+`,
+  },
 ];
