@@ -251,42 +251,8 @@ export const CheckKindSchema = z.enum([
 ]);
 export type CheckKind = z.infer<typeof CheckKindSchema>;
 
-export const GenerateChecksRequestSchema = z.object({
-  limit: z.number().int().min(1).max(5).default(3),
-  opened: z.array(z.string().min(1)).max(1000).default([]),
-  waived: z.array(z.string().min(1)).max(1000).default([]),
-});
-export type GenerateChecksRequest = z.infer<typeof GenerateChecksRequestSchema>;
-
-export const StoredCheckSchema = z.object({
-  id: z.string().min(1),
-  sessionId: z.string().min(1),
-  hunkId: z.string().min(1),
-  path: z.string().min(1),
-  kind: CheckKindSchema,
-  question: z.string().min(1),
-  evidencePaths: z.array(z.string()),
-  rubric: z.array(z.string()),
-  demonstration: z.object({ code: z.string(), observedStdout: z.string() }).nullable(),
-  createdAt: z.string().min(1),
-});
-export type StoredCheck = z.infer<typeof StoredCheckSchema>;
-
-export const GenerateChecksResponseSchema = z.object({
-  checks: z.array(StoredCheckSchema),
-  dropped: z.array(z.object({ hunkId: z.string(), reason: z.string() })),
-  sandboxAvailable: z.boolean(),
-});
-export type GenerateChecksResponse = z.infer<typeof GenerateChecksResponseSchema>;
-
 export const AnswerConfidenceSchema = z.enum(["guessing", "think_so", "certain"]);
 export type AnswerConfidence = z.infer<typeof AnswerConfidenceSchema>;
-
-export const AnswerCheckRequestSchema = z.object({
-  confidence: AnswerConfidenceSchema,
-  answer: z.string().min(1).max(8000),
-});
-export type AnswerCheckRequest = z.infer<typeof AnswerCheckRequestSchema>;
 
 export const RubricHitSchema = z.object({
   point: z.string().min(1),
@@ -295,61 +261,6 @@ export const RubricHitSchema = z.object({
   why: z.string().nullable(),
 });
 export type RubricHit = z.infer<typeof RubricHitSchema>;
-
-export const CheckAttemptSchema = z.object({
-  id: z.string().min(1),
-  checkId: z.string().min(1),
-  confidence: AnswerConfidenceSchema,
-  confidenceP: z.number().min(0).max(1),
-  answer: z.string(),
-  correct: z.boolean(),
-  reason: z.string().nullable(),
-  hits: z.array(RubricHitSchema),
-  brier: z.number().min(0).max(1),
-  overconfident: z.boolean(),
-  underconfident: z.boolean(),
-  createdAt: z.string().min(1),
-});
-export type CheckAttempt = z.infer<typeof CheckAttemptSchema>;
-
-export const AnswerCheckResponseSchema = z.object({
-  attempt: CheckAttemptSchema,
-  reference: z.object({
-    rubric: z.array(z.string()),
-    hits: z.array(RubricHitSchema),
-  }),
-});
-export type AnswerCheckResponse = z.infer<typeof AnswerCheckResponseSchema>;
-
-export const SessionChecksResponseSchema = z.object({
-  checks: z.array(StoredCheckSchema),
-  attempts: z.record(z.string(), z.array(CheckAttemptSchema)),
-  waived: z.array(z.string()),
-});
-export type SessionChecksResponse = z.infer<typeof SessionChecksResponseSchema>;
-
-export const SessionReportSchema = z.object({
-  sessionId: z.string().min(1),
-  generatedAt: z.string().min(1),
-  hunksTotal: z.number().int().nonnegative(),
-  checksTotal: z.number().int().nonnegative(),
-  answered: z.number().int().nonnegative(),
-  correct: z.number().int().nonnegative(),
-  waived: z.array(z.string()),
-  calibration: z.object({
-    meanBrier: z.number().nullable(),
-    overconfidenceCount: z.number().int().nonnegative(),
-    perConfidence: z.array(
-      z.object({
-        confidence: AnswerConfidenceSchema,
-        answered: z.number().int().nonnegative(),
-        correct: z.number().int().nonnegative(),
-      }),
-    ),
-  }),
-  gaps: z.array(z.string()),
-});
-export type SessionReport = z.infer<typeof SessionReportSchema>;
 
 // --- Story-first surface (ADR 0011) and calibration checks v2 (ADR 0012) ---
 
