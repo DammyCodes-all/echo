@@ -29,7 +29,6 @@ import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
-  getArtifactRef,
   getReaderCheckpoint,
   getSession,
   getSessionBuildPin,
@@ -42,7 +41,6 @@ import {
   maxTapeSeq,
   pruneReaderCheckpoints,
   type ReaderCheckpoint,
-  setSessionCheckStatus,
   upsertProject,
   upsertReaderCheckpoint,
   upsertSession,

@@ -72,7 +72,7 @@ function makeCard(id: string, overrides: Partial<ChangeCard> = {}): ChangeCard {
 }
 
 function card1(): ChangeCard {
-  return makeCard("card-1", {
+  return makeCard("h_aaaaaaaaaaaaaaaa", {
     headline: "Retry billing charges",
     rank: 1,
     highRisk: true,
@@ -84,7 +84,7 @@ function card1(): ChangeCard {
 }
 
 function card2(): ChangeCard {
-  return makeCard("card-2", {
+  return makeCard("h_bbbbbbbbbbbbbbbb", {
     headline: "Fix docs typo",
     rank: 2,
     touches: ["docs/readme.md"],
@@ -142,7 +142,7 @@ function seedSession(sessionId: string): { db: EchoDb; dataDir: string } {
   const seeded = seedDb(sessionId);
   writeStory(seeded.db, seeded.dataDir, sessionId, [card1(), card2()]);
   recordEngagementEvents(seeded.db, sessionId, [
-    { id: "eng-1", cardId: "card-2", kind: "card_expanded", occurredAt: ISO },
+    { id: "eng-1", cardId: "h_bbbbbbbbbbbbbbbb", kind: "card_expanded", occurredAt: ISO },
   ]);
   return seeded;
 }
@@ -167,7 +167,7 @@ function draftSet(): unknown {
   return {
     questions: [
       {
-        cardId: "card-1",
+        cardId: "h_aaaaaaaaaaaaaaaa",
         format: "free_text",
         kind: "teach_back",
         question:
@@ -177,7 +177,7 @@ function draftSet(): unknown {
         evidencePaths: ["billing/retry.ts"],
       },
       {
-        cardId: "card-2",
+        cardId: "h_bbbbbbbbbbbbbbbb",
         format: "mcq",
         kind: "consequence",
         question: "What did the docs change cost or open up?",
@@ -226,7 +226,7 @@ describe("createChecksV2Service", () => {
     try {
       const service = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV });
       expect((await service.generate("ses_missing")).status).toBe(404);
-      expect((await service.checkMe("ses_missing", "card-1")).status).toBe(404);
+      expect((await service.checkMe("ses_missing", "h_aaaaaaaaaaaaaaaa")).status).toBe(404);
       expect(service.state("ses_missing").status).toBe(404);
       expect(service.skip("ses_missing").status).toBe(404);
       expect(
@@ -294,8 +294,8 @@ describe("createChecksV2Service", () => {
       expect(state.picture).toHaveLength(2);
       expect(state.picture.every((entry) => entry.bucket === "never_looked")).toBe(true);
 
-      const mcq = state.questions.find((entry) => entry.cardId === "card-2");
-      const free = state.questions.find((entry) => entry.cardId === "card-1");
+      const mcq = state.questions.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb");
+      const free = state.questions.find((entry) => entry.cardId === "h_aaaaaaaaaaaaaaaa");
       if (!mcq || !free) throw new Error("expected both questions");
       expect(state.currentQuestionId).toBe(state.questions[0]?.id);
 
@@ -314,7 +314,9 @@ describe("createChecksV2Service", () => {
 
       const mid = ChecksV2ResponseSchema.parse(service.state("ses_v2_full").body);
       expect(mid.currentQuestionId).toBe(free.id);
-      expect(mid.picture.find((entry) => entry.cardId === "card-2")?.bucket).toBe("solid");
+      expect(mid.picture.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb")?.bucket).toBe(
+        "solid",
+      );
 
       const answeredFree = await service.answer("ses_v2_full", {
         questionId: free.id,
@@ -347,8 +349,8 @@ describe("createChecksV2Service", () => {
       );
       const generated = await service.generate("ses_v2_wrong");
       const state = ChecksV2ResponseSchema.parse(generated.body);
-      const mcq = state.questions.find((entry) => entry.cardId === "card-2");
-      const free = state.questions.find((entry) => entry.cardId === "card-1");
+      const mcq = state.questions.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb");
+      const free = state.questions.find((entry) => entry.cardId === "h_aaaaaaaaaaaaaaaa");
       if (!mcq || !free) throw new Error("expected both questions");
 
       const wrongCertain = await service.answer("ses_v2_wrong", {
@@ -388,8 +390,8 @@ describe("createChecksV2Service", () => {
         { env: ENV, fetchImpl },
       );
       const state = ChecksV2ResponseSchema.parse((await service.generate("ses_v2_shape")).body);
-      const mcq = state.questions.find((entry) => entry.cardId === "card-2");
-      const free = state.questions.find((entry) => entry.cardId === "card-1");
+      const mcq = state.questions.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb");
+      const free = state.questions.find((entry) => entry.cardId === "h_aaaaaaaaaaaaaaaa");
       if (!mcq || !free) throw new Error("expected both questions");
 
       const noKey = await service.answer("ses_v2_shape", {
@@ -440,7 +442,7 @@ describe("createChecksV2Service", () => {
       const { fetchImpl } = stubFetchQueue([draftSet()]);
       const on = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV, fetchImpl });
       const state = ChecksV2ResponseSchema.parse((await on.generate("ses_v2_nograde")).body);
-      const free = state.questions.find((entry) => entry.cardId === "card-1");
+      const free = state.questions.find((entry) => entry.cardId === "h_aaaaaaaaaaaaaaaa");
       if (!free) throw new Error("expected a free_text question");
       const off = createChecksV2Service({ db, dataDir, log: silentLog }, { env: OFF_ENV });
       const outcome = await off.answer("ses_v2_nograde", {
@@ -476,7 +478,7 @@ describe("createChecksV2Service", () => {
         { env: ENV, fetchImpl },
       );
       const state = ChecksV2ResponseSchema.parse((await service.generate("ses_v2_skipmid")).body);
-      const mcq = state.questions.find((entry) => entry.cardId === "card-2");
+      const mcq = state.questions.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb");
       if (!mcq) throw new Error("expected an mcq question");
       await service.answer("ses_v2_skipmid", {
         questionId: mcq.id,
@@ -530,15 +532,15 @@ describe("createChecksV2Service", () => {
       );
       const badCard = await service.checkMe("ses_v2_checkme", "card-nope");
       expect(badCard.status).toBe(400);
-      const single = await service.checkMe("ses_v2_checkme", "card-2");
+      const single = await service.checkMe("ses_v2_checkme", "h_bbbbbbbbbbbbbbbb");
       expect(single.status).toBe(200);
       const singleState = ChecksV2ResponseSchema.parse(single.body);
       expect(singleState.questions).toHaveLength(1);
-      expect(singleState.questions[0]?.cardId).toBe("card-2");
+      expect(singleState.questions[0]?.cardId).toBe("h_bbbbbbbbbbbbbbbb");
       expect(singleState.currentQuestionId).toBe(singleState.questions[0]?.id);
       expect(calls()).toBe(1);
 
-      const repeat = await service.checkMe("ses_v2_checkme", "card-2");
+      const repeat = await service.checkMe("ses_v2_checkme", "h_bbbbbbbbbbbbbbbb");
       expect(ChecksV2ResponseSchema.parse(repeat.body).questions).toHaveLength(1);
       expect(calls()).toBe(1);
 

@@ -20,7 +20,7 @@ function makeStory(sessionId: string, summary: string, cardTouches: string[][]) 
     shortVersion: [],
     askVsResult: { asked: [], delivered: [], extras: [], missing: [] },
     cards: cardTouches.map((touches, index) => ({
-      id: `card-${index}`,
+      id: `h_${String(index).padStart(16, "0")}`,
       headline: `card ${index}`,
       constituentHunkIds: [],
       constituentActionIds: [],
