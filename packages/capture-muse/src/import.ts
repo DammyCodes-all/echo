@@ -221,8 +221,7 @@ export async function importMuseSession(request: MuseImportRequest): Promise<Mus
     let report: { status: "ok" | "partial"; diagnostics: string[] };
     let snapshotEvent: TapeEvent | null = null;
     const priorCommit = findPriorSnapshotCommit(db, sessionId, snapshotRecordKey);
-    const priorRow =
-      priorCommit === null ? null : getSnapshotByCommit(db, sessionId, priorCommit);
+    const priorRow = priorCommit === null ? null : getSnapshotByCommit(db, sessionId, priorCommit);
     if (priorRow) {
       snapshotCommit = priorRow.commitOid;
       report = {

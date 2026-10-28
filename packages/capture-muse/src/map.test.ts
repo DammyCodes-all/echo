@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mapMuseToTape } from "./map";
+import { buildTapeEvent, emptyLinks, MAX_PAYLOAD_BYTES, mapMuseToTape } from "./map";
 import { parseMuseLines } from "./reader";
 
 const CTX = {
@@ -156,5 +156,67 @@ describe("mapMuseToTape", () => {
     const result = mapMuseToTape(parsed.events, parsed.markers, parsed.invalidLines, CTX);
     expect(result.events).toHaveLength(1);
     expect(result.events[0]?.diagnostics).not.toContain("encrypted_content_removed");
+  });
+
+  it("replaces oversized payloads with a content-free marker", () => {
+    const big = "x".repeat(MAX_PAYLOAD_BYTES + 1);
+    const { event } = buildTapeEvent({
+      kind: "tool.completed",
+      payload: { kind: "completed", text: big },
+      payloadType: "runtime.session",
+      recordType: "event",
+      sequence: 3,
+      ts: "2026-10-28T10:00:00.000Z",
+      recordKey: "muse:ses_parent:ses_parent:3",
+      links: emptyLinks(),
+      diagnostics: [],
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      observedAt: "2026-10-28T10:00:00.050Z",
+      tapeSeq: 0,
+    });
+    expect(JSON.stringify(event.payload)).not.toContain(big);
+    expect(event.payload).toMatchObject({ truncated: true });
+    expect(event.diagnostics).toContain("truncation");
+    // Deterministic: the same oversized input hashes to the same id.
+    const again = buildTapeEvent({
+      kind: "tool.completed",
+      payload: { kind: "completed", text: big },
+      payloadType: "runtime.session",
+      recordType: "event",
+      sequence: 3,
+      ts: "2026-10-28T10:00:00.000Z",
+      recordKey: "muse:ses_parent:ses_parent:3",
+      links: emptyLinks(),
+      diagnostics: [],
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      observedAt: "2026-10-28T10:00:00.050Z",
+      tapeSeq: 0,
+    });
+    expect(again.event.event_id).toBe(event.event_id);
+  });
+
+  it("leaves payloads under the cap untouched", () => {
+    const { event } = buildTapeEvent({
+      kind: "tool.completed",
+      payload: { kind: "completed", text: "small" },
+      payloadType: "runtime.session",
+      recordType: "event",
+      sequence: 3,
+      ts: "2026-10-28T10:00:00.000Z",
+      recordKey: "muse:ses_parent:ses_parent:3",
+      links: emptyLinks(),
+      diagnostics: [],
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      observedAt: "2026-10-28T10:00:00.050Z",
+      tapeSeq: 0,
+    });
+    expect(event.payload).toEqual({ kind: "completed", text: "small" });
+    expect(event.diagnostics).not.toContain("truncation");
   });
 });
