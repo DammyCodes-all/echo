@@ -19,6 +19,7 @@
       "@echo/retrieval": ["./packages/retrieval/src/index.ts"],
       "@echo/sandbox": ["./packages/sandbox/src/index.ts"],
       "@echo/snapshots": ["./packages/snapshots/src/index.ts"],
+      "@echo/story": ["./packages/story/src/index.ts"],
       "@echo/tape": ["./packages/tape/src/index.ts"]
     }
   },
