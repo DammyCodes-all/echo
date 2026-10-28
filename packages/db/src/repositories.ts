@@ -4,6 +4,7 @@ import { type EchoDb, withTransaction } from "./database";
 export interface ProjectSummary {
   id: string;
   root: string;
+  remoteUrl: string | null;
   name: string | null;
   sessionCount: number;
   lastActivity: string | null;
@@ -80,12 +81,12 @@ function nowIso(): string {
 
 export function upsertProject(
   db: EchoDb,
-  input: { id: string; root: string; name: string | null },
+  input: { id: string; root: string; remoteUrl?: string | null; name: string | null },
 ): void {
   db.prepare(
-    `INSERT INTO projects (id, canonical_root, name, created_at) VALUES (?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET canonical_root = excluded.canonical_root, name = excluded.name`,
-  ).run(input.id, input.root, input.name, nowIso());
+    `INSERT INTO projects (id, canonical_root, remote_url, name, created_at) VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET canonical_root = excluded.canonical_root, remote_url = excluded.remote_url, name = excluded.name`,
+  ).run(input.id, input.root, input.remoteUrl ?? null, input.name, nowIso());
 }
 
 export function upsertSession(
@@ -220,7 +221,7 @@ export function appendEvents(db: EchoDb, sessionId: string, events: TapeEvent[])
 export function listProjects(db: EchoDb): ProjectSummary[] {
   const rows = db
     .prepare(
-      `SELECT p.id, p.canonical_root AS root, p.name,
+      `SELECT p.id, p.canonical_root AS root, p.remote_url AS remote_url, p.name,
               COUNT(s.id) AS session_count, MAX(s.updated_at) AS last_activity
        FROM projects p LEFT JOIN sessions s ON s.project_id = p.id
        GROUP BY p.id
@@ -229,6 +230,7 @@ export function listProjects(db: EchoDb): ProjectSummary[] {
     .all() as Array<{
     id: string;
     root: string;
+    remote_url: string | null;
     name: string | null;
     session_count: number;
     last_activity: string | null;
@@ -236,6 +238,7 @@ export function listProjects(db: EchoDb): ProjectSummary[] {
   return rows.map((row) => ({
     id: row.id,
     root: row.root,
+    remoteUrl: row.remote_url,
     name: row.name,
     sessionCount: Number(row.session_count),
     lastActivity: row.last_activity,
@@ -271,8 +274,9 @@ export function readEvents(
   afterSeq = 0,
   limit = 500,
   includeRevisions = false,
+  maxLimit = 1000,
 ): StoredEvent[] {
-  const bounded = Math.min(Math.max(limit, 1), 1000);
+  const bounded = Math.min(Math.max(limit, 1), Math.max(1, maxLimit));
   const sql = includeRevisions
     ? `SELECT id, tape_seq, tape_seq AS position_seq, record_key, kind, ts, observed_at,
               tool_call_id, payload_json, redaction_json
@@ -305,6 +309,27 @@ export function readEvents(
     payload: JSON.parse(String(row.payload_json)),
     redaction: JSON.parse(String(row.redaction_json)),
   }));
+}
+
+export function readAllEvents(
+  db: EchoDb,
+  sessionId: string,
+  includeRevisions = false,
+  pageSize = 1000,
+): StoredEvent[] {
+  const boundedPage = Math.min(Math.max(pageSize, 1), 10_000);
+  const events: StoredEvent[] = [];
+  let after = 0;
+  for (;;) {
+    const page = readEvents(db, sessionId, after, boundedPage, includeRevisions, boundedPage);
+    if (page.length === 0) break;
+    events.push(...page);
+    const last = page[page.length - 1];
+    if (!last || page.length < boundedPage) break;
+    after = last.position_seq;
+    if (events.length > 100_000) break;
+  }
+  return events;
 }
 
 export function insertSnapshot(db: EchoDb, input: SnapshotInsert): boolean {

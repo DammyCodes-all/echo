@@ -79,4 +79,11 @@ CREATE TABLE snapshot_files (
 );
 `,
   },
+  {
+    version: 3,
+    sql: `
+ALTER TABLE projects ADD COLUMN remote_url TEXT;
+CREATE UNIQUE INDEX idx_projects_remote_url ON projects(remote_url) WHERE remote_url IS NOT NULL;
+`,
+  },
 ];

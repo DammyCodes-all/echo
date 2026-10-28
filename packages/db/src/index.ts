@@ -17,6 +17,7 @@ export {
   maxSourceSequence,
   maxTapeSeq,
   type ProjectSummary,
+  readAllEvents,
   readEvents,
   type SessionRow,
   type SessionSummary,
