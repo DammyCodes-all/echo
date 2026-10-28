@@ -1,7 +1,14 @@
 import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SessionStorySchema, type TapeEvent } from "@echo/contracts";
+import {
+  ARTIFACT_FILE_NAMES,
+  type SessionStory,
+  SessionStorySchema,
+  type TapeEvent,
+  type TapeEventKind,
+  type VerifiedCounts,
+} from "@echo/contracts";
 import {
   appendEvents,
   getArtifactRef,
@@ -15,274 +22,26 @@ import {
 } from "@echo/db";
 import type { SnapshotResult } from "@echo/snapshots";
 import { snapshotWorkingTree } from "@echo/snapshots";
+import { buildSkeletonStory, extractFacts } from "@echo/story";
+import type { FileAttempt } from "@echo/tape";
 import { describe, expect, it } from "vitest";
-import { assignSessionOrder, createStoryService, validateDraft } from "./story";
-import { computeWatermark, type FactSet, type StoryFact } from "./story-facts";
+import { computeWatermark, createStoryService, finalizeStory, normalizeDraftShape } from "./story";
 import { makeSnapshotEvent } from "./tape-events";
 
 const TAKEN_AT = new Date("2026-10-28T10:00:00.000Z");
 const ISO = TAKEN_AT.toISOString();
 const OFF_ENV = { ...process.env, ECHO_MODEL: "off" } as NodeJS.ProcessEnv;
+const MODEL_ENV = {
+  ...process.env,
+  META_API_KEY: "test-key",
+  META_MODEL_ID: "test-model",
+} as NodeJS.ProcessEnv;
 const silentLog = { info: () => {}, error: () => {} };
 const throwingFetch = (() => {
   throw new Error("network used");
 }) as unknown as typeof fetch;
 
-function fact(overrides: Partial<StoryFact> & { id: string }): StoryFact {
-  return {
-    kind: "hunk",
-    summary: "",
-    eventIds: [],
-    files: [],
-    riskFlags: [],
-    riskReasons: [],
-    verification: "nothing",
-    testedByRunIds: [],
-    ...overrides,
-  };
-}
-
-function baseFacts(): FactSet {
-  return {
-    sessionId: "s1",
-    promptClusters: [{ id: "P1", promptEventId: "e0", text: "fix billing retry", index: 0 }],
-    facts: [
-      fact({
-        id: "H1",
-        kind: "hunk",
-        summary: "billing/retry.ts: +12 −3 around charge",
-        eventIds: ["e1"],
-        files: ["billing/retry.ts"],
-        riskFlags: ["payments"],
-        riskReasons: ["touches payment code (billing/retry.ts)"],
-        testedByRunIds: ["R1"],
-      }),
-      fact({
-        id: "R1",
-        kind: "run",
-        summary: "ran pnpm vitest billing/retry.ts (exit 0, observed pass)",
-        eventIds: ["e2"],
-      }),
-    ],
-    routineFactIds: [],
-  };
-}
-
-function validCard(overrides: Record<string, unknown> = {}) {
-  return {
-    headline: "Retry billing charges",
-    constituentHunkIds: ["H1"],
-    constituentActionIds: [],
-    why: [{ text: "observed pass via billing run", label: "observed", factIds: ["R1"] }],
-    before: [],
-    now: [{ text: "billing/retry.ts retry changed", label: "observed", factIds: ["H1"] }],
-    ...overrides,
-  };
-}
-
-function validDraft(overrides: Record<string, unknown> = {}) {
-  return {
-    summary: "Retry billing charges.",
-    shortVersion: [
-      { text: "billing/retry.ts retry changed", label: "observed", factIds: ["H1"] },
-      { text: "retried 42 times", label: "observed", factIds: ["H1"] },
-      { text: "also touched src/evil.ts", label: "observed", factIds: ["H1"] },
-    ],
-    askVsResult: {
-      asked: [{ text: "fix billing retry", label: "agent_stated", factIds: ["P1"] }],
-      delivered: [],
-      extras: [],
-      missing: [],
-    },
-    cards: [validCard()],
-    ...overrides,
-  };
-}
-
-describe("validateDraft", () => {
-  it("drops invented-number and invented-file claims but keeps valid ones", () => {
-    const result = validateDraft(validDraft(), baseFacts());
-    expect(result.valid).toBe(true);
-    expect(result.story?.shortVersion).toHaveLength(1);
-    expect(result.story?.shortVersion[0]).toMatchObject({ factIds: ["H1"] });
-    expect(result.dropped).toHaveLength(2);
-    expect(result.dropped.join("\n")).toMatch(/42/);
-    expect(result.dropped.join("\n")).toMatch(/src\/evil\.ts/);
-    expect(result.dropped.every((line) => line.startsWith("Echo couldn't verify this: "))).toBe(
-      true,
-    );
-    // Surviving claims only: asked keeps the grounded prompt quote.
-    expect(result.story?.askVsResult.asked).toHaveLength(1);
-  });
-
-  it("never lets the model upgrade verification", () => {
-    const result = validateDraft(validDraft(), baseFacts());
-    const card = result.story?.cards[0];
-    expect(card?.verification).toBe("nothing");
-    expect(card?.highRisk).toBe(true);
-    expect(card?.riskReasons).toContain("no observed test run covers this change");
-    expect(card?.riskReasons).toContain(
-      "touches payment code — confirm retry counts and idempotency",
-    );
-    // checkedBy keeps the run-fact claim that passes the token check.
-    expect(card?.checkedBy).toHaveLength(1);
-  });
-
-  it("rolls risk up as the max constituent with plain sentences", () => {
-    const facts = baseFacts();
-    facts.facts.push(
-      fact({
-        id: "H2",
-        kind: "hunk",
-        summary: "src/auth/session.ts: +5 −1 around token",
-        files: ["src/auth/session.ts"],
-        riskFlags: ["auth", "destructive"],
-        riskReasons: [],
-        verification: "partly_observed",
-      }),
-    );
-    const draft = validDraft({
-      cards: [validCard({ constituentHunkIds: ["H1", "H2"] })],
-    });
-    const result = validateDraft(draft, facts);
-    const card = result.story?.cards[0];
-    // Weakest constituent wins: H1 is nothing.
-    expect(card?.verification).toBe("nothing");
-    expect(card?.highRisk).toBe(true);
-    expect(card?.riskReasons).toEqual(
-      expect.arrayContaining([
-        "touches payment code — confirm retry counts and idempotency",
-        "touches auth code — confirm login and session behavior is unchanged",
-        "looks destructive — confirm nothing needed is deleted or revoked",
-        "no observed test run covers this change",
-      ]),
-    );
-    expect(card?.touches).toEqual(
-      expect.arrayContaining(["billing/retry.ts", "src/auth/session.ts"]),
-    );
-  });
-
-  it("rejects structural failures and drafts with zero surviving cards", () => {
-    expect(validateDraft({}, baseFacts()).valid).toBe(false);
-    expect(validateDraft({ summary: "x" }, baseFacts()).valid).toBe(false);
-    const noCards = validateDraft(
-      validDraft({ cards: [validCard({ constituentHunkIds: ["NOPE"] })] }),
-      baseFacts(),
-    );
-    expect(noCards.valid).toBe(false);
-    expect(noCards.story).toBeNull();
-  });
-
-  it("applies the detour inclusion rule", () => {
-    const attempt = (id: string, status: string, path: string): StoryFact =>
-      fact({
-        id,
-        kind: "attempt",
-        summary: `attempt ${id} on ${path}`,
-        files: [path],
-        riskFlags: [`attempt-status:${status}`],
-      });
-    const facts = baseFacts();
-    facts.facts.push(
-      attempt("T1", "failed_with_side_effect", "a.ts"),
-      attempt("T2", "reverted", "b.ts"),
-      attempt("T3", "failed", "c.ts"),
-      attempt("T4", "failed", "d.ts"),
-      attempt("T5", "failed", "d.ts"),
-    );
-    const result = validateDraft(validDraft(), facts);
-    expect(result.valid).toBe(true);
-    const byId = new Map((result.story?.detours ?? []).map((detour) => [detour.id, detour]));
-    expect(byId.get("T1")?.costReason).toBe("side_effect");
-    expect(byId.get("T2")?.costReason).toBe("reverted");
-    expect(byId.has("T3")).toBe(false);
-    expect(byId.get("T4")?.costReason).toBe("repeated_attempt");
-    expect(byId.get("T5")?.costReason).toBe("repeated_attempt");
-  });
-
-  it("drops claims that reference unknown fact ids", () => {
-    const draft = validDraft({
-      shortVersion: [
-        { text: "billing/retry.ts retry changed", label: "observed", factIds: ["H1"] },
-        { text: "billing/retry.ts also fixed elsewhere", label: "observed", factIds: ["H99"] },
-      ],
-    });
-    const result = validateDraft(draft, baseFacts());
-    expect(result.valid).toBe(true);
-    expect(result.story?.shortVersion).toHaveLength(1);
-    expect(result.errors.join("\n")).toMatch(/H99/);
-  });
-
-  it("scopes checkedBy to runs linked from the card's own hunks", () => {
-    const facts = baseFacts();
-    facts.facts.push(
-      fact({
-        id: "R2",
-        kind: "run",
-        summary: "ran pnpm vitest other.ts (exit 0, observed pass)",
-        eventIds: ["e9"],
-      }),
-    );
-    const draft = validDraft({
-      cards: [
-        validCard({
-          why: [
-            { text: "observed pass via billing run", label: "observed", factIds: ["R1"] },
-            { text: "observed pass via other run", label: "observed", factIds: ["R2"] },
-          ],
-        }),
-      ],
-    });
-    const result = validateDraft(draft, facts);
-    // R1 is linked from H1's testedByRunIds; R2 is a real run fact but tested
-    // nothing on this card, so it stays in `why` yet out of `checkedBy`.
-    expect(result.story?.cards[0]?.checkedBy).toHaveLength(1);
-    expect(result.story?.cards[0]?.checkedBy[0]).toMatchObject({ factIds: ["R1"] });
-    expect(result.story?.cards[0]?.why).toHaveLength(2);
-  });
-
-  it("assigns chronological sessionOrder independent of risk rank", () => {
-    const facts = baseFacts();
-    facts.facts.push(
-      fact({
-        id: "H2",
-        kind: "hunk",
-        summary: "docs/readme.md: +2 −0 typo fix",
-        eventIds: ["e3"],
-        files: ["docs/readme.md"],
-      }),
-    );
-    const draft = validDraft({
-      cards: [
-        validCard(),
-        {
-          headline: "Fix docs typo",
-          constituentHunkIds: ["H2"],
-          constituentActionIds: [],
-          why: [],
-          before: [],
-          now: [],
-        },
-      ],
-    });
-    const result = validateDraft(draft, facts);
-    expect(result.valid).toBe(true);
-    // Risk order: payments card first. Chronology: H2 (e3) before H1 (e10).
-    const ordered = assignSessionOrder(result.story?.cards ?? [], facts, [
-      { event_id: "e10", tape_seq: 10 },
-      { event_id: "e3", tape_seq: 3 },
-    ]);
-    const byHeadline = new Map(ordered.map((card) => [card.headline, card]));
-    expect(ordered[0]?.headline).toBe("Retry billing charges");
-    expect(ordered[0]?.rank).toBe(1);
-    expect(byHeadline.get("Retry billing charges")?.sessionOrder).toBe(1);
-    expect(byHeadline.get("Fix docs typo")?.sessionOrder).toBe(0);
-  });
-});
-
-// --- Integration: seeded session, ECHO_MODEL=off (no network) ---
-
-function tapeEvent(
+function seedTapeEvent(
   sessionId: string,
   projectId: string,
   eventId: string,
@@ -407,10 +166,10 @@ async function seedSession() {
     });
   }
   appendEvents(db, sessionId, [
-    tapeEvent(sessionId, projectId, "evt_prompt", "prompt.submitted", {
+    seedTapeEvent(sessionId, projectId, "evt_prompt", "prompt.submitted", {
       text: "add a greeting line",
     }),
-    tapeEvent(sessionId, projectId, "evt_run", "tool.completed", {
+    seedTapeEvent(sessionId, projectId, "evt_run", "tool.completed", {
       command: "pnpm vitest notes.txt",
       exit_code: 0,
     }),
@@ -432,6 +191,61 @@ async function seedSession() {
     }),
   ]);
   return { dataDir, db, projectId, sessionId };
+}
+
+// --- Model-path helpers (mirror the stubFetchSequence pattern) ---
+
+function stubFetchSequence(answers: unknown[]) {
+  let calls = 0;
+  const bodies: string[] = [];
+  const fetchImpl = (async (_url: unknown, init?: { body?: unknown }) => {
+    bodies.push(String(init?.body ?? ""));
+    const answer = answers[Math.min(calls, answers.length - 1)];
+    calls += 1;
+    return new Response(
+      JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(answer) } }],
+        usage: { prompt_tokens: 10, completion_tokens: 20 },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+  return { fetchImpl, calls: () => calls, bodies: () => bodies };
+}
+
+const ZERO_COUNTS: VerifiedCounts = {
+  observed: 0,
+  partlyObserved: 0,
+  agentStated: 0,
+  nothing: 0,
+  total: 0,
+};
+
+/** Schema-valid draft over the seeded session facts (F1 is the prompt fact). */
+function modelDraft(shortText: string): SessionStory {
+  return {
+    schemaVersion: 1,
+    sessionId: "ses_story",
+    generatedAt: "2026-10-28T12:00:00.000Z",
+    generator: { kind: "model", model: "test-model", promptVersion: "story-v1" },
+    tapeWatermark: { eventCount: 4, sha256: "draft-sha" },
+    summary: "add a greeting line",
+    skeleton: false,
+    shortVersion: [{ text: shortText, label: "observed", factIds: ["F1"] }],
+    askVsResult: {
+      asked: [{ text: "add a greeting line", label: "agent_stated", factIds: ["F1"] }],
+      delivered: [],
+      extras: [],
+      missing: [],
+    },
+    cards: [],
+    routineSummary: null,
+    detours: [],
+    looseEnds: [],
+    blindSpots: [],
+    gaps: [],
+    verifiedCounts: { ...ZERO_COUNTS },
+  };
 }
 
 describe("maybeGenerateStory", () => {
@@ -466,21 +280,27 @@ describe("maybeGenerateStory", () => {
         promptVersion: "skeleton-v1",
       });
       expect(story.cards).toHaveLength(1);
-      expect(story.summary).toBe("add a greeting line");
+      expect(story.summary).toBe("Prompts, changes in notes.txt.");
       expect(story.blindSpots).toContain("intermediate states may not be captured");
+      // Ported loose ends: no runs on the tape, so the hunk is flagged untested.
+      expect(story.looseEnds.map((end) => end.kind)).toContain("untested");
+      expect(story.looseEnds.some((end) => end.claims[0]?.text.includes("notes.txt"))).toBe(true);
 
       const ref = getArtifactRef(db, sessionId, "story");
       expect(ref?.generator).toBe("skeleton-v1");
       expect(ref?.path).toBe(
-        join(dataDir, "projects", "prj_story", "sessions", sessionId, "artifacts", "story.json"),
+        join(dataDir, "projects", "prj_story", "sessions", sessionId, ARTIFACT_FILE_NAMES.story),
       );
       expect(existsSync(ref?.path ?? "")).toBe(true);
       expect(JSON.parse(readFileSync(ref?.path ?? "", "utf8"))).toEqual(first.story);
       expect(ref?.tapeWatermark).toEqual(computeWatermark(readAllEvents(db, sessionId)));
 
       const summary = getSessionSummary(db, sessionId);
-      expect(summary?.summary).toBe("add a greeting line");
-      expect(summary?.highRiskCount).toBe(0);
+      expect(summary?.summary).toBe("Prompts, changes in notes.txt.");
+      // Engine risk: no passing run on the tape, so the single card is high-risk.
+      expect(summary?.highRiskCount).toBe(1);
+      expect(story.cards[0]?.highRisk).toBe(true);
+      expect(story.cards[0]?.riskReasons).toContain("no passing run observed in this session");
 
       // Read-through with no new events: no model call, no rewrite.
       const second = await service.maybeGenerateStory(sessionId, { reason: "read-through" });
@@ -504,7 +324,7 @@ describe("maybeGenerateStory", () => {
       setSessionCheckStatus(db, sessionId, "checked");
       expect(getSessionSummary(db, sessionId)?.checkStatus).toBe("checked");
       appendEvents(db, sessionId, [
-        tapeEvent(sessionId, projectId, "evt_late", "tool.completed", {
+        seedTapeEvent(sessionId, projectId, "evt_late", "tool.completed", {
           command: "pnpm vitest notes.txt",
           exit_code: 0,
         }),
@@ -515,5 +335,517 @@ describe("maybeGenerateStory", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("generates from the model and persists artifact, ref and inbox columns", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl, calls, bodies } = stubFetchSequence([modelDraft("add a greeting line")]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        {
+          env: MODEL_ENV,
+          fetchImpl,
+          clock: () => new Date("2026-10-28T13:00:00.000Z"),
+        },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("generated");
+      expect(calls()).toBe(1);
+      expect(bodies()[0]).toContain("story-v1");
+      const story = SessionStorySchema.parse(outcome.story);
+      expect(story.skeleton).toBe(false);
+      expect(story.generator).toMatchObject({ kind: "model", promptVersion: "story-v1" });
+      expect(story.shortVersion.map((claim) => claim.text)).toEqual(["add a greeting line"]);
+      expect(story.tapeWatermark).toEqual(computeWatermark(readAllEvents(db, sessionId)));
+      const ref = getArtifactRef(db, sessionId, "story");
+      expect(ref?.generator).toBe("test-model");
+      expect(ref?.path).toBe(
+        join(dataDir, "projects", "prj_story", "sessions", sessionId, ARTIFACT_FILE_NAMES.story),
+      );
+      expect(existsSync(ref?.path ?? "")).toBe(true);
+      const summary = getSessionSummary(db, sessionId);
+      expect(summary?.summary).toBe("add a greeting line");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("regenerates once for failed claims, then ships the fix", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl, calls, bodies } = stubFetchSequence([
+        modelDraft("Does 99 things"),
+        modelDraft("add a greeting line"),
+      ]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("generated");
+      expect(calls()).toBe(2);
+      expect(bodies()[1]).toContain("failed these checks");
+      expect(outcome.story?.shortVersion.map((claim) => claim.text)).toEqual([
+        "add a greeting line",
+      ]);
+      expect(outcome.story?.gaps).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("drops still-failing claims to gap lines after regeneration", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl, calls } = stubFetchSequence([
+        modelDraft("Does 99 things"),
+        modelDraft("Does 99 things"),
+      ]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("generated");
+      expect(calls()).toBe(2);
+      expect(outcome.story?.shortVersion).toEqual([]);
+      expect(outcome.story?.gaps).toEqual(["Echo couldn't verify this: Does 99 things"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("falls back to the skeleton when the model output is schema-invalid", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl } = stubFetchSequence([{ nope: true }]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("skeleton");
+      expect(outcome.story?.skeleton).toBe(true);
+      expect(outcome.story?.generator.promptVersion).toBe("skeleton-v1");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("sends a very large token budget with capped reasoning effort", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl, bodies } = stubFetchSequence([modelDraft("add a greeting line")]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("generated");
+      const request = JSON.parse(bodies()[0] ?? "{}") as Record<string, unknown>;
+      expect(request["reasoning_effort"]).toBe("medium");
+      expect(Number(request["max_tokens"])).toBeGreaterThanOrEqual(50000);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("retries once on schema-invalid drafts, then generates", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl, calls, bodies } = stubFetchSequence([
+        { nope: true },
+        modelDraft("add a greeting line"),
+      ]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("generated");
+      expect(calls()).toBe(2);
+      expect(bodies()[1]).toContain("schema validation");
+      expect(outcome.story?.shortVersion.map((claim) => claim.text)).toEqual([
+        "add a greeting line",
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("tolerates missing server-stamped envelope fields in drafts", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const draft = modelDraft("add a greeting line") as unknown as Record<string, unknown>;
+      delete draft["tapeWatermark"];
+      delete draft["generator"];
+      const { fetchImpl } = stubFetchSequence([draft]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("generated");
+      expect(outcome.story?.generator).toMatchObject({
+        kind: "model",
+        promptVersion: "story-v1",
+      });
+      expect(outcome.story?.tapeWatermark.eventCount).toBeGreaterThan(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("coerces malformed card moment and history fields instead of failing", () => {
+    const coerced = normalizeDraftShape({
+      tapeWatermark: { eventCount: 0, sha256: "" },
+      generator: null,
+      cards: [
+        {
+          id: "h_aaaaaaaaaaaaaaaa",
+          moment: { eventId: null, toolCallId: "", ts: "", excerpt: "x", label: "bogus" },
+          history: { priorSessionIds: [], previousPicture: "bogus", note: null },
+          why: { text: "x", label: "observed", factIds: [] },
+        },
+      ],
+    }) as {
+      tapeWatermark: { sha256: string };
+      generator: { kind: string };
+      cards: Array<{
+        moment: { toolCallId: unknown; ts: unknown; label: unknown };
+        history: { previousPicture: unknown };
+        why: unknown;
+      }>;
+    };
+    expect(coerced.tapeWatermark.sha256).toBe("server-stamped");
+    expect(coerced.generator.kind).toBe("model");
+    expect(coerced.cards[0]?.moment.toolCallId).toBeNull();
+    expect(coerced.cards[0]?.moment.ts).toBeNull();
+    expect(coerced.cards[0]?.moment.label).toBe("uncertain");
+    expect(coerced.cards[0]?.history.previousPicture).toBeNull();
+    expect(coerced.cards[0]?.why).toEqual([{ text: "x", label: "observed", factIds: [] }]);
+  });
+
+  it("uses the skeleton without calling the model when ECHO_MODEL=off", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("skeleton");
+      expect(outcome.story?.skeleton).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("uses the skeleton when no API key is configured", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl, calls } = stubFetchSequence([modelDraft("add a greeting line")]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: {} as NodeJS.ProcessEnv, fetchImpl },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("skeleton");
+      expect(calls()).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("fails closed on redaction failure without writing anything", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl } = stubFetchSequence([modelDraft("add a greeting line")]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        {
+          env: MODEL_ENV,
+          fetchImpl,
+          redactJsonImpl: () => {
+            throw new Error("redaction down");
+          },
+        },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("unavailable");
+      expect(outcome.story).toBeNull();
+      expect(
+        existsSync(
+          join(dataDir, "projects", "prj_story", "sessions", sessionId, ARTIFACT_FILE_NAMES.story),
+        ),
+      ).toBe(false);
+      expect(getArtifactRef(db, sessionId, "story")).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("writes a skeleton for a bare session row without snapshots", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-story-data-"));
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    try {
+      upsertProject(db, { id: "prj_story", root: "/repo", name: "repo" });
+      upsertSession(db, {
+        id: "ses_story",
+        projectId: "prj_story",
+        agent: "muse",
+        model: null,
+        directory: "/repo",
+        title: "story test",
+        startedAt: ISO,
+        tapePath: join(dataDir, "tape.jsonl"),
+        captureQuality: "partial",
+      });
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch },
+      );
+      const outcome = await service.maybeGenerateStory("ses_story");
+      expect(outcome.outcome).toBe("skeleton");
+      expect(outcome.story?.cards).toEqual([]);
+      expect(outcome.story?.tapeWatermark.eventCount).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+// --- Deterministic enrichment over engine facts (ported behaviors) ---
+
+const SYN_SESSION = "ses_syn";
+const SYN_PROJECT = "prj_syn";
+
+function synEvent(
+  seq: number,
+  eventId: string,
+  kind: TapeEventKind,
+  payload: unknown,
+  toolCallId: string | null = null,
+): TapeEvent {
+  const ts = `2026-10-28T12:00:${String(seq).padStart(2, "0")}.000Z`;
+  return {
+    v: 1,
+    tape_seq: seq,
+    event_id: eventId,
+    record_key: null,
+    session_id: SYN_SESSION,
+    project_id: SYN_PROJECT,
+    kind,
+    ts,
+    observed_at: ts,
+    source: {
+      agent: "muse",
+      adapter: "test",
+      adapter_version: "0.1.0",
+      build: null,
+      schema: null,
+      record_type: null,
+      payload_type: null,
+      sequence: seq,
+      durability: "memory",
+      origin: "import",
+    },
+    links: {
+      turn_id: null,
+      tool_call_id: toolCallId,
+      batch_id: null,
+      parent_session_id: null,
+      subagent_id: null,
+      snapshot: null,
+    },
+    payload,
+    redaction: { version: "test", findings: 0 },
+    diagnostics: [],
+  };
+}
+
+function synAttempt(overrides: Partial<FileAttempt> & { id: string }): FileAttempt {
+  return {
+    path: "src/auth/login.ts",
+    snapshotId: "snap1",
+    commitOid: "ccc",
+    trigger: "tool.post",
+    eventId: null,
+    takenAt: ISO,
+    status: "failed",
+    confidence: "exact",
+    introducedLines: 4,
+    survivingLines: 0,
+    introducedText: [],
+    replacementText: [],
+    finalStart: null,
+    finalEnd: null,
+    detail: "attempt",
+    link: { eventId: null, toolCallId: null, toolOutcome: null, turnId: null, batchId: null },
+    ...overrides,
+  };
+}
+
+describe("finalizeStory", () => {
+  function buildScenario() {
+    const tape: TapeEvent[] = [
+      synEvent(1, "e-prompt", "prompt.submitted", { text: "ship the auth fix" }),
+      synEvent(2, "e-docs", "tool.requested", { name: "edit", input: { path: "docs/notes.md" } }),
+      synEvent(
+        3,
+        "e-run",
+        "tool.requested",
+        {
+          name: "vitest",
+          input: { command: "pnpm vitest" },
+        },
+        "tc-run",
+      ),
+      synEvent(
+        4,
+        "e-run-done",
+        "tool.completed",
+        {
+          name: "vitest",
+          exitCode: 0,
+          output: "pass",
+        },
+        "tc-run",
+      ),
+      synEvent(5, "e-auth", "tool.requested", {
+        name: "edit",
+        input: { path: "src/auth/login.ts" },
+      }),
+    ];
+    const hunks = [
+      {
+        id: "h_aaaaaaaaaaaaaaaa",
+        path: "src/auth/login.ts",
+        oldStart: 1,
+        oldLines: 2,
+        newStart: 1,
+        newLines: 3,
+        patch: "@@ -1,2 +1,3 @@\n+const token = 1;\n+// TODO: rotate token",
+        addedText: "const token = 1;\n// TODO: rotate token",
+        removedText: "const old = 0;",
+        addedLines: 2,
+        removedLines: 1,
+      },
+      {
+        id: "h_bbbbbbbbbbbbbbbb",
+        path: "docs/notes.md",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        patch: "@@ -1 +1,2 @@\n+hello",
+        addedText: "hello",
+        removedText: "",
+        addedLines: 1,
+        removedLines: 0,
+      },
+    ];
+    const attempts: FileAttempt[] = [
+      synAttempt({ id: "att-1", eventId: "e-auth", takenAt: "2026-10-28T12:00:05.000Z" }),
+      synAttempt({ id: "att-2", eventId: "e-auth", takenAt: "2026-10-28T12:00:06.000Z" }),
+      synAttempt({
+        id: "att-lone",
+        path: "docs/other.md",
+        eventId: null,
+        status: "failed",
+      }),
+      synAttempt({
+        id: "att-docs",
+        path: "docs/notes.md",
+        eventId: "e-docs",
+        status: "landed",
+        introducedLines: 1,
+        survivingLines: 1,
+        takenAt: "2026-10-28T12:00:02.000Z",
+      }),
+    ];
+    const facts = extractFacts({ sessionId: SYN_SESSION, tape, hunks, attempts });
+    const draft = buildSkeletonStory(facts, { generatedAt: ISO, tapeSha256: "syn-sha" }).story;
+    return { tape, facts, draft };
+  }
+
+  it("adds repeated_attempt detours but not lone failures", () => {
+    const { tape, facts, draft } = buildScenario();
+    const story = SessionStorySchema.parse(
+      finalizeStory({ facts, draft, tape, reviewDiagnostics: [], captureQuality: "full" }),
+    );
+    const repeated = story.detours.filter((detour) => detour.costReason === "repeated_attempt");
+    expect(repeated).toHaveLength(2);
+    expect(new Set(repeated.flatMap((detour) => detour.attemptIds))).toEqual(
+      new Set(["att-1", "att-2"]),
+    );
+    expect(story.detours.some((detour) => detour.attemptIds.includes("att-lone"))).toBe(false);
+  });
+
+  it("adds TODO and untested loose ends, blind spots stay separate", () => {
+    const { tape, facts, draft } = buildScenario();
+    const story = SessionStorySchema.parse(
+      finalizeStory({
+        facts,
+        draft,
+        tape,
+        reviewDiagnostics: ["review_build_failed"],
+        captureQuality: "partial",
+      }),
+    );
+    const kinds = story.looseEnds.map((end) => end.kind);
+    expect(kinds).toContain("todo");
+    expect(kinds).not.toContain("untested");
+    const todo = story.looseEnds.find((end) => end.kind === "todo");
+    expect(todo?.claims[0]?.text).toContain("src/auth/login.ts");
+    // Blind spots carry the capture gap + pipeline diagnostics, not loose ends.
+    expect(story.blindSpots).toContain("review_build_failed");
+    expect(story.blindSpots).toContain("intermediate states may not be captured");
+    expect(
+      story.looseEnds.every((end) => !story.blindSpots.includes(end.claims[0]?.text ?? "")),
+    ).toBe(true);
+  });
+
+  it("flags untested hunks when the tape has no runs", () => {
+    const tape: TapeEvent[] = [synEvent(1, "e-prompt", "prompt.submitted", { text: "fix it" })];
+    const hunks = [
+      {
+        id: "h_cccccccccccccccc",
+        path: "src/app.ts",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        patch: "@@ -1 +1,2 @@\n+x",
+        addedText: "x",
+        removedText: "",
+        addedLines: 1,
+        removedLines: 0,
+      },
+    ];
+    const facts = extractFacts({ sessionId: SYN_SESSION, tape, hunks, attempts: [] });
+    const draft = buildSkeletonStory(facts, { generatedAt: ISO, tapeSha256: "syn-sha" }).story;
+    const story = SessionStorySchema.parse(
+      finalizeStory({ facts, draft, tape, reviewDiagnostics: [], captureQuality: "full" }),
+    );
+    const untested = story.looseEnds.filter((end) => end.kind === "untested");
+    expect(untested).toHaveLength(1);
+    expect(untested[0]?.claims[0]?.text).toContain("src/app.ts");
+    expect(untested[0]?.cardId).toBe("h_cccccccccccccccc");
+  });
+
+  it("ranks by risk while sessionOrder stays chronological", () => {
+    const { tape, facts, draft } = buildScenario();
+    const story = SessionStorySchema.parse(
+      finalizeStory({ facts, draft, tape, reviewDiagnostics: [], captureQuality: "full" }),
+    );
+    const byId = new Map(story.cards.map((card) => [card.id, card]));
+    // Auth hunk carries blast flags: riskiest first.
+    expect(byId.get("h_aaaaaaaaaaaaaaaa")?.rank).toBe(1);
+    expect(byId.get("h_bbbbbbbbbbbbbbbb")?.rank).toBe(2);
+    // Docs attempt landed earlier on the tape: chronological first.
+    expect(byId.get("h_bbbbbbbbbbbbbbbb")?.sessionOrder).toBe(0);
+    expect(byId.get("h_aaaaaaaaaaaaaaaa")?.sessionOrder).toBe(1);
   });
 });

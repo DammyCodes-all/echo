@@ -90,7 +90,8 @@ export function normalizeDraftShape(value: unknown): unknown {
     const copy = { ...(moment as Record<string, unknown>) };
     normalizeMoment(copy);
     if (copy["previousPicture"] !== null && copy["previousPicture"] !== undefined) {
-      if (!PICTURE_BUCKETS.includes(String(copy["previousPicture"]))) copy["previousPicture"] = null;
+      if (!PICTURE_BUCKETS.includes(String(copy["previousPicture"])))
+        copy["previousPicture"] = null;
     }
     normalized["moment"] = copy;
   }
@@ -109,7 +110,8 @@ export function normalizeDraftShape(value: unknown): unknown {
       if (history !== null && typeof history === "object" && !Array.isArray(history)) {
         const copy = { ...(history as Record<string, unknown>) };
         if (copy["previousPicture"] !== null && copy["previousPicture"] !== undefined) {
-          if (!PICTURE_BUCKETS.includes(String(copy["previousPicture"]))) copy["previousPicture"] = null;
+          if (!PICTURE_BUCKETS.includes(String(copy["previousPicture"])))
+            copy["previousPicture"] = null;
         }
         card["history"] = copy;
       }

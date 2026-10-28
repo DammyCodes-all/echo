@@ -24,9 +24,9 @@ function tableExists(db: EchoDb, table: string): boolean {
 
 function columnExists(db: EchoDb, table: string, column: string): boolean {
   // Table names here are internal migration constants, never user input.
-  const rows = db
-    .prepare("SELECT name FROM pragma_table_info(?)")
-    .all(table) as Array<{ name: string }>;
+  const rows = db.prepare("SELECT name FROM pragma_table_info(?)").all(table) as Array<{
+    name: string;
+  }>;
   return rows.some((row) => row.name === column);
 }
 
@@ -42,7 +42,7 @@ function backfillRenumberedV3(db: EchoDb, applied: Set<number>): void {
   }
 }
 
-const ADD_COLUMN_PATTERN = /^alter\s+table\s+["'`\[]?(\w+)["'`\]]?\s+add\s+column\s+["'`\[]?(\w+)/i;
+const ADD_COLUMN_PATTERN = /^alter\s+table\s+["'`[]?(\w+)["'`\]]?\s+add\s+column\s+["'`[]?(\w+)/i;
 
 function migrate(db: EchoDb): void {
   db.exec(
