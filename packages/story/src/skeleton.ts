@@ -1,4 +1,5 @@
 import type { ChangeCard, Detour, SessionStory, StoryClaim } from "@echo/contracts";
+import { hunkIdFor } from "@echo/tape";
 import type { AttemptFact, FactSet, GapFact, HunkFact, PromptFact, RunFact } from "./facts";
 import { type StoryValidation, validateStoryFacts } from "./validate";
 
@@ -10,7 +11,17 @@ import { type StoryValidation, validateStoryFacts } from "./validate";
  * self-cites by construction; a failing verdict here is a builder bug.
  */
 
-export const SKELETON_PROMPT_VERSION = "skeleton-v1";
+export const SKELETON_PROMPT_VERSION = "skeleton-v2";
+
+/**
+ * Readability caps. The skeleton is the no-model fallback, so it must stay
+ * legible on large sessions: unbounded path lists and one-card-per-hunk
+ * degrade into a wall of paths (observed on a 121-hunk import). Bare story
+ * strings validate against session evidence, so capped notices carry no
+ * novel numbers or paths — counts live on headlines, which are not claims.
+ */
+export const SUMMARY_MAX_PATHS = 5;
+export const MAX_SKELETON_CARDS = 20;
 
 export interface SkeletonMeta {
   generatedAt: string;
@@ -36,6 +47,14 @@ function joinWords(words: string[]): string {
   return `${words.slice(0, -1).join(", ")}, and ${words[words.length - 1]}`;
 }
 
+/** Capped path list for bare story strings. Sorted for determinism; the
+ *  overflow carries no digits (bare strings must match session evidence). */
+function summarizePaths(paths: string[]): string {
+  const unique = [...new Set(paths)].sort();
+  if (unique.length <= SUMMARY_MAX_PATHS) return joinWords(unique);
+  return `${unique.slice(0, SUMMARY_MAX_PATHS).join(", ")}, and other files`;
+}
+
 function hunksOf(facts: FactSet): HunkFact[] {
   return facts.facts.filter((fact): fact is HunkFact => fact.kind === "hunk");
 }
@@ -56,6 +75,14 @@ function runClaim(run: RunFact): StoryClaim {
         ? `failed (exit ${run.exitCode ?? "unknown"})`
         : "did not complete";
   return { text: `Ran ${run.command}: ${outcome}`, label: "observed", factIds: [run.id] };
+}
+
+function checkedByRuns(facts: FactSet): StoryClaim[] {
+  // Session-level coarseness, matching the coverage rule: only passing runs
+  // count as checks, and any passing run checks every card.
+  return runsOf(facts)
+    .filter((run) => run.outcome === "ok")
+    .map(runClaim);
 }
 
 function cardFor(hunk: HunkFact, sessionOrder: number, facts: FactSet): ChangeCard {
@@ -80,11 +107,8 @@ function cardFor(hunk: HunkFact, sessionOrder: number, facts: FactSet): ChangeCa
           },
         ]
       : [];
-  // Session-level coarseness, matching the coverage rule: only passing runs
-  // count as checks, and any passing run checks every card.
-  const checkedBy = runsOf(facts)
-    .filter((run) => run.outcome === "ok")
-    .map(runClaim);
+  // Session-level coarseness: any passing run checks every card.
+  const checkedBy = checkedByRuns(facts);
   const firstAttempt = attempts[0];
   const firstLine = hunk.addedText.split("\n").find((line) => line.trim() !== "") ?? "";
   return {
@@ -119,6 +143,40 @@ function riskiness(hunk: HunkFact): [number, number, number] {
   return [hunk.risk.flags.length, hunk.risk.boostReasons.length, hunk.risk.rewriteCount];
 }
 
+/** Overflow card for hunks past the card cap. Carries the folded hunk ids
+ *  (so risk rolls up and structure validation holds) with empty claim lists:
+ *  no per-hunk statements are made, so verification stays "nothing" and the
+ *  headline says the detail was folded. The id is a stable hash of the empty
+ *  fold marker — unique because no real hunk hashes that input. */
+function overflowCard(
+  folded: HunkFact[],
+  facts: FactSet,
+  sessionOrder: number,
+  rank: number,
+): ChangeCard {
+  const foldedPaths = [...new Set(folded.map((hunk) => hunk.path))].sort();
+  return {
+    id: hunkIdFor("folded", { oldStart: 0, oldLines: 0, newStart: 0, newLines: 0, lines: [] }),
+    headline:
+      `${folded.length} further hunks across ${foldedPaths.length} files folded ` +
+      "(per-hunk detail omitted)",
+    constituentHunkIds: folded.map((hunk) => hunk.hunkId),
+    constituentActionIds: [],
+    rank,
+    sessionOrder,
+    highRisk: false,
+    riskReasons: [],
+    verification: "nothing",
+    why: [],
+    before: [],
+    now: [],
+    checkedBy: checkedByRuns(facts),
+    touches: foldedPaths,
+    moment: { eventId: null, toolCallId: null, ts: null, excerpt: "", label: "uncertain" },
+    history: { priorSessionIds: [], previousPicture: null, note: null },
+  };
+}
+
 const DETOUR_STATUSES: ReadonlySet<string> = new Set([
   "reverted",
   "replaced",
@@ -149,7 +207,10 @@ export function buildSkeletonStory(facts: FactSet, meta: SkeletonMeta): Skeleton
     const [fb, bb, rb] = riskiness(b);
     return fb - fa || bb - ba || rb - ra || a.hunkId.localeCompare(b.hunkId);
   });
-  const rankOf = new Map(rankedHunks.map((hunk, index) => [hunk.hunkId, index + 1]));
+  const keptHunks = rankedHunks.slice(0, MAX_SKELETON_CARDS);
+  const foldedHunks = rankedHunks.slice(MAX_SKELETON_CARDS);
+  const keptIds = new Set(keptHunks.map((hunk) => hunk.hunkId));
+  const rankOf = new Map(keptHunks.map((hunk, index) => [hunk.hunkId, index + 1]));
   const attempts = attemptsOf(facts);
   const earliestTouch = (path: string): string => {
     const times = attempts
@@ -163,19 +224,24 @@ export function buildSkeletonStory(facts: FactSet, meta: SkeletonMeta): Skeleton
       earliestTouch(a.path).localeCompare(earliestTouch(b.path)) || a.path.localeCompare(b.path),
   );
   const orderOf = new Map(chronoHunks.map((hunk, index) => [hunk.hunkId, index]));
-  const cards = behaviorHunks.map((hunk) => {
-    const card = cardFor(hunk, orderOf.get(hunk.hunkId) ?? 0, facts);
-    card.rank = rankOf.get(hunk.hunkId) ?? 1;
-    return card;
-  });
+  const cards = behaviorHunks
+    .filter((hunk) => keptIds.has(hunk.hunkId))
+    .map((hunk) => {
+      const card = cardFor(hunk, orderOf.get(hunk.hunkId) ?? 0, facts);
+      card.rank = rankOf.get(hunk.hunkId) ?? 1;
+      return card;
+    });
+  if (foldedHunks.length > 0) {
+    cards.push(overflowCard(foldedHunks, facts, behaviorHunks.length, keptHunks.length + 1));
+  }
 
   let routineSummary: string | null = null;
   if (mechanicalHunks.length > 0) {
     const kinds = [...new Set(mechanicalHunks.map((hunk) => hunk.mechanical.class))].map(
       (cls) => MECHANICAL_WORDS[cls ?? ""] ?? "mechanical edits",
     );
-    const paths = [...new Set(mechanicalHunks.map((hunk) => hunk.path))];
-    routineSummary = `${joinWords(kinds)} in ${paths.join(", ")} — no behaviour change.`;
+    const paths = mechanicalHunks.map((hunk) => hunk.path);
+    routineSummary = `${joinWords(kinds)} in ${summarizePaths(paths)} — no behaviour change.`;
   }
 
   const detours: Detour[] = attemptsOf(facts)
@@ -198,7 +264,7 @@ export function buildSkeletonStory(facts: FactSet, meta: SkeletonMeta): Skeleton
   const changePart =
     hunks.length === 0
       ? "no file changes recorded"
-      : `changes in ${[...new Set(hunks.map((hunk) => hunk.path))].join(", ")}`;
+      : `changes in ${summarizePaths(hunks.map((hunk) => hunk.path))}`;
   const draft: SessionStory = {
     schemaVersion: 1,
     sessionId: facts.sessionId,

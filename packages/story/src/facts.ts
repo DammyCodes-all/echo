@@ -461,7 +461,7 @@ export function extractFacts(input: FactExtractionInput): FactSet {
   for (const event of tape) {
     if (event.kind !== "prompt.submitted") continue;
     const text = asString(payloadOf(event).text);
-    if (text === null) continue;
+    if (text === null || text === "") continue;
     const fact: PromptFact = {
       id: takeId(),
       kind: "prompt",
