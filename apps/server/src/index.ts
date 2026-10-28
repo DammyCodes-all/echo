@@ -22,6 +22,7 @@ import { createAskService } from "./ask";
 import { createChecksService } from "./checks";
 import { createIngest } from "./ingest";
 import { createMuseIngest } from "./muse-ingest";
+import { createMuseWatcher } from "./muse-watch";
 import { buildSessionReview } from "./review-index";
 import { readSnapshotFile } from "./snapshot-view";
 
@@ -215,6 +216,7 @@ async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
   ingest.stop();
   museIngest.stop();
+  museWatcher?.stop();
   db.close();
   await app.close();
 }
@@ -222,10 +224,31 @@ async function shutdown(signal: string) {
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
+let museWatcher: { start: () => void; stop: () => void } | null = null;
+
 try {
   await app.listen({ host: HOST, port: resolvePort() });
   ingest.start();
   museIngest.start(config.poll_interval_ms);
+  // The watcher only shortens poll latency: every event it reports also
+  // arrives via the interval, so a dead watcher degrades to polling.
+  museWatcher = createMuseWatcher({
+    sessionsDir: museIngest.sessionsDir,
+    log: app.log,
+    onDirty: () => {
+      void museIngest
+        .runOnce()
+        .then((result) => {
+          if (result.eventsAdded > 0) {
+            app.log.info({ ...result }, "ingested muse sessions (watch)");
+          }
+        })
+        .catch((error) => {
+          app.log.error({ err: String(error) }, "muse watch ingest failed");
+        });
+    },
+  });
+  museWatcher.start();
   const initial = await ingest.runOnce();
   if (initial.eventsAdded > 0) {
     app.log.info({ ...initial }, "ingested opencode sessions");

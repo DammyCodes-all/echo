@@ -243,3 +243,10 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 142 files clean, `pnpm test` → 29 files / 189 passed (+5 checks tests over real SQLite + shadow git: 404s, decision-kind generation + deterministic regen, waiver drop, correct/incorrect grading with Brier 0.0025 + overconfident flag + report counts, model-off 503), `pnpm build` ok; live-server probe on temp data dir + alt port returned all five error shapes correctly
 - notes: Template drafting only — blast_radius excluded because its demonstration must be a genuinely runnable snippet (needs model drafting, a later slice); open kinds verify by evidence review while the run-twice sandbox path is wired and ready. No `checks`/`attempts` DB tables yet — artifacts JSON under the session dir instead, with a restart-safe scan fallback. Answers are single round-trips, not streamed. Browser behavior unverified (no browser here); UI verified through build + served endpoints only.
+
+## 2026-10-28 — Merge origin/main (fourth divergence, ingest engine)
+
+- item: merge remote identity/snapshot ingest into local checkpoint/tailer engine — 8 conflicted files, 23 hunks
+- status: done
+- evidence: full gate green (typecheck, biome 158 files, `pnpm test` → 37 files / 238 passed + 8 skipped, build)
+- notes: Kept local checkpoint lane engine (resume test pins it) + remote repository-identity attribution (projectId/remoteUrl; identity test pins it); recordedAtUs nullability adopted across finalize/tailer/ingest (fork lines omit recorded_at). Drain uses remote inline baseline/tool.post (kinds-order test pins it); ingest-level tool.pre/batch.post/budget dropped — handleHookTriggerSnapshots stays exported+tested but unwired. Migration clash (both sides v3) resolved as v3 checkpoints + v4 remote_url. Also fixed 3 gate errors outside the merge per user: CLI record SpawnedChild adapter, record.test never-cast removal, server watcher type widening; added missing `@echo/db` workspace dep to CLI + pnpm install; biome-organized 4 files. Merge still open (uncommitted); concurrent session is staging/editing CLI + watcher files, so verify before committing.

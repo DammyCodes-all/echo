@@ -153,7 +153,7 @@ export function tailChunk(input: TailChunkInput): TailChunkResult {
   );
 
   const sequencesByStream = new Map<string, number[]>();
-  const tsByStreamSeq = new Map<string, string>();
+  const tsByStreamSeq = new Map<string, string | null>();
   for (const event of parsed.events) {
     const list = sequencesByStream.get(event.stream.id) ?? [];
     list.push(event.sequence);
