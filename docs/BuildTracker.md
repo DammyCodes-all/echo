@@ -167,3 +167,10 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 142 files clean, `pnpm test` → 29 files / 189 passed (+5 checks tests over real SQLite + shadow git: 404s, decision-kind generation + deterministic regen, waiver drop, correct/incorrect grading with Brier 0.0025 + overconfident flag + report counts, model-off 503), `pnpm build` ok; live-server probe on temp data dir + alt port returned all five error shapes correctly
 - notes: Template drafting only — blast_radius excluded because its demonstration must be a genuinely runnable snippet (needs model drafting, a later slice); open kinds verify by evidence review while the run-twice sandbox path is wired and ready. No `checks`/`attempts` DB tables yet — artifacts JSON under the session dir instead, with a restart-safe scan fallback. Answers are single round-trips, not streamed. Browser behavior unverified (no browser here); UI verified through build + served endpoints only.
+
+## 2026-10-28 — Daemon loads repo .env.local
+
+- item: `.env.local` fix — `dotenv` in `@echo/server`, `loadLocalEnv()` walks up from the launch dir at daemon startup; real env vars still win, missing file is fine
+- status: done
+- evidence: `pnpm exec vitest run apps/server/src/env.test.ts` → 3 passed; full gate green (typecheck, biome 144 files, 192 tests, build); loader probe from `apps/server` cwd found `/home/dev-aluminate/dev/echo/.env.local` with `META_API_KEY set: true` (presence only, value never printed)
+- notes: Restart `pnpm dev` to pick this up. `tsx` also auto-injects `.env.local` in dev, but the built `node dist` daemon does not — the explicit loader covers both.
