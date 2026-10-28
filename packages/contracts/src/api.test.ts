@@ -79,6 +79,7 @@ const storedMcq = {
   ],
   correctOptionId: "opt_a",
   distractorSources: ["reverted attempt A2"],
+  explanation: "It retries once, per the observed wrapper.",
 };
 
 describe("story-first contracts", () => {
@@ -101,6 +102,7 @@ describe("story-first contracts", () => {
     expect(pub.format).toBe("mcq");
     expect("correctOptionId" in pub).toBe(false);
     expect("distractorSources" in pub).toBe(false);
+    expect("explanation" in pub).toBe(false);
     expect("rubric" in pub).toBe(false);
     if (pub.format === "mcq") {
       expect(pub.options).toHaveLength(2);

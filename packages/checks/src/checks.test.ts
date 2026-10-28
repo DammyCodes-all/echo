@@ -1,5 +1,5 @@
-import { runWasm } from "@echo/sandbox";
 import type { ChangeCard } from "@echo/contracts";
+import { runWasm } from "@echo/sandbox";
 import { describe, expect, it } from "vitest";
 import {
   bucketFor,
@@ -199,7 +199,13 @@ function v2Card(id: string, highRisk: boolean, rank: number): ChangeCard {
     now: [],
     checkedBy: [],
     touches: [],
-    moment: { eventId: null, toolCallId: null, ts: null, excerpt: `Change ${id}.`, label: "uncertain" },
+    moment: {
+      eventId: null,
+      toolCallId: null,
+      ts: null,
+      excerpt: `Change ${id}.`,
+      label: "uncertain",
+    },
     history: { priorSessionIds: [], previousPicture: null, note: null },
   };
 }
@@ -212,11 +218,7 @@ describe("checks v2 targeting", () => {
   });
 
   it("ranks highRisk first, then rank asc, capped at the limit", () => {
-    const cards = [
-      v2Card("low2", false, 2),
-      v2Card("high", true, 9),
-      v2Card("low1", false, 1),
-    ];
+    const cards = [v2Card("low2", false, 2), v2Card("high", true, 9), v2Card("low1", false, 1)];
     expect(selectTargets(cards, {}, 5)).toEqual(["high", "low1", "low2"]);
     expect(selectTargets(cards, {}, 2)).toEqual(["high", "low1"]);
   });

@@ -29,8 +29,8 @@ export function AppLayout() {
       </main>
       <footer className="border-t border-dusk-hairline">
         <div className="mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-2 px-6 py-4 text-xs text-dusk-muted">
-          <span>Replay what your coding agent did and why. Then prove you understood it.</span>
-          <span>Muse Code is Meta's agent. Echo records and reviews it.</span>
+          <span>Read the minute-long story of what your coding agent did.</span>
+          <span>Muse Code is Meta's agent. Echo reviews the tape.</span>
         </div>
       </footer>
     </div>

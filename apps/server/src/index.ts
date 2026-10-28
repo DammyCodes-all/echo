@@ -4,6 +4,8 @@ import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import {
   AnswerCheckRequestSchema,
   AskRequestSchema,
+  CheckMeRequestSchema,
+  CheckV2AnswerRequestSchema,
   GenerateChecksRequestSchema,
 } from "@echo/contracts";
 import {
@@ -20,6 +22,7 @@ import {
 import Fastify from "fastify";
 import { createAskService } from "./ask";
 import { createChecksService } from "./checks";
+import { createChecksV2Service } from "./checks-v2";
 import { createEngagementService } from "./engagement";
 import { loadLocalEnv } from "./env";
 import { createHistoryService } from "./history";
@@ -77,6 +80,7 @@ const museIngest = createMuseIngest({
 });
 const ask = createAskService(db, paths.dataDir, { log: app.log });
 const checks = createChecksService(db, paths.dataDir);
+const checksV2 = createChecksV2Service({ db, dataDir: paths.dataDir, log: app.log });
 const engagement = createEngagementService(db);
 const history = createHistoryService(db, paths.dataDir);
 
@@ -160,6 +164,52 @@ app.get<{ Params: { id: string } }>("/api/sessions/:id/ask/thread", async (reque
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/checks", async (request, reply) => {
   const outcome = await checks.sessionChecks(request.params.id);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.post<{ Params: { id: string } }>(
+  "/api/sessions/:id/checks-v2/generate",
+  async (request, reply) => {
+    const outcome = await checksV2.generate(request.params.id);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.get<{ Params: { id: string } }>("/api/sessions/:id/checks-v2", async (request, reply) => {
+  const outcome = checksV2.state(request.params.id);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.post<{ Params: { id: string } }>(
+  "/api/sessions/:id/checks-v2/check-me",
+  async (request, reply) => {
+    const parsed = CheckMeRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "cardId is required" },
+      });
+    }
+    const outcome = await checksV2.checkMe(request.params.id, parsed.data.cardId);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.post<{ Params: { id: string } }>(
+  "/api/sessions/:id/checks-v2/answer",
+  async (request, reply) => {
+    const parsed = CheckV2AnswerRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "questionId and confidence are required" },
+      });
+    }
+    const outcome = await checksV2.answer(request.params.id, parsed.data);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.post<{ Params: { id: string } }>("/api/sessions/:id/checks-v2/skip", async (request, reply) => {
+  const outcome = checksV2.skip(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
 });
 

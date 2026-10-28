@@ -263,7 +263,8 @@ export function selectTargets(
 ): string[] {
   if (cards.length === 0) return [];
   const ordered = [...cards].sort(
-    (a, b) => Number(b.highRisk) - Number(a.highRisk) || a.rank - b.rank || a.id.localeCompare(b.id),
+    (a, b) =>
+      Number(b.highRisk) - Number(a.highRisk) || a.rank - b.rank || a.id.localeCompare(b.id),
   );
   const picked = ordered.slice(0, Math.max(0, Math.min(limit, ordered.length)));
   const hasEngaged = picked.some((card) => tiers[card.id] === "engaged");

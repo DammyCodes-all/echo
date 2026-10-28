@@ -24,6 +24,7 @@ export function AskPanel({ sessionId, selectedPath, onCite }: AskPanelProps) {
         question: trimmed,
         filePath: selectedPath,
         symbols: [],
+        cardId: null,
       });
       setResult(response);
     } catch (unknown) {

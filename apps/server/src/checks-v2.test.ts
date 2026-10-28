@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   type ChangeCard,
-  CheckV2AnswerResponseSchema,
   ChecksV2ResponseSchema,
+  CheckV2AnswerResponseSchema,
   type SessionStory,
 } from "@echo/contracts";
 import {
@@ -43,10 +43,7 @@ function seedDb(sessionId: string): { db: EchoDb; dataDir: string } {
   return { db, dataDir };
 }
 
-function makeCard(
-  id: string,
-  overrides: Partial<ChangeCard> = {},
-): ChangeCard {
+function makeCard(id: string, overrides: Partial<ChangeCard> = {}): ChangeCard {
   return {
     id,
     headline: `Change ${id}.`,
@@ -62,7 +59,13 @@ function makeCard(
     now: [],
     checkedBy: [],
     touches: [],
-    moment: { eventId: null, toolCallId: null, ts: null, excerpt: `Change ${id}.`, label: "uncertain" },
+    moment: {
+      eventId: null,
+      toolCallId: null,
+      ts: null,
+      excerpt: `Change ${id}.`,
+      label: "uncertain",
+    },
     history: { priorSessionIds: [], previousPicture: null, note: null },
     ...overrides,
   };
@@ -114,7 +117,15 @@ function writeStory(db: EchoDb, dataDir: string, sessionId: string, cards: Chang
       total: cards.length,
     },
   };
-  const path = join(dataDir, "projects", PROJECT_ID, "sessions", sessionId, "artifacts", "story.json");
+  const path = join(
+    dataDir,
+    "projects",
+    PROJECT_ID,
+    "sessions",
+    sessionId,
+    "artifacts",
+    "story.json",
+  );
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, JSON.stringify(story));
   upsertArtifactRef(db, {
@@ -159,7 +170,8 @@ function draftSet(): unknown {
         cardId: "card-1",
         format: "free_text",
         kind: "teach_back",
-        question: "Explain the billing retry change in billing/retry.ts so a teammate can act on it.",
+        question:
+          "Explain the billing retry change in billing/retry.ts so a teammate can act on it.",
         rubric: ["states what changed in billing/retry.ts"],
         explanation: "The retry path in billing/retry.ts changed.",
         evidencePaths: ["billing/retry.ts"],
@@ -266,7 +278,10 @@ describe("createChecksV2Service", () => {
     const { db, dataDir } = seedSession("ses_v2_full");
     try {
       const { fetchImpl } = stubFetchQueue([draftSet(), hitGrading()]);
-      const service = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV, fetchImpl });
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
       const generated = await service.generate("ses_v2_full");
       expect(generated.status).toBe(200);
       const state = ChecksV2ResponseSchema.parse(generated.body);
@@ -303,7 +318,7 @@ describe("createChecksV2Service", () => {
 
       const answeredFree = await service.answer("ses_v2_full", {
         questionId: free.id,
-        confidence: "think_so",
+        confidence: "guessing",
         selectedOptionId: null,
         answerText: "The change updated billing/retry.ts.",
       });
@@ -326,7 +341,10 @@ describe("createChecksV2Service", () => {
     const { db, dataDir } = seedSession("ses_v2_wrong");
     try {
       const { fetchImpl } = stubFetchQueue([draftSet(), missGrading()]);
-      const service = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV, fetchImpl });
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
       const generated = await service.generate("ses_v2_wrong");
       const state = ChecksV2ResponseSchema.parse(generated.body);
       const mcq = state.questions.find((entry) => entry.cardId === "card-2");
@@ -365,7 +383,10 @@ describe("createChecksV2Service", () => {
     const { db, dataDir } = seedSession("ses_v2_shape");
     try {
       const { fetchImpl } = stubFetchQueue([draftSet(), hitGrading()]);
-      const service = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV, fetchImpl });
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
       const state = ChecksV2ResponseSchema.parse((await service.generate("ses_v2_shape")).body);
       const mcq = state.questions.find((entry) => entry.cardId === "card-2");
       const free = state.questions.find((entry) => entry.cardId === "card-1");
@@ -503,7 +524,10 @@ describe("createChecksV2Service", () => {
     const { db, dataDir } = seedSession("ses_v2_checkme");
     try {
       const { fetchImpl, calls } = stubFetchQueue([draftSet()]);
-      const service = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV, fetchImpl });
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
       const badCard = await service.checkMe("ses_v2_checkme", "card-nope");
       expect(badCard.status).toBe(400);
       const single = await service.checkMe("ses_v2_checkme", "card-2");

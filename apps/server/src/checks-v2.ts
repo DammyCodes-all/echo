@@ -1,17 +1,17 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { gradeMcq, bucketFor, gradeRubric, makeCheck, selectTargets } from "@echo/checks";
+import { bucketFor, gradeMcq, gradeRubric, makeCheck, selectTargets } from "@echo/checks";
 import {
   type AnswerConfidence,
   type AskEvidence,
   type ChangeCard,
-  CheckKindSchema,
+  type CheckAttemptV2,
   type CheckKind,
+  CheckKindSchema,
   type ChecksV2Response,
   ChecksV2ResponseSchema,
   ChecksV2StateSchema,
-  type CheckAttemptV2,
   type PictureBucket,
   type PublicCheckQuestion,
   type SessionStory,
@@ -21,15 +21,21 @@ import {
   z,
 } from "@echo/contracts";
 import {
-  type EchoDb,
   deriveEngagementTiers,
+  type EchoDb,
   getArtifactRef,
   getSession,
   readAllEvents,
   setSessionCheckStatus,
   upsertArtifactRef,
 } from "@echo/db";
-import { type ChatMessage, type ModelConfig, ModelError, modelConfigFromEnv, requestJson } from "@echo/model";
+import {
+  type ChatMessage,
+  type ModelConfig,
+  ModelError,
+  modelConfigFromEnv,
+  requestJson,
+} from "@echo/model";
 import { redactJson } from "@echo/redaction";
 import { buildSessionReview } from "./review-index";
 import { computeWatermark } from "./story-facts";
@@ -239,7 +245,9 @@ function targetBlock(
   const cardPatches = card.constituentHunkIds
     .map((id) => patches.get(id))
     .filter((patch): patch is string => typeof patch === "string");
-  lines.push(cardPatches.length > 0 ? `Patches:\n${cardPatches.join("\n---\n")}` : "Patches: (none)");
+  lines.push(
+    cardPatches.length > 0 ? `Patches:\n${cardPatches.join("\n---\n")}` : "Patches: (none)",
+  );
   const notes = detours.filter((detour) =>
     detour.claims.some((claim) =>
       claim.factIds.some(
@@ -287,13 +295,24 @@ function toPublicQuestion(question: StoredCheckQuestion): PublicCheckQuestion {
   };
 }
 
-export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: ChecksV2ServiceOptions = {}) {
+export function createChecksV2Service(
+  deps: ChecksV2ServiceDeps,
+  options: ChecksV2ServiceOptions = {},
+) {
   const { db, dataDir, log } = deps;
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
 
   function artifactPath(projectId: string, sessionId: string): string {
-    return join(dataDir, "projects", projectId, "sessions", sessionId, "artifacts", "checks_v2.json");
+    return join(
+      dataDir,
+      "projects",
+      projectId,
+      "sessions",
+      sessionId,
+      "artifacts",
+      "checks_v2.json",
+    );
   }
 
   function storyArtifactPath(projectId: string, sessionId: string): string {
@@ -312,7 +331,9 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
       seen.add(path);
       if (!existsSync(path)) continue;
       try {
-        const parsed = SessionStorySchema.safeParse(JSON.parse(readFileSync(path, "utf8")) as unknown);
+        const parsed = SessionStorySchema.safeParse(
+          JSON.parse(readFileSync(path, "utf8")) as unknown,
+        );
         if (parsed.success) return parsed.data;
       } catch {
         // Unusable story counts as no story; the caller reports it.
@@ -325,7 +346,9 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
     const path = artifactPath(projectId, sessionId);
     if (!existsSync(path)) return null;
     try {
-      const parsed = ChecksV2ArtifactSchema.safeParse(JSON.parse(readFileSync(path, "utf8")) as unknown);
+      const parsed = ChecksV2ArtifactSchema.safeParse(
+        JSON.parse(readFileSync(path, "utf8")) as unknown,
+      );
       // A corrupt artifact reads as no set: gaps are data, and a bad write
       // must not brick the whole check flow.
       if (!parsed.success) return null;
@@ -342,7 +365,10 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
       scanned = redactJson(artifact).value;
     } catch (error) {
       // Content-free diagnostic: never log the payload that failed.
-      log.error({ session_id: artifact.sessionId, err: String(error) }, "checks-v2 redaction gate failed");
+      log.error(
+        { session_id: artifact.sessionId, err: String(error) },
+        "checks-v2 redaction gate failed",
+      );
       return false;
     }
     const parsed = ChecksV2ArtifactSchema.safeParse(scanned);
@@ -406,10 +432,7 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
     return { status: 503, body: { error: { code: "check_unavailable", message } } };
   }
 
-  async function loadPatches(
-    sessionId: string,
-    cards: ChangeCard[],
-  ): Promise<Map<string, string>> {
+  async function loadPatches(sessionId: string, cards: ChangeCard[]): Promise<Map<string, string>> {
     const patches = new Map<string, string>();
     try {
       const review = await buildSessionReview(db, dataDir, sessionId);
@@ -478,6 +501,7 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
           options: options.map((option) => ({ id: option.id, text: option.text })),
           correctOptionId: draft.correctOptionId,
           distractorSources: draft.distractorSources ?? [],
+          explanation: draft.explanation,
         },
         errors,
       };
@@ -505,6 +529,7 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
         evidencePaths: draft.evidencePaths,
         format: "free_text",
         rubric,
+        explanation: draft.explanation,
       },
       errors,
     };
@@ -552,7 +577,9 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
         const validated = validateDraft(draft, targetsById, known);
         errors.push(...validated.errors);
         if (validated.question) {
-          const existing = questions.findIndex((entry) => entry.cardId === validated.question?.cardId);
+          const existing = questions.findIndex(
+            (entry) => entry.cardId === validated.question?.cardId,
+          );
           if (existing >= 0) questions[existing] = validated.question as StoredCheckQuestion;
           else questions.push(validated.question);
         }
@@ -561,11 +588,7 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
     };
 
     let raw: unknown;
-    try {
-      raw = await sendDraft(null);
-    } catch (error) {
-      throw error;
-    }
+    raw = await sendDraft(null);
     let { questions, errors } = collect(raw);
     const missing = targets.filter((card) => !questions.some((entry) => entry.cardId === card.id));
     if (missing.length > 0) {
@@ -573,11 +596,7 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
         role: "user",
         content: `The previous draft failed validation:\n${errors.slice(0, 12).join("\n")}\nReturn corrected JSON only, grounded in the same cards.`,
       };
-      try {
-        raw = await sendDraft(retryNote);
-      } catch (error) {
-        throw error;
-      }
+      raw = await sendDraft(retryNote);
       const second = collect(raw);
       for (const question of second.questions) {
         const existing = questions.findIndex((entry) => entry.cardId === question.cardId);
@@ -591,7 +610,8 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
 
   function needsFreeText(targets: ChangeCard[], questions: StoredCheckQuestion[]): boolean {
     return (
-      targets.some((card) => card.highRisk) && !questions.some((entry) => entry.format === "free_text")
+      targets.some((card) => card.highRisk) &&
+      !questions.some((entry) => entry.format === "free_text")
     );
   }
 
@@ -706,7 +726,10 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
     );
     const targetIds = selectTargets(story.cards, tiers);
     if (targetIds.length === 0) {
-      return { status: 400, body: { error: { code: "invalid_request", message: "no check needed" } } };
+      return {
+        status: 400,
+        body: { error: { code: "invalid_request", message: "no check needed" } },
+      };
     }
     const targets = targetIds
       .map((id) => story.cards.find((card) => card.id === id))
@@ -809,7 +832,11 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
         const next: ChecksV2Artifact = {
           ...existing,
           questions: [...existing.questions, ...drafted.questions],
-          picture: buildPicture(story.cards, [...existing.questions, ...drafted.questions], existing.attempts),
+          picture: buildPicture(
+            story.cards,
+            [...existing.questions, ...drafted.questions],
+            existing.attempts,
+          ),
           currentQuestionId: drafted.questions[0]?.id ?? existing.currentQuestionId,
         };
         if (!persistArtifact(session.projectId, next)) {
@@ -867,7 +894,12 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
 
   async function answer(
     sessionId: string,
-    body: { questionId: string; confidence: AnswerConfidence; selectedOptionId?: string | null; answerText?: string | null },
+    body: {
+      questionId: string;
+      confidence: AnswerConfidence;
+      selectedOptionId?: string | null;
+      answerText?: string | null;
+    },
   ): Promise<ChecksV2Outcome> {
     const session = getSession(db, sessionId);
     if (!session) {
@@ -889,7 +921,10 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
       };
     }
     const trimmed = (body.answerText ?? "").trim();
-    if (question.format === "mcq" && (body.selectedOptionId === null || body.selectedOptionId === undefined)) {
+    if (
+      question.format === "mcq" &&
+      (body.selectedOptionId === null || body.selectedOptionId === undefined)
+    ) {
       return {
         status: 400,
         body: { error: { code: "invalid_request", message: "mcq answer needs selectedOptionId" } },
@@ -939,7 +974,12 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
       } catch (error) {
         return unavailable(error);
       }
-      const check = makeCheck(question.kind, question.question, question.evidencePaths, question.rubric);
+      const check = makeCheck(
+        question.kind,
+        question.question,
+        question.evidencePaths,
+        question.rubric,
+      );
       const grade = gradeRubric(check, trimmed, hits);
       correct = grade.correct;
       rubricHits = hits;
@@ -948,9 +988,7 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
     const now = new Date().toISOString();
     const confident = body.confidence !== "guessing";
     const bucket = bucketFor({ attempted: true, correct, confident });
-    const evidence = card
-      ? buildEvidence(card, question, explanation, now)
-      : [];
+    const evidence = card ? buildEvidence(card, question, explanation, now) : [];
     const attempt: CheckAttemptV2 = {
       id: attemptIdFor(question.id),
       questionId: question.id,
@@ -1045,7 +1083,10 @@ export function createChecksV2Service(deps: ChecksV2ServiceDeps, options: Checks
     }
     const artifact = loadArtifact(session.projectId, sessionId);
     if (!artifact) {
-      return { status: 200, body: emptyOffered(sessionId, computeWatermark(readAllEvents(db, sessionId))) };
+      return {
+        status: 200,
+        body: emptyOffered(sessionId, computeWatermark(readAllEvents(db, sessionId))),
+      };
     }
     return { status: 200, body: toPublic(artifact) };
   }

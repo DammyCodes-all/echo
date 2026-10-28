@@ -1,14 +1,23 @@
 import type {
   AnswerCheckRequest,
   AnswerCheckResponse,
+  AnswerConfidence,
+  AskEvidence,
   AskRequest,
   AskResponse,
+  AskThread,
+  CheckAttemptV2,
+  ChecksV2Response,
+  EngagementEvent,
+  EngagementState,
   GenerateChecksRequest,
   GenerateChecksResponse,
   ProjectSummary,
   SessionChecksResponse,
+  SessionHistoryResponse,
   SessionReport,
   SessionReview,
+  SessionStory,
   SessionSummary,
   SnapshotFile,
   SnapshotFileContent,
@@ -63,6 +72,8 @@ export const api = {
     ),
   ask: (sessionId: string, input: AskRequest) =>
     postJson<AskResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/ask`, input),
+  askThread: (sessionId: string) =>
+    getJson<AskThread>(`/api/sessions/${encodeURIComponent(sessionId)}/ask/thread`),
   sessionChecks: (sessionId: string) =>
     getJson<SessionChecksResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/checks`),
   generateChecks: (sessionId: string, input: GenerateChecksRequest) =>
@@ -72,8 +83,62 @@ export const api = {
     ),
   answerCheck: (checkId: string, input: AnswerCheckRequest) =>
     postJson<AnswerCheckResponse>(`/api/checks/${encodeURIComponent(checkId)}/answer`, input),
+  checksV2State: (sessionId: string) =>
+    getJson<ChecksV2Response>(`/api/sessions/${encodeURIComponent(sessionId)}/checks-v2`),
+  generateChecksV2: (sessionId: string) =>
+    postJson<ChecksV2Response>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/checks-v2/generate`,
+      {},
+    ),
+  checkMe: (sessionId: string, cardId: string) =>
+    postJson<ChecksV2Response>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/checks-v2/check-me`,
+      { cardId },
+    ),
+  answerCheckV2: (
+    sessionId: string,
+    input: {
+      questionId: string;
+      confidence: AnswerConfidence;
+      selectedOptionId?: string | null;
+      answerText?: string | null;
+    },
+  ) =>
+    postJson<{ attempt: CheckAttemptV2; reveal: { summary: string; evidence: AskEvidence[] } }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/checks-v2/answer`,
+      input,
+    ),
+  skipChecksV2: (sessionId: string) =>
+    postJson<{ status: "skipped" }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/checks-v2/skip`,
+      {},
+    ),
   report: (sessionId: string) =>
     getJson<SessionReport>(`/api/sessions/${encodeURIComponent(sessionId)}/report`),
+  story: async (sessionId: string): Promise<SessionStory> => {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/story`);
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(payload?.error?.message ?? `${response.status} ${response.statusText}`);
+    }
+    return (await response.json()) as SessionStory;
+  },
+  sessionHistory: (sessionId: string) =>
+    getJson<SessionHistoryResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/history`),
+  engagementState: (sessionId: string, cardIds?: string[]) => {
+    const query =
+      cardIds && cardIds.length > 0 ? `?cardIds=${encodeURIComponent(cardIds.join(","))}` : "";
+    return getJson<EngagementState>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/engagement${query}`,
+    );
+  },
+  recordEngagement: (sessionId: string, events: EngagementEvent[]) =>
+    postJson<{ sessionId: string; inserted: number }>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/engagement`,
+      { events },
+    ),
 };
 
 export function summarizePayload(event: StoredEvent): string {
