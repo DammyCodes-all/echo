@@ -17,6 +17,8 @@ export const api = {
   projects: () => getJson<ProjectSummary[]>("/api/projects"),
   sessions: (projectId: string) =>
     getJson<SessionSummary[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
+  session: (sessionId: string) =>
+    getJson<SessionSummary>(`/api/sessions/${encodeURIComponent(sessionId)}`),
   events: async (sessionId: string): Promise<StoredEvent[]> => {
     const result = await getJson<{ events: StoredEvent[] }>(
       `/api/sessions/${encodeURIComponent(sessionId)}/events?limit=1000`,
