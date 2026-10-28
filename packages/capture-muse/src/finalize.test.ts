@@ -112,7 +112,30 @@ describe("finalizeMuseSession", () => {
         diagnostics: [],
       },
     });
-    expect(withExport.reconciled).toEqual({ added: 1, merged: 1, schemaVersion: 1 });
+    expect(withExport.reconciled).toEqual({ added: 1, merged: 1, conflicts: 0, schemaVersion: 1 });
+  });
+
+  it("reports zero conflicts under the key-only reconcile", () => {
+    const liveContent = [
+      envelope(3, "id-3", "runtime.user_intent.accepted", { kind: "accepted" }),
+    ].join("\n");
+    const result = finalizeMuseSession({
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      liveContent: `${liveContent}\n`,
+      exportDoc: {
+        export_schema_version: 1,
+        events: [
+          { kind: "record", envelope: { stream: { id: "ses_parent" }, sequence: 3 } },
+          { kind: "record", envelope: { stream: { id: "ses_parent" }, sequence: 9 } },
+        ],
+        diagnostics: [],
+      },
+    });
+    // Content comparison is deliberately absent: a shared key merges without
+    // ever reading the export frame, so conflicts cannot be detected yet.
+    expect(result.reconciled?.conflicts).toBe(0);
   });
 
   it("emits a deterministic capture.gap for non-marker-adjacent sequence jumps", () => {
@@ -240,5 +263,49 @@ describe("finalizeMuseSession", () => {
       childContents: [{ id: "child-9", content: `${childLog}\n` }],
     });
     expect(present.events.filter((event) => event.kind === "capture.gap")).toHaveLength(0);
+  });
+
+  it("marks hook-only bootstraps degraded without native records", () => {
+    const result = finalizeMuseSession({
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      liveContent: "",
+      hookOnly: true,
+    });
+    expect(result.events).toHaveLength(0);
+    expect(result.quality).toBe("degraded");
+    // Gaps still dominate: hookOnly never upgrades a lossy tape either.
+    const gappy = finalizeMuseSession({
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null,
+      liveContent: "not json\n",
+      hookOnly: true,
+    });
+    expect(gappy.quality).toBe("degraded");
+  });
+
+  it("lets a partial snapshot report cap quality at partial, never upgrade", () => {
+    const liveContent = [
+      envelope(3, "id-3", "runtime.user_intent.accepted", { kind: "accepted" }),
+    ].join("\n");
+    const base = {
+      sessionId: "ses_parent",
+      projectId: "prj_test",
+      build: null as string | null,
+      liveContent: `${liveContent}\n`,
+    };
+    const capped = finalizeMuseSession({
+      ...base,
+      snapshotReport: { status: "partial" as const, diagnostics: ["snapshot_cap_reached"] },
+    });
+    expect(capped.quality).toBe("partial");
+    expect(capped.diagnostics).toContain("snapshot_cap_reached");
+    const clean = finalizeMuseSession({
+      ...base,
+      snapshotReport: { status: "ok" as const, diagnostics: [] },
+    });
+    expect(clean.quality).toBe("full");
   });
 });
