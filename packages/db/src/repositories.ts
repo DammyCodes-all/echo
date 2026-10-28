@@ -447,7 +447,10 @@ export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
        FROM sessions s WHERE s.project_id = ? ORDER BY s.updated_at DESC`,
     )
     .all(projectId) as Array<Record<string, unknown>>;
-  return rows.map(toSessionSummary);
+  return rows.map((row) => {
+    const base = toSessionSummary(row);
+    return { ...base, captureState: resolveCaptureState(db, String(row.id), row) };
+  });
 }
 
 export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary | null {
@@ -460,7 +463,9 @@ export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary
     )
     .all(sessionId) as Array<Record<string, unknown>>;
   const row = rows[0];
-  return row ? toSessionSummary(row) : null;
+  if (!row) return null;
+  const base = toSessionSummary(row);
+  return { ...base, captureState: resolveCaptureState(db, String(row.id), row) };
 }
 
 function deriveCaptureState(status: string, captureQuality: string): CaptureState {
@@ -469,6 +474,23 @@ function deriveCaptureState(status: string, captureQuality: string): CaptureStat
   if (captureQuality === "partial") return "partial";
   if (captureQuality === "degraded") return "degraded";
   return "ready";
+}
+
+// Q47 + ARCHITECTURE §13/§16: inbox rows for sessions with no story artifact yet
+// read as still-recording; a stale story (tape grew past the artifact watermark)
+// also reads as recording/growing. No artifact → "recording" always (overrides
+// the quality derivation, even import_only — predictable over precise).
+// N+1 artifact lookups are acceptable for inbox scale.
+function resolveCaptureState(
+  db: EchoDb,
+  sessionId: string,
+  row: Record<string, unknown>,
+): CaptureState {
+  const artifact = getArtifactRef(db, sessionId, "story");
+  if (!artifact) return "recording";
+  const eventCount = Number(row.event_count);
+  if (eventCount !== artifact.tapeWatermark.eventCount) return "recording";
+  return deriveCaptureState(String(row.status), String(row.capture_quality));
 }
 
 function toSessionSummary(row: Record<string, unknown>): SessionSummary {

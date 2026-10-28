@@ -79,7 +79,7 @@ function openTestDb() {
   return openEchoDb(join(dir, "echo.sqlite"));
 }
 
-function seed(db: ReturnType<typeof openTestDb>): void {
+function seed(db: ReturnType<typeof openTestDb>, captureQuality = "import_only"): void {
   upsertProject(db, {
     id: "prj_1",
     root: "/repo",
@@ -95,7 +95,7 @@ function seed(db: ReturnType<typeof openTestDb>): void {
     title: "spike",
     startedAt: "2026-10-27T09:00:00.000Z",
     tapePath: "/data/tape.jsonl",
-    captureQuality: "import_only",
+    captureQuality,
   });
 }
 
@@ -428,16 +428,17 @@ describe("repositories", () => {
   it("defaults check status and capture state on new sessions", () => {
     const db = openTestDb();
     seed(db);
+    // No story artifact yet → still-recording (Q47), even with import_only quality.
     const summary = getSessionSummary(db, "ses_1");
     expect(summary).toMatchObject({
       checkStatus: "not_checked",
       summary: null,
       highRiskCount: 0,
-      captureState: "import_only",
+      captureState: "recording",
     });
     expect(listSessions(db, "prj_1")[0]).toMatchObject({
       checkStatus: "not_checked",
-      captureState: "import_only",
+      captureState: "recording",
     });
     db.close();
   });
@@ -525,6 +526,39 @@ describe("repositories", () => {
       generator: "storyteller-0.2",
     });
     expect(getArtifactRef(db, "ses_1", "checks_v2")).toBeNull();
+    db.close();
+  });
+
+  it("derives inbox capture state from the story artifact watermark", () => {
+    const db = openTestDb();
+    seed(db, "full");
+    appendEvents(db, "ses_1", [makeEvent(0), makeEvent(1)]);
+
+    // (1) Fresh session with no story artifact → still-recording.
+    expect(getSessionSummary(db, "ses_1")).toMatchObject({ eventCount: 2 });
+    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("recording");
+
+    // (2) Story artifact watermarked at the current tape → quality-derived state.
+    upsertArtifactRef(db, {
+      sessionId: "ses_1",
+      kind: "story",
+      path: "/data/story_v1.md",
+      tapeWatermark: { eventCount: 2, sha256: "aaa" },
+      generator: "storyteller-0.1",
+      generatedAt: "2026-10-28T10:00:00.000Z",
+    });
+    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("ready");
+    expect(listSessions(db, "prj_1")[0]?.captureState).toBe("ready");
+
+    // (3) Tape grows past the watermark without a story refresh → recording again.
+    appendEvents(db, "ses_1", [makeEvent(2)]);
+    expect(getSessionSummary(db, "ses_1")).toMatchObject({ eventCount: 3 });
+    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("recording");
+
+    // (4) listSessions reflects the same stale-watermark state for the row.
+    const rows = listSessions(db, "prj_1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "ses_1", eventCount: 3, captureState: "recording" });
     db.close();
   });
 });
