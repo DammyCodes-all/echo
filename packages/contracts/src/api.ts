@@ -28,6 +28,7 @@ export type ApiError = z.infer<typeof ApiErrorSchema>;
 export const ProjectSummarySchema = z.object({
   id: z.string().min(1),
   root: z.string().min(1),
+  remoteUrl: z.string().nullable(),
   name: z.string().nullable(),
   sessionCount: z.number().int().nonnegative(),
   lastActivity: z.string().nullable(),
@@ -93,3 +94,87 @@ export const SnapshotFileContentSchema = z.object({
   content: z.string(),
 });
 export type SnapshotFileContent = z.infer<typeof SnapshotFileContentSchema>;
+
+export const ReviewHunkSchema = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+  oldStart: z.number().int().nonnegative(),
+  oldLines: z.number().int().nonnegative(),
+  newStart: z.number().int().nonnegative(),
+  newLines: z.number().int().nonnegative(),
+  patch: z.string(),
+  addedText: z.string(),
+  removedText: z.string(),
+  addedLines: z.number().int().nonnegative(),
+  removedLines: z.number().int().nonnegative(),
+  riskScore: z.number().int().nonnegative(),
+  riskReasons: z.array(z.string()),
+});
+export type ReviewHunk = z.infer<typeof ReviewHunkSchema>;
+
+export const AttemptStatusSchema = z.enum([
+  "landed",
+  "partially_landed",
+  "reverted",
+  "replaced",
+  "failed",
+  "failed_with_side_effect",
+  "uncertain",
+  "baseline",
+]);
+export type AttemptStatus = z.infer<typeof AttemptStatusSchema>;
+
+export const FileAttemptSchema = z.object({
+  id: z.string().min(1),
+  path: z.string().min(1),
+  snapshotId: z.string().min(1),
+  commitOid: z.string().min(1),
+  trigger: z.string().min(1),
+  eventId: z.string().nullable(),
+  takenAt: z.string(),
+  status: AttemptStatusSchema,
+  confidence: z.enum(["exact", "likely", "uncertain"]),
+  introducedLines: z.number().int().nonnegative(),
+  survivingLines: z.number().int().nonnegative(),
+  introducedText: z.array(z.string()),
+  replacementText: z.array(z.string()),
+  finalStart: z.number().int().nonnegative().nullable(),
+  finalEnd: z.number().int().nullable(),
+  detail: z.string(),
+  link: z.object({
+    eventId: z.string().nullable(),
+    toolCallId: z.string().nullable(),
+    toolOutcome: z.enum(["completed", "failed", "requested"]).nullable(),
+    turnId: z.string().nullable(),
+    batchId: z.string().nullable(),
+  }),
+});
+export type FileAttempt = z.infer<typeof FileAttemptSchema>;
+
+export const HunkEvidenceSchema = z.object({
+  relation: z.enum([
+    "introduced_by",
+    "touched_by",
+    "reverted_attempt",
+    "related_event",
+    "baseline",
+  ]),
+  confidence: z.enum(["exact", "likely", "uncertain"]),
+  snapshotId: z.string().nullable(),
+  eventId: z.string().nullable(),
+  toolCallId: z.string().nullable(),
+  detail: z.string(),
+});
+export type HunkEvidence = z.infer<typeof HunkEvidenceSchema>;
+
+export const SessionReviewSchema = z.object({
+  sessionId: z.string().min(1),
+  baselineCommit: z.string().nullable(),
+  finalCommit: z.string().nullable(),
+  hunks: z.array(ReviewHunkSchema),
+  attempts: z.array(FileAttemptSchema),
+  evidenceByHunk: z.record(z.string(), z.array(HunkEvidenceSchema)),
+  diagnostics: z.array(z.string()),
+  generatedAt: z.string(),
+});
+export type SessionReview = z.infer<typeof SessionReviewSchema>;
