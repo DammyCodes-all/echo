@@ -103,4 +103,23 @@ CREATE TABLE reader_checkpoints (
 );
 `,
   },
+  {
+    version: 4,
+    sql: `
+ALTER TABLE projects ADD COLUMN remote_url TEXT;
+CREATE UNIQUE INDEX idx_projects_remote_url ON projects(remote_url) WHERE remote_url IS NOT NULL;
+`,
+  },
+  {
+    version: 5,
+    sql: `
+CREATE TABLE session_build_pins (
+  session_id TEXT PRIMARY KEY REFERENCES sessions(id),
+  muse_version TEXT,
+  adapter_version TEXT,
+  export_schema_version INTEGER,
+  observed_at TEXT NOT NULL
+);
+`,
+  },
 ];

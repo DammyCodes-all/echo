@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import git from "isomorphic-git";
 import { describe, expect, it } from "vitest";
-import { readShadowBlob } from "./git";
+import { diffShadowCommits, readShadowBlob, resolveRepositoryIdentity } from "./git";
 import { loadManifest } from "./manifest";
 import { snapshotGitTree, snapshotWorkingTree } from "./snapshot";
 
@@ -144,6 +144,11 @@ describe("snapshotWorkingTree", () => {
     });
     expect(commit.commit.parent).toEqual([first.commitOid]);
     expect(commit.commit.message).toContain("echo ses_1 final evt_snap_2");
+    const diff = diffShadowCommits(shadowDir, first.commitOid, second.commitOid, "a.txt");
+    expect(diff).toContain("--- a/a.txt");
+    expect(diff).toContain("+++ b/a.txt");
+    expect(diff).toContain("-one");
+    expect(diff).toContain("+two longer");
   });
 });
 
@@ -283,5 +288,35 @@ describe("snapshotGitTree", () => {
         sourceOid: "0".repeat(40),
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("resolveRepositoryIdentity", () => {
+  it("joins a subdirectory to its repository and normalizes the remote", async () => {
+    const root = tempDir("echo-snap-identity-");
+    await git.init({ fs, dir: root });
+    await git.setConfig({
+      fs,
+      dir: root,
+      path: "remote.origin.url",
+      value: "git@github.com:example/echo.git",
+    });
+    mkdirSync(join(root, "packages", "app"), { recursive: true });
+
+    const identity = await resolveRepositoryIdentity(join(root, "packages", "app"));
+
+    expect(identity.canonicalRoot).toBe(fs.realpathSync(root));
+    expect(identity.remoteUrl).toBe("github.com/example/echo");
+    expect(identity.projectId).toMatch(/^prj_[0-9a-f]{16}$/);
+    expect(identity.projectId).toBe((await resolveRepositoryIdentity(root)).projectId);
+  });
+
+  it("falls back to the canonical working directory outside a repository", async () => {
+    const root = tempDir("echo-snap-norepo-");
+    mkdirSync(join(root, "work"), { recursive: true });
+    const identity = await resolveRepositoryIdentity(join(root, "work"));
+
+    expect(identity.canonicalRoot).toBe(fs.realpathSync(join(root, "work")));
+    expect(identity.remoteUrl).toBeNull();
   });
 });

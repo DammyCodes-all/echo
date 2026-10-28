@@ -42,7 +42,7 @@ function FileDiffView({
   onHunks: (path: string, hunks: Hunk[]) => void;
 }) {
   const { path, oldFile, newFile } = entry;
-  const comparable = oldFile?.captured !== false || newFile?.captured !== false;
+  const comparable = oldFile?.captured === true || newFile?.captured === true;
   const oldContent = useQuery({
     queryKey: ["snapshot-blob", sessionId, oldCommit, path],
     queryFn: () => api.fileContent(sessionId, oldCommit, path),
@@ -58,14 +58,16 @@ function FileDiffView({
     if (!comparable) return null;
     if (oldFile?.captured === true && oldContent.data === undefined) return null;
     if (newFile?.captured === true && newContent.data === undefined) return null;
-    return parseDiffFromFile(
+    const oldArg =
       oldFile?.captured === true && oldContent.data
         ? { name: path, contents: oldContent.data.content }
-        : null,
+        : null;
+    const newArg =
       newFile?.captured === true && newContent.data
         ? { name: path, contents: newContent.data.content }
-        : null,
-    );
+        : null;
+    if (!oldArg && !newArg) return null;
+    return parseDiffFromFile(oldArg, newArg);
   }, [comparable, oldFile, newFile, oldContent.data, newContent.data, path]);
 
   useEffect(() => {
@@ -79,13 +81,13 @@ function FileDiffView({
       </p>
     );
   }
-  if (oldContent.isPending || newContent.isPending || !fileDiff) {
-    return <p className="px-6 py-3 font-mono text-[11px] text-dusk-muted">{path} — loading…</p>;
-  }
   if (oldContent.isError || newContent.isError) {
     return (
       <p className="px-4 py-2 font-mono text-[11px] text-dusk-fail">{path} — failed to load</p>
     );
+  }
+  if (oldContent.isPending || newContent.isPending || !fileDiff) {
+    return <p className="px-6 py-3 font-mono text-[11px] text-dusk-muted">{path} — loading…</p>;
   }
   return (
     <button

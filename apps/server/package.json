@@ -14,6 +14,7 @@
   "dependencies": {
     "@echo/capture": "workspace:*",
     "@echo/capture-muse": "workspace:*",
+    "@echo/capture-opencode": "workspace:*",
     "@echo/checks": "workspace:*",
     "@echo/config": "workspace:*",
     "@echo/contracts": "workspace:*",

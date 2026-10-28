@@ -64,7 +64,7 @@ export interface TailChunkResult {
   // the checkpoint by this and re-reads the torn remainder next poll.
   consumedBytes: number;
   hasNew: boolean;
-  referencedChildIds: Map<string, number>;
+  referencedChildIds: Map<string, number | null>;
   oversizedLines: number;
   invalidLines: number;
   truncatedTail: boolean;

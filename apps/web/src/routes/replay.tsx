@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { useParams } from "react-router";
 import { api, summarizePayload } from "../api";
+import { AskPanel } from "../components/ask-panel";
 import { DiffPanel } from "../components/diff-panel";
 import { FileStatePanel } from "../components/file-state-panel";
 import { type HunkEntry, HunkPanel } from "../components/hunk-panel";
@@ -30,6 +31,11 @@ export function ReplayPage() {
     queryKey: ["events", sessionId],
     queryFn: () => api.events(sessionId),
     refetchInterval: 4000,
+  });
+  const review = useQuery({
+    queryKey: ["review", sessionId],
+    queryFn: () => api.review(sessionId),
+    refetchInterval: 8000,
   });
   const [hunks, setHunks] = useState<HunkEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
@@ -119,10 +125,20 @@ export function ReplayPage() {
             selectedPath={selectedPath}
             onSelect={setSelectedPath}
             sessionId={sessionId}
+            review={review.data ?? null}
           />
+          <AskPanel sessionId={sessionId} selectedPath={selectedPath} onCite={setScrubTs} />
         </div>
       </div>
       <FileStatePanel sessionId={sessionId} asOfTs={scrubTs} />
+      {review.isError ? (
+        <p className="mt-4 font-mono text-[11px] text-dusk-fail">Could not load review evidence.</p>
+      ) : null}
+      {review.data && review.data.diagnostics.length > 0 ? (
+        <p className="mt-4 font-mono text-[11px] text-dusk-muted">
+          Review evidence: {review.data.diagnostics.join(", ")}
+        </p>
+      ) : null}
       <DiffPanel
         sessionId={sessionId}
         selectedPath={selectedPath}

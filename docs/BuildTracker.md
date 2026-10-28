@@ -7,6 +7,13 @@ another entry — regressions get a new entry.
 Entry fields: item, status (`done` | `partial` | `blocked`), evidence,
 notes.
 
+## 2026-10-28 — Spec items 1–2: canonical projects + session understanding
+
+- item: item 1 (canonical repo root + normalized remote identity, remote-aware project rows, workspace UI shows remote) and item 2 (Muse/OpenCode baseline + post-action + final shadow snapshots, deterministic hunk/attempt/evidence review index, `/api/sessions/:id/review`, replay inspector backed by positional line origins)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 136 files clean, `pnpm test` → 27 files / 179 passed, `pnpm build` ok; live-server probe (temp data dir, alt port) listed real projects with normalized `remoteUrl` and joined sessions; review covered by integration tests over real shadow repos (Git diffs, not fixtures)
+- notes: Review pass fixed: allowlist scoping (enabled `/repo/docs` no longer captures `/repo/sibling`), removed a dead extra baseline→final diff, changed paths now union all consecutive snapshots (fully reverted files count as attempts), reverted attempts link only to overlapping hunks (file-deletion case links deletion hunks as likely), per-path diff failures degrade to diagnostics instead of 500s, Muse baseline/tool.post/final snapshots with partial-quality on late/failed capture, one tool.post snapshot per session per poll, Windows drive-letter and file:// remote normalization, temp-path test hygiene. Tool→snapshot linkage stays path-level (no turn/batch ids persisted); review caps at 100k events silently. UI verified through build + served endpoints only — no browser interaction available here; items 3–4 untouched.
+
 ## 2026-10-28 — Sandbox execution ladder (docker, bwrap, WASM)
 
 - item: Phase 0 sandbox backends + Phase 5 sandbox runner
@@ -167,3 +174,72 @@ notes.
 - status: done
 - evidence: full gate green after fixes — `pnpm typecheck` clean, `pnpm lint` clean (139 files), `pnpm test` → 28 files / 174 passed + 8 skipped, `pnpm build` exit 0; CLI boots; new regression tests for every fix
 - notes: (1) Import-vs-daemon SQLITE_BUSY: `PRAGMA busy_timeout = 5000` in openEchoDb, with a test asserting it (parallel slice corrected the assertion to the driver's actual `timeout` column — verified: returns 5000). (2) Harness secret scan now checkpoints WAL (`PRAGMA wal_checkpoint(TRUNCATE)`) before scanning so -wal-resident rows can't hide a leak. (3) tailChunk `Math.min` spread replaced with a loop (would throw on large catch-up chunks). (4) parse-invalid gaps keyed by the offending line's absolute byte offset via shared reader classifiers (exported pure `isRecord`/`tryParseMarker`/`tryParseEvent`), so re-chunked re-reads dedupe; existing key-shape tests unchanged, new absolute-offset test added. (5) Import re-import lookup now queries by record_key directly instead of paging the timeline (LIMIT 1000 broke idempotency at scale). (6) TailChunkResult.quality documented as a per-chunk floor signal with the finalizeMuseSession choke-point pointer for the wiring layer. (7) Stale-hook marker anchored to `" hook muse ` so user entries mentioning hooks in prose are preserved (regression test added). Nits: CLI uses `parseAsync()`; harness polls until reconciled (max 9 polls) instead of assuming 3. One harness failure seen mid-batch was parallel-edit churn (suite run racing an in-flight ingest refactor), not flakiness: deterministic re-runs pass, mechanism verified (poll-1 tails full content; torn-only polls take the combined-empty stable path without resetting quiescence). Stage and commit nothing.
+## 2026-10-28 — Q&A retrieval + citation validation (first slice)
+
+- item: Phase 4 retrieval remainder — in-memory evidence bundle, pre-model refusal, citation validation
+- status: done
+- evidence: `pnpm typecheck && pnpm lint && pnpm test && pnpm build` → 24 files / 137 passed, 130 files lint-clean; `pnpm exec vitest run packages/retrieval` → 6 passed
+- notes: Deterministic scoring (word overlap gates, kind weight ranks, tape_seq tiebreak); quotes must occur verbatim, quoteless claims stay weak. Caught and fixed during tests: kind weight alone admitted irrelevant events. SQLite FTS5 replaces the inside later without changing the answer shape. Also: AGENTS.md now lets agents run installs themselves, falling back to a user one-liner on failure.
+
+## 2026-10-28 — Retrieval upgrades: summaries, attempt bonus, token budget
+
+- item: Phase 4 retrieval polish — per-kind summaries, reverted-attempt bonus, best-first character budget
+- status: done
+- evidence: full gate green → 24 files / 140 passed, 130 files lint-clean; `pnpm exec vitest run packages/retrieval` → 9 passed
+- notes: Summaries now keep exit codes, commit oids, agent-said text, gap codes. Try-first questions boost superseded writes (earliest attempt ranks first, proven on fixture). Bundle fills best-first within ~48k chars, top hit always survives. Fixed a wrong test assumption (only one fixture line mentions format). FTS5 + embeddings deliberately deferred.
+
+## 2026-10-28 — Strip encrypted reasoning from OpenCode imports
+
+- item: `capture-opencode/map.ts` sanitizeEvidence; live-tape verification
+- status: done
+- evidence: full gate green → 24 files / 142 passed; live import of `ses_e81ec7e…` → 0 live ciphertext blobs (24 keys, all `[withheld]`); retrieval probes correct (Downloads read top-hit, France refused)
+- notes: Ciphertext hid in two places — reasoning parts and tool-result content embedding serialized conversations as text. Readable rationale kept as agent-stated; empty reasoning dropped; string-embedded blobs scrubbed to `[withheld]` keeping strings parseable. Live session is still growing (1158 → 1186 events across trial runs).
+
+## 2026-10-28 — FTS5 retrieval (porter stemmer, prefix terms)
+
+- item: Phase 4 FTS recall — `packages/retrieval/src/fts.ts`, scorer rewired, same answer shape
+- status: done
+- evidence: full gate green → 24 files / 154 passed (148 + 6 teammate capture-muse tests landed in a concurrent merge), 131 files lint-clean, build ok
+- notes: Ephemeral per-bundle index, no migration. Caught an off-by-one in review (FTS rowids are 1-based) — stemming/prefix tests failed until fixed. Live tape: Downloads read top-hit, exec queries hit real shell events, France refused. A concurrent teammate merge left conflict markers mid-gate; resolved on their side, I changed nothing of theirs and staged/committed nothing.
+
+## 2026-10-28 — Merge origin/main (third divergence)
+
+- item: merge remote ingest/export reconciliation into local ownership-checks work
+- status: done
+- evidence: `git merge origin/main` → BuildTracker append-append conflict resolved by keeping both entries; gate green (typecheck clean, biome 129 files, `pnpm test` → 23 files / 131 passed, build)
+- notes: Base cc69334, merged as 695e620. Only docs/BuildTracker.md conflicted; code sides disjoint (local checks/docs, remote muse-ingest/export/finalize/db).
+
+## 2026-10-27 — Muse reader e2e fixes (markers, fork timestamps, session lifecycle)
+
+- item: `capture-muse` reader/map + colocated tests; live-session verification
+- status: done
+- evidence: `pnpm typecheck` clean, `pnpm lint` 130 files clean, `pnpm test` → 24 files / 146 passed, `pnpm build` ok; `packages/capture-muse` → 29 passed. Live e2e over 11 parent sessions: invalid 45 → 0, big-session markers 0 → 224 with headerFrames 225 → 1, unexplained gaps 101 → 0, `capture.compaction` 0 → 1172, `session.ended` 0 → 6.
+- notes: Marker check now precedes the header check (live markers carry `position`, not `sequence`); `recorded_at`-less fork/side lines parse with null timestamp, mapper falls back to `observed_at` + `missing_source_timestamp`; `session.end/resumed/fork/side` map to `session.ended/started/subagent.started/notification` instead of `agent.unknown`. One `sequence_jump` (e.g. 119→122) survives per trimmed session and is reported, not hidden.
+
+## 2026-10-27 — Diff panel crash on uncaptured files
+
+- item: `apps/web` diff-panel comparable guard + error ordering
+- status: partial
+- evidence: `@echo/web` build ok; crash-shape repro (added/deleted metadata-only file) no longer reaches `parseDiffFromFile`; user dev servers untouched and healthy (5173 → 200, 4783 `/api/health` ok); stray spawned processes reaped.
+- notes: `comparable` was `captured !== false`, so undefined-side + uncaptured-side entries called `parseDiffFromFile(null, null)` and threw. Now requires one side `captured === true`, both-null returns null, and load errors render before the loading state. Full gate not re-run: `tsc` currently fails on an unrelated in-flight edit (`packages/snapshots/src/index.ts` imports non-exported `RepositoryIdentity`), untouched by this fix.
+
+## 2026-10-28 — Merge origin/main (fourth divergence)
+
+- item: merge remote finalize/muse-ingest reconciliation into local reader/retrieval work
+- status: done
+- evidence: `git merge origin/main` → conflicts in map.ts (isoFromUs signature), map.test.ts (both sides added tests), BuildTracker auto-merged; gate green (typecheck clean, biome 131 files, `pnpm test` → 24 files / 154 passed, build)
+- notes: Base 695e620, merged as 88c01f8. isoFromUs resolved as exported + null-tolerant (both callers needed it); finalize widened to `number | null` / `string | null`. Kept all four new map tests (lifecycle, fork fallback, two encryption-stripping).
+
+## 2026-10-28 — Q&A wiring (ask endpoint + panel)
+
+- item: Phase 4 wiring — `POST /api/sessions/:id/ask` (retrieval bundle, pre-model refusal, one structured model call, server-side citation validation, in-memory content-hash cache, `ECHO_MODEL=off` fails closed), ask request/response contracts, replay ask panel with citation click-to-scrub
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 139 files clean, `pnpm test` → 28 files / 184 passed (+5 ask tests: 404, pre-model refusal with zero model calls, answered+cached, bad-citation refusal, model-off/keyless 503), `pnpm build` ok; live-server probe on temp data dir + alt port returned `not_found` / `invalid_request` shapes correctly
+- notes: Answers are JSON, not SSE streaming (arch §17 shows a streaming POST; UI polls nothing here — single round-trip). No cost ledger or `asks`/`citations` tables yet (DB still 5 tables); no Baseten path; eval counts (20/10) not run. Citation chips scrub the timeline to the cited moment, which also covers cut-line item 5 for the ask panel.
+
+## 2026-10-28 — Checks wiring (selection, quiz, calibration, report)
+
+- item: Phase 5 wiring — risk + never-opened hunk selection (top 3, max 2/file, waivers), template-drafted ownership questions (consequence/decision/tradeoff/teach_back, easiest first), verification gate with real sandbox runner, model-graded rubric answers with confidence-first flow + Brier calibration, file-persisted checks/attempts artifacts, `GET/POST checks`, `POST /api/checks/:id/answer`, `GET report` endpoints, quiz UI + report UI
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 142 files clean, `pnpm test` → 29 files / 189 passed (+5 checks tests over real SQLite + shadow git: 404s, decision-kind generation + deterministic regen, waiver drop, correct/incorrect grading with Brier 0.0025 + overconfident flag + report counts, model-off 503), `pnpm build` ok; live-server probe on temp data dir + alt port returned all five error shapes correctly
+- notes: Template drafting only — blast_radius excluded because its demonstration must be a genuinely runnable snippet (needs model drafting, a later slice); open kinds verify by evidence review while the run-twice sandbox path is wired and ready. No `checks`/`attempts` DB tables yet — artifacts JSON under the session dir instead, with a restart-safe scan fallback. Answers are single round-trips, not streamed. Browser behavior unverified (no browser here); UI verified through build + served endpoints only.

@@ -123,6 +123,38 @@ describe("mapMuseToTape", () => {
     expect(result.events[0]?.links.parent_session_id).toBe("ses_parent");
   });
 
+  it("maps session lifecycle lines instead of preserving them as unknown", () => {
+    const parsed = parseMuseLines([
+      envelope(3, "id-3", "session.started", {}),
+      envelope(4, "id-4", "session.end", { exit_reason: "done" }),
+    ]);
+    const result = mapMuseToTape(parsed.events, parsed.markers, parsed.invalidLines, CTX);
+    expect(result.events.map((event) => event.kind)).toEqual(["session.started", "session.ended"]);
+  });
+
+  it("keeps fork lines without recorded_at with an observed_at fallback", () => {
+    const parsed = parseMuseLines([
+      line({
+        schema_version: 1,
+        id: "fork-1",
+        stream: { kind: "session", id: "ses_parent" },
+        sequence: 1,
+        record_type: "event",
+        durability: "durable",
+        causation_id: null,
+        payload_type: "session.fork.created",
+        payload_schema_version: 1,
+        payload: { fork_session_id: "ses_fork", source_session_id: "ses_parent" },
+      }),
+    ]);
+    expect(parsed.invalidLines).toBe(0);
+    const result = mapMuseToTape(parsed.events, parsed.markers, parsed.invalidLines, CTX);
+    expect(result.events[0]?.kind).toBe("session.started");
+    expect(result.events[0]?.ts).toBe("2026-10-27T10:00:00.000Z");
+    expect(result.events[0]?.diagnostics).toContain("missing_source_timestamp");
+    expect(result.quality).toBe("partial");
+  });
+
   it("strips encrypted payloads but keeps readable reasoning text", () => {
     const parsed = parseMuseLines([
       envelope(3, "id-3", "runtime.session", {

@@ -24,6 +24,7 @@ import {
 } from "@echo/db";
 import {
   findRepositoryRoot,
+  resolveRepositoryIdentity,
   type SnapshotResult,
   snapshotGitTree,
   snapshotWorkingTree,
@@ -57,6 +58,12 @@ function isUnder(directory: string, root: string): boolean {
   );
 }
 
+function projectEnabled(startDir: string, projects: string[]): boolean {
+  // The allowlist is about where the agent ran: enabling `/repo/docs` must
+  // not capture `/repo/other`, even though both resolve to one project.
+  return projects.some((candidate) => isUnder(startDir, candidate));
+}
+
 function emptyResult(): IngestRunResult {
   return { scanned: 0, capturedSessions: 0, eventsAdded: 0, snapshotsTaken: 0 };
 }
@@ -78,12 +85,14 @@ export function createIngest({ dataDir, db, log }: IngestOptions) {
       for (const summary of listed) {
         if (!summary.directory) continue;
         const directory = summary.directory;
-        const root = config.projects.find((candidate) => isUnder(directory, candidate));
-        if (!root) continue;
+        const identity = await resolveRepositoryIdentity(directory);
+        if (!projectEnabled(directory, config.projects)) continue;
         const session = readOpenCodeSession(store, summary.id);
         if (!session?.directory) continue;
 
-        const imported = importOpenCodeSession(store, session);
+        const imported = importOpenCodeSession(store, session, new Date(), {
+          projectId: identity.projectId,
+        });
         const observedAt = new Date().toISOString();
         const tapePath = join(
           dataDir,
@@ -143,7 +152,7 @@ export function createIngest({ dataDir, db, log }: IngestOptions) {
         let snapshotsTaken = 0;
         let snapshotFailed = false;
         const shadowDir = join(dataDir, "projects", imported.projectId, "shadow.git");
-        const snapshotRoot = findRepositoryRoot(session.directory) ?? resolve(root);
+        const snapshotRoot = findRepositoryRoot(session.directory) ?? identity.canonicalRoot;
         const existingIds = getSessionEventIds(db, session.id);
 
         const takeSnapshot = async (input: {
@@ -243,7 +252,12 @@ export function createIngest({ dataDir, db, log }: IngestOptions) {
         );
         if (synthetic.length > 0 || snapshotFailed || snapshotPartial) quality = "partial";
 
-        upsertProject(db, { id: imported.projectId, root: resolve(root), name: basename(root) });
+        upsertProject(db, {
+          id: identity.projectId,
+          root: identity.canonicalRoot,
+          remoteUrl: identity.remoteUrl,
+          name: basename(identity.canonicalRoot),
+        });
         upsertSession(db, {
           id: session.id,
           projectId: imported.projectId,

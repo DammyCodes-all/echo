@@ -1,5 +1,14 @@
 import type {
+  AnswerCheckRequest,
+  AnswerCheckResponse,
+  AskRequest,
+  AskResponse,
+  GenerateChecksRequest,
+  GenerateChecksResponse,
   ProjectSummary,
+  SessionChecksResponse,
+  SessionReport,
+  SessionReview,
   SessionSummary,
   SnapshotFile,
   SnapshotFileContent,
@@ -10,6 +19,21 @@ import type {
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+  return (await response.json()) as T;
+}
+
+async function postJson<T>(url: string, body: unknown): Promise<T> {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as {
+      error?: { message?: string };
+    } | null;
+    throw new Error(payload?.error?.message ?? `${response.status} ${response.statusText}`);
+  }
   return (await response.json()) as T;
 }
 
@@ -27,6 +51,8 @@ export const api = {
   },
   snapshots: (sessionId: string) =>
     getJson<SnapshotSummary[]>(`/api/sessions/${encodeURIComponent(sessionId)}/snapshots`),
+  review: (sessionId: string) =>
+    getJson<SessionReview>(`/api/sessions/${encodeURIComponent(sessionId)}/review`),
   snapshotFiles: (sessionId: string, commit: string) =>
     getJson<SnapshotFile[]>(
       `/api/sessions/${encodeURIComponent(sessionId)}/snapshots/${encodeURIComponent(commit)}/files`,
@@ -35,6 +61,19 @@ export const api = {
     getJson<SnapshotFileContent>(
       `/api/sessions/${encodeURIComponent(sessionId)}/snapshots/${encodeURIComponent(commit)}/blob?path=${encodeURIComponent(path)}`,
     ),
+  ask: (sessionId: string, input: AskRequest) =>
+    postJson<AskResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/ask`, input),
+  sessionChecks: (sessionId: string) =>
+    getJson<SessionChecksResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/checks`),
+  generateChecks: (sessionId: string, input: GenerateChecksRequest) =>
+    postJson<GenerateChecksResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/checks/generate`,
+      input,
+    ),
+  answerCheck: (checkId: string, input: AnswerCheckRequest) =>
+    postJson<AnswerCheckResponse>(`/api/checks/${encodeURIComponent(checkId)}/answer`, input),
+  report: (sessionId: string) =>
+    getJson<SessionReport>(`/api/sessions/${encodeURIComponent(sessionId)}/report`),
 };
 
 export function summarizePayload(event: StoredEvent): string {

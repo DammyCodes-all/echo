@@ -19,6 +19,7 @@ import {
   listSnapshotFiles,
   openEchoDb,
   pruneReaderCheckpoints,
+  readAllEvents,
   readEvents,
   upsertProject,
   upsertReaderCheckpoint,
@@ -69,7 +70,12 @@ function openTestDb() {
 }
 
 function seed(db: ReturnType<typeof openTestDb>): void {
-  upsertProject(db, { id: "prj_1", root: "/repo", name: "repo" });
+  upsertProject(db, {
+    id: "prj_1",
+    root: "/repo",
+    remoteUrl: "github.com/example/echo",
+    name: "repo",
+  });
   upsertSession(db, {
     id: "ses_1",
     projectId: "prj_1",
@@ -94,7 +100,7 @@ describe("openEchoDb migrations", () => {
       version: number;
     }>;
     second.close();
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("waits on locked writers instead of failing fast", () => {
@@ -115,6 +121,10 @@ describe("repositories", () => {
 
     const page = readEvents(db, "ses_1", 0, 10);
     expect(page.map((row) => row.tape_seq)).toEqual([1, 2]);
+    expect(readAllEvents(db, "ses_1", true, 1).map((row) => row.event_id)).toEqual([
+      "evt_test_0",
+      "evt_test_1",
+    ]);
     expect(page[0]?.kind).toBe("tool.completed");
     expect(page[0]?.tool_call_id).toBe("prt_0");
     expect(hasEventKind(db, "ses_1", "tool.completed")).toBe(true);
@@ -130,7 +140,12 @@ describe("repositories", () => {
 
     const projects = listProjects(db);
     expect(projects).toHaveLength(1);
-    expect(projects[0]).toMatchObject({ id: "prj_1", root: "/repo", sessionCount: 1 });
+    expect(projects[0]).toMatchObject({
+      id: "prj_1",
+      root: "/repo",
+      remoteUrl: "github.com/example/echo",
+      sessionCount: 1,
+    });
 
     const sessions = listSessions(db, "prj_1");
     expect(sessions).toHaveLength(1);
@@ -149,6 +164,25 @@ describe("repositories", () => {
       eventCount: 1,
     });
     expect(getSessionSummary(db, "ses_missing")).toBeNull();
+    db.close();
+  });
+
+  it("keeps the same project when its folder moves with the same remote", () => {
+    const db = openTestDb();
+    seed(db);
+    upsertProject(db, {
+      id: "prj_1",
+      root: "/moved/echo",
+      remoteUrl: "github.com/example/echo",
+      name: "echo",
+    });
+
+    expect(listProjects(db)[0]).toMatchObject({
+      id: "prj_1",
+      root: "/moved/echo",
+      remoteUrl: "github.com/example/echo",
+      name: "echo",
+    });
     db.close();
   });
 
@@ -347,6 +381,37 @@ describe("repositories", () => {
     expect(pruneReaderCheckpoints(db, "ses_1", [])).toBe(1);
     expect(listReaderCheckpoints(db, "ses_1").map((row) => row.lane)).toEqual([""]);
     expect(getReaderCheckpoint(db, "ses_missing", "")).toBeNull();
+    db.close();
+  });
+
+  it("round-trips session build pins and summarizes versions", () => {
+    const db = openTestDb();
+    seed(db);
+    expect(getSessionBuildPin(db, "ses_1")).toBeNull();
+    upsertSessionBuildPin(db, {
+      sessionId: "ses_1",
+      museVersion: "Muse Code 1.4.13",
+      adapterVersion: "0.1.0",
+      exportSchemaVersion: null,
+      observedAt: "2026-10-28T10:00:00.000Z",
+    });
+    expect(getSessionBuildPin(db, "ses_1")).toMatchObject({
+      museVersion: "Muse Code 1.4.13",
+      exportSchemaVersion: null,
+    });
+    // Export reconciliation fills in the schema version without losing the pin.
+    upsertSessionBuildPin(db, {
+      sessionId: "ses_1",
+      museVersion: "Muse Code 1.4.13",
+      adapterVersion: "0.1.0",
+      exportSchemaVersion: 1,
+      observedAt: "2026-10-28T11:00:00.000Z",
+    });
+    expect(getSessionBuildPin(db, "ses_1")?.exportSchemaVersion).toBe(1);
+    expect(listBuildVersions(db)).toEqual([
+      { museVersion: "Muse Code 1.4.13", sessions: 1, lastObserved: "2026-10-28T11:00:00.000Z" },
+    ]);
+    expect(getSessionBuildPin(db, "ses_missing")).toBeNull();
     db.close();
   });
 });

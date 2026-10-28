@@ -46,9 +46,9 @@ export interface FinalizeResult {
 export function collectReferencedChildIds(
   events: ParsedMuseEvent[],
   selfId: string,
-): Map<string, number> {
-  const found = new Map<string, number>();
-  const visit = (value: unknown, recordedAtUs: number): void => {
+): Map<string, number | null> {
+  const found = new Map<string, number | null>();
+  const visit = (value: unknown, recordedAtUs: number | null): void => {
     if (Array.isArray(value)) {
       for (const entry of value) visit(entry, recordedAtUs);
       return;
@@ -88,7 +88,7 @@ export function finalizeMuseSession(input: FinalizeInput): FinalizeResult {
   }
 
   const sequencesByStream = new Map<string, number[]>();
-  const tsByStreamSeq = new Map<string, string>();
+  const tsByStreamSeq = new Map<string, string | null>();
   for (const event of [...live.events, ...childEvents]) {
     const list = sequencesByStream.get(event.stream.id) ?? [];
     list.push(event.sequence);

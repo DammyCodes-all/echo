@@ -214,6 +214,9 @@ importers:
       '@echo/capture-muse':
         specifier: workspace:*
         version: link:../../packages/capture-muse
+      '@echo/capture-opencode':
+        specifier: workspace:*
+        version: link:../../packages/capture-opencode
       '@echo/checks':
         specifier: workspace:*
         version: link:../../packages/checks
@@ -463,6 +466,10 @@ importers:
       '@echo/db':
         specifier: workspace:*
         version: link:../db
+    devDependencies:
+      '@echo/fixtures':
+        specifier: workspace:*
+        version: link:../fixtures
 
   packages/sandbox:
     dependencies:

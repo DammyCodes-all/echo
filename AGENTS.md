@@ -12,7 +12,7 @@ Working rules for any agent operating in this repository.
 
 - Build the confirmed phase only, then checkpoint: report what is done and verified, and stop. Starting the next phase's work is a scope expansion — stop and ask, with options and a recommendation.
 - Everything in this repo is built during the event (Oct 27 – Nov 4, 2026). Flag any code or asset that predates the event before it lands.
-- Installs and registry operations belong to the user. When a dependency is missing, hand over a paste-safe one-line command and verify the result read-only afterwards.
+- Agents may install packages themselves (registry, `pnpm install`, `pnpm approve-builds`). If an install fails or looks risky, don't fight it — hand the user a paste-safe one-line command and verify the result read-only afterwards.
 - The user owns git history. Stage and commit nothing; propose a conventional-commit message when asked.
 - For a decision that shapes later work and is genuinely balanced, ask via the interactive question tool with concrete options and a recommendation. Otherwise decide, then state the decision and its reason in the reply.
 - Read `docs/BuildTracker.md` before starting work. After the gate passes, append one entry per finished unit (item, status, evidence, notes). Append-only: never edit or delete another entry.

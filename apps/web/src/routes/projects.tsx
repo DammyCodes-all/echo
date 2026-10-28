@@ -55,6 +55,11 @@ export function ProjectsPage() {
                 {project.name ?? project.root}
               </p>
               <p className="mt-1 truncate font-mono text-xs text-dusk-muted">{project.root}</p>
+              {project.remoteUrl ? (
+                <p className="mt-1 truncate font-mono text-xs text-dusk-muted">
+                  {project.remoteUrl}
+                </p>
+              ) : null}
               <p className="mt-3 text-dusk-meta leading-6 text-dusk-muted">
                 {project.sessionCount} session{project.sessionCount === 1 ? "" : "s"}
                 {project.lastActivity ? ` · last activity ${formatTime(project.lastActivity)}` : ""}
