@@ -22,6 +22,10 @@ function kindClass(kind: string): string {
 
 export function ReplayPage() {
   const { sessionId = "" } = useParams();
+  const session = useQuery({
+    queryKey: ["session", sessionId],
+    queryFn: () => api.session(sessionId),
+  });
   const events = useQuery({
     queryKey: ["events", sessionId],
     queryFn: () => api.events(sessionId),
@@ -52,6 +56,11 @@ export function ReplayPage() {
       title="Captured actions"
       description="The raw tape for this session, oldest first, with file state, diff and hunk inspector below."
     >
+      {session.data?.captureQuality === "import_only" ? (
+        <p className="rounded-dusk-card bg-dusk-surface px-6 py-3 text-sm text-dusk-muted">
+          Imported session — final file state only. No intermediate file states are claimed.
+        </p>
+      ) : null}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="rounded-dusk-card bg-dusk-surface">
           <div className="flex items-center justify-between border-b border-dusk-hairline px-6 py-4">
