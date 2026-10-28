@@ -51,22 +51,6 @@ export function rankHunks(hunks: HunkInput[]): RankedHunk[] {
  *  a model answers them unsupervised, so they prove no ownership. */
 export type OwnershipKind = "consequence" | "decision" | "tradeoff" | "blast_radius" | "teach_back";
 
-export const KIND_DIFFICULTY: Record<OwnershipKind, number> = {
-  consequence: 1,
-  decision: 2,
-  tradeoff: 3,
-  blast_radius: 4,
-  teach_back: 5,
-};
-
-export const KIND_DESCRIPTIONS: Record<OwnershipKind, string> = {
-  consequence: "What did this change cost or open up?",
-  decision: "Why this approach over the reverted alternative?",
-  tradeoff: "What price was accepted for this choice?",
-  blast_radius: "What breaks if this changes, and why does it break there?",
-  teach_back: "Explain it so a new teammate can act on it.",
-};
-
 export interface Demonstration {
   /** Self-contained snippet that performs the breakage. */
   code: string;
@@ -128,64 +112,6 @@ export function makeCheck(
   };
 }
 
-/** Easiest-first session order: concrete and local before systemic. */
-export function orderForSession(checks: Check[]): Check[] {
-  return [...checks].sort(
-    (a, b) => KIND_DIFFICULTY[a.kind] - KIND_DIFFICULTY[b.kind] || a.id.localeCompare(b.id),
-  );
-}
-
-export interface RunnerResult {
-  status: "ok" | "timeout" | "error" | "unavailable";
-  stdout: string;
-}
-
-export interface Verification {
-  verified: boolean;
-  reason: string | null;
-}
-
-/**
- * Execution still establishes truth (BUILD-PLAN Phase 5): for blast_radius,
- * the demonstration must run twice with byte-identical normalized stdout
- * matching the recorded observation before the check may be asked. A flaky
- * demonstration invalidates the check. Open kinds verify by evidence review
- * (rubric points traceable to the tape) — the ambiguity-review model call
- * lands with question generation in Phase 4/5.
- */
-export async function verifyDemonstration(
-  check: Check,
-  run: (code: string) => Promise<RunnerResult>,
-  passes = 2,
-): Promise<Verification> {
-  if (check.demonstration === null) {
-    return {
-      verified: check.rubric.length > 0 && check.evidencePaths.length > 0,
-      reason:
-        check.rubric.length > 0 && check.evidencePaths.length > 0
-          ? null
-          : "open checks need a rubric and evidence paths",
-    };
-  }
-  const outputs: string[] = [];
-  for (let i = 0; i < passes; i++) {
-    const result = await run(check.demonstration.code);
-    if (result.status !== "ok") {
-      return { verified: false, reason: `demonstration ${result.status} on pass ${i + 1}` };
-    }
-    outputs.push(result.stdout.replace(/\r\n/g, "\n"));
-  }
-  for (let i = 1; i < outputs.length; i++) {
-    if (outputs[i] !== outputs[0]) {
-      return { verified: false, reason: "demonstration output diverged between passes" };
-    }
-  }
-  if (outputs[0] !== check.demonstration.observedStdout) {
-    return { verified: false, reason: "demonstration does not match the recorded observation" };
-  }
-  return { verified: true, reason: null };
-}
-
 export interface RubricHit {
   point: string;
   hit: boolean;
@@ -233,11 +159,6 @@ export function gradeRubric(check: Check, answerText: string, hits: RubricHit[])
     }
   }
   return { correct: true, reason: null };
-}
-
-/** Top-N riskiest hunks become check candidates. */
-export function selectChecks(ranked: RankedHunk[], limit = 5): RankedHunk[] {
-  return ranked.slice(0, Math.max(0, limit));
 }
 
 // --- Checks v2: card targeting and answer mapping (pure, no model/db) ---

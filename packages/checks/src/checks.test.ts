@@ -1,19 +1,13 @@
 import type { ChangeCard } from "@echo/contracts";
-import { runWasm } from "@echo/sandbox";
 import { describe, expect, it } from "vitest";
 import {
   bucketFor,
   gradeMcq,
   gradeRubric,
   type HunkInput,
-  KIND_DIFFICULTY,
   makeCheck,
-  orderForSession,
-  type RunnerResult,
   rankHunks,
-  selectChecks,
   selectTargets,
-  verifyDemonstration,
 } from "./index";
 
 const risky: HunkInput = {
@@ -36,17 +30,11 @@ const tame: HunkInput = {
   removedText: "",
 };
 
-async function wasmRunner(code: string): Promise<RunnerResult> {
-  const result = await runWasm({ code });
-  return { status: result.status, stdout: result.stdout };
-}
-
 describe("check targeting", () => {
   it("ranks the risky hunk above the tame one with reasons", () => {
     const ranked = rankHunks([tame, risky]);
     expect(ranked[0]?.hunk.path).toBe("src/auth.ts");
     expect(ranked[0]?.reasons.join(" ")).toContain("error-handling");
-    expect(selectChecks(ranked, 1)).toHaveLength(1);
   });
 
   it("is deterministic for equal scores", () => {
@@ -57,29 +45,6 @@ describe("check targeting", () => {
 });
 
 describe("ownership kinds", () => {
-  it("orders easiest first: consequence to teach_back", () => {
-    expect(KIND_DIFFICULTY.consequence).toBeLessThan(KIND_DIFFICULTY.decision);
-    expect(KIND_DIFFICULTY.decision).toBeLessThan(KIND_DIFFICULTY.tradeoff);
-    expect(KIND_DIFFICULTY.tradeoff).toBeLessThan(KIND_DIFFICULTY.blast_radius);
-    expect(KIND_DIFFICULTY.blast_radius).toBeLessThan(KIND_DIFFICULTY.teach_back);
-    const ordered = orderForSession([
-      makeCheck("teach_back", "Explain auth.", ["src/auth.ts"], ["token checked first"]),
-      makeCheck(
-        "blast_radius",
-        "What breaks if the guard is removed, and why there?",
-        ["src/auth.ts"],
-        ["unauthenticated requests pass through", "the guard was the only check"],
-        { code: 'console.log("unguarded");', observedStdout: "unguarded\n" },
-      ),
-      makeCheck("consequence", "What did this open up?", ["src/auth.ts"], ["null passes through"]),
-    ]);
-    expect(ordered.map((check) => check.kind)).toEqual([
-      "consequence",
-      "blast_radius",
-      "teach_back",
-    ]);
-  });
-
   it("refuses checks without a rubric", () => {
     expect(() => makeCheck("decision", "Why?", ["a.ts"], [])).toThrowError(/rubric/);
   });
@@ -94,38 +59,6 @@ describe("ownership kinds", () => {
         observedStdout: "x\n",
       }),
     ).toThrowError(/only blast_radius/);
-  });
-});
-
-describe("demonstration gate", () => {
-  it("passes a stable demonstration twice", { timeout: 30_000 }, async () => {
-    const check = makeCheck(
-      "blast_radius",
-      "What breaks if the guard is removed, and why there?",
-      ["src/auth.ts"],
-      ["unauthenticated requests pass through"],
-      { code: 'console.log("unguarded");', observedStdout: "unguarded\n" },
-    );
-    const verification = await verifyDemonstration(check, wasmRunner);
-    expect(verification).toEqual({ verified: true, reason: null });
-  });
-
-  it("rejects a demonstration that does not match the observation", {
-    timeout: 30_000,
-  }, async () => {
-    const check = makeCheck("blast_radius", "What breaks?", ["src/auth.ts"], ["it throws"], {
-      code: 'console.log("unguarded");',
-      observedStdout: "throws\n",
-    });
-    const verification = await verifyDemonstration(check, wasmRunner);
-    expect(verification.verified).toBe(false);
-    expect(verification.reason).toContain("recorded observation");
-  });
-
-  it("verifies open checks structurally", async () => {
-    const check = makeCheck("tradeoff", "What did we pay?", ["a.ts"], ["spawn cost"]);
-    const verification = await verifyDemonstration(check, wasmRunner);
-    expect(verification).toEqual({ verified: true, reason: null });
   });
 });
 
