@@ -490,6 +490,16 @@ export function dropFailedClaims(validation: StoryValidation): {
     return doomed;
   };
   const story = validation.story;
+  const shortVersion = dropFromList(
+    story.shortVersion,
+    byKey("shortVersion", null, "shortVersion"),
+  );
+  const askVsResult = {
+    asked: dropFromList(story.askVsResult.asked, byKey("askVsResult", null, "asked")),
+    delivered: dropFromList(story.askVsResult.delivered, byKey("askVsResult", null, "delivered")),
+    extras: dropFromList(story.askVsResult.extras, byKey("askVsResult", null, "extras")),
+    missing: dropFromList(story.askVsResult.missing, byKey("askVsResult", null, "missing")),
+  };
   const cards = story.cards.map((card) => ({
     ...card,
     why: dropFromList(card.why, byKey("card", card.id, "why")),
@@ -524,7 +534,16 @@ export function dropFailedClaims(validation: StoryValidation): {
     keptGaps.push(`Echo couldn't verify this: ${verdict.claimText}`);
   }
   return {
-    story: { ...story, cards, detours, looseEnds, blindSpots, gaps: keptGaps },
+    story: {
+      ...story,
+      shortVersion,
+      askVsResult,
+      cards,
+      detours,
+      looseEnds,
+      blindSpots,
+      gaps: keptGaps,
+    },
     dropped,
     diagnostics,
   };
