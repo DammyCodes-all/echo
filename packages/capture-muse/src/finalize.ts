@@ -17,20 +17,36 @@ export interface FinalizeInput {
   childContents?: ChildLog[];
   exportDoc?: unknown;
   observedAt?: Date;
+  // Hook-only session bootstrapping: no native log was ever seen, so the
+  // native-records input is absent by construction. Forces degraded.
+  hookOnly?: boolean;
+  // Final working-tree report (import path, daemon finalization). Can only
+  // downgrade full to partial, never upgrade: a good snapshot does not heal
+  // a gappy tape.
+  snapshotReport?: { status: "ok" | "partial"; diagnostics: string[] } | null;
 }
 
 export interface FinalizeResult {
   events: TapeEvent[];
   quality: CaptureQuality;
   diagnostics: string[];
-  reconciled: { added: number; merged: number; schemaVersion: number | null } | null;
+  reconciled: {
+    added: number;
+    merged: number;
+    conflicts: number;
+    schemaVersion: number | null;
+  } | null;
 }
 
 // A referenced-but-absent child log is a gap, not an inference license:
 // record the absence (linked to its parent) and never invent its actions.
 // Only the explicit child_session_id linkage key counts; task_stream ids
 // live in a different namespace and guessing across it would fabricate links.
-function collectReferencedChildIds(events: ParsedMuseEvent[], selfId: string): Map<string, number> {
+// Exported for the incremental tailer, which applies the same rule per chunk.
+export function collectReferencedChildIds(
+  events: ParsedMuseEvent[],
+  selfId: string,
+): Map<string, number> {
   const found = new Map<string, number>();
   const visit = (value: unknown, recordedAtUs: number): void => {
     if (Array.isArray(value)) {
@@ -170,9 +186,16 @@ export function finalizeMuseSession(input: FinalizeInput): FinalizeResult {
       liveKeys.add(`${record.stream.id}:${record.sequence}`);
     }
     const merged = reconcileExport(liveKeys, parsed.records);
+    // Key-only merge: a shared key means the live tape already holds the
+    // record, so the export copy is redundant — but key equality says nothing
+    // about content equality, and content comparison is deliberately absent
+    // (live lines and export frames never share a hash domain). Conflicts
+    // therefore stay 0; the field exists so a future content-aware reconcile
+    // has a place to report them without a payload-shape change.
     reconciled = {
       added: merged.addedKeys.length,
       merged: merged.mergedKeys.length,
+      conflicts: 0,
       schemaVersion: parsed.schemaVersion,
     };
     const byKey = new Map(parsed.records.map((record) => [record.key, record]));
@@ -206,5 +229,25 @@ export function finalizeMuseSession(input: FinalizeInput): FinalizeResult {
   }
 
   if (diagnostics.length > 0 && quality === "full") quality = "partial";
+
+  // Snapshot report feeds the same quality decision: a partial snapshot (cap
+  // reached, unstable file, failure gap) caps a clean tape at partial. It
+  // never upgrades: a good snapshot does not heal a gappy tape.
+  if (input.snapshotReport) {
+    diagnostics.push(...input.snapshotReport.diagnostics);
+    if (
+      (input.snapshotReport.status !== "ok" || input.snapshotReport.diagnostics.length > 0) &&
+      quality === "full"
+    ) {
+      quality = "partial";
+    }
+  }
+
+  // Hook-only bootstrap: no native log was ever seen, so native records are
+  // absent by construction. This is the degraded floor, computed here — not
+  // hardcoded at the call site — so finalizeMuseSession stays the single
+  // place capture quality is decided.
+  if (input.hookOnly) quality = "degraded";
+
   return { events, quality, diagnostics, reconciled };
 }
