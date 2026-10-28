@@ -1,6 +1,7 @@
 export type { ExportRecord, ExportRunResult, ParsedExport, ReconcileResult } from "./export";
 export {
   classifyExportFailure,
+  getMuseVersion,
   parseExportDocument,
   reconcileExport,
   runRedactedExport,

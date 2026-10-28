@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   classifyExportFailure,
+  getMuseVersion,
   parseExportDocument,
   reconcileExport,
   runRedactedExport,
@@ -46,6 +47,22 @@ describe("runRedactedExport", () => {
     const result = runRedactedExport("ses_missing", "muse-binary-that-does-not-exist");
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.diagnostic).toBe("export_unavailable");
+  });
+});
+
+describe("getMuseVersion", () => {
+  it("returns trimmed stdout and null on failure", async () => {
+    const { mkdtempSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "echo-muse-version-"));
+    const ok = join(dir, "muse-ok.sh");
+    writeFileSync(ok, "#!/bin/sh\necho '  Muse Code 1.4.13  '\n", { mode: 0o755 });
+    expect(getMuseVersion(ok)).toBe("Muse Code 1.4.13");
+    const fail = join(dir, "muse-fail.sh");
+    writeFileSync(fail, "#!/bin/sh\nexit 3\n", { mode: 0o755 });
+    expect(getMuseVersion(fail)).toBeNull();
+    expect(getMuseVersion("/nonexistent/muse-binary-xyz")).toBeNull();
   });
 });
 
