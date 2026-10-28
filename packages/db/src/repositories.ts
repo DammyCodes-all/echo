@@ -179,6 +179,125 @@ export function getSessionRecordKeys(db: EchoDb, sessionId: string): Set<string>
   return new Set(rows.map((row) => row.record_key));
 }
 
+export interface ReaderCheckpoint {
+  sessionId: string;
+  lane: string;
+  sourcePath: string;
+  inode: number | null;
+  offset: number;
+  lastSequence: number | null;
+  lastEventTs: string | null;
+  lastMarkerAfter: number | null;
+  markerCount: number;
+  sessionStarted: boolean;
+  schemaVersion: number | null;
+  adapterVersion: string | null;
+  build: string | null;
+  status: string;
+  error: string | null;
+  lastReadAt: string;
+}
+
+function checkpointFrom(row: Record<string, unknown>): ReaderCheckpoint {
+  return {
+    sessionId: String(row.session_id),
+    lane: String(row.lane),
+    sourcePath: String(row.source_path),
+    inode: row.inode === null ? null : Number(row.inode),
+    offset: Number(row.offset),
+    lastSequence: row.last_sequence === null ? null : Number(row.last_sequence),
+    lastEventTs: row.last_event_ts === null ? null : String(row.last_event_ts),
+    lastMarkerAfter: row.last_marker_after === null ? null : Number(row.last_marker_after),
+    markerCount: Number(row.marker_count),
+    sessionStarted: Number(row.session_started) === 1,
+    schemaVersion: row.schema_version === null ? null : Number(row.schema_version),
+    adapterVersion: row.adapter_version === null ? null : String(row.adapter_version),
+    build: row.build === null ? null : String(row.build),
+    status: String(row.status),
+    error: row.error === null ? null : String(row.error),
+    lastReadAt: String(row.last_read_at),
+  };
+}
+
+export function getReaderCheckpoint(
+  db: EchoDb,
+  sessionId: string,
+  lane: string,
+): ReaderCheckpoint | null {
+  const row = db
+    .prepare("SELECT * FROM reader_checkpoints WHERE session_id = ? AND lane = ?")
+    .get(sessionId, lane) as Record<string, unknown> | undefined;
+  return row ? checkpointFrom(row) : null;
+}
+
+export function listReaderCheckpoints(db: EchoDb, sessionId: string): ReaderCheckpoint[] {
+  const rows = db
+    .prepare("SELECT * FROM reader_checkpoints WHERE session_id = ? ORDER BY lane")
+    .all(sessionId) as Array<Record<string, unknown>>;
+  return rows.map(checkpointFrom);
+}
+
+export function upsertReaderCheckpoint(db: EchoDb, checkpoint: ReaderCheckpoint): void {
+  db.prepare(
+    `INSERT INTO reader_checkpoints
+      (session_id, lane, source_path, inode, offset, last_sequence, last_event_ts,
+       last_marker_after, marker_count, session_started, schema_version,
+       adapter_version, build, status, error, last_read_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, lane) DO UPDATE SET
+      source_path = excluded.source_path,
+      inode = excluded.inode,
+      offset = excluded.offset,
+      last_sequence = excluded.last_sequence,
+      last_event_ts = excluded.last_event_ts,
+      last_marker_after = excluded.last_marker_after,
+      marker_count = excluded.marker_count,
+      session_started = excluded.session_started,
+      schema_version = excluded.schema_version,
+      adapter_version = excluded.adapter_version,
+      build = excluded.build,
+      status = excluded.status,
+      error = excluded.error,
+      last_read_at = excluded.last_read_at`,
+  ).run(
+    checkpoint.sessionId,
+    checkpoint.lane,
+    checkpoint.sourcePath,
+    checkpoint.inode,
+    checkpoint.offset,
+    checkpoint.lastSequence,
+    checkpoint.lastEventTs,
+    checkpoint.lastMarkerAfter,
+    checkpoint.markerCount,
+    checkpoint.sessionStarted ? 1 : 0,
+    checkpoint.schemaVersion,
+    checkpoint.adapterVersion,
+    checkpoint.build,
+    checkpoint.status,
+    checkpoint.error,
+    checkpoint.lastReadAt,
+  );
+}
+
+// Drop checkpoints for lanes that no longer exist (deleted child logs).
+// The parent lane ('') is never pruned here; only listed child lanes survive.
+export function pruneReaderCheckpoints(db: EchoDb, sessionId: string, keepLanes: string[]): number {
+  if (keepLanes.length === 0) {
+    const result = db
+      .prepare("DELETE FROM reader_checkpoints WHERE session_id = ? AND lane != ''")
+      .run(sessionId);
+    return Number(result.changes);
+  }
+  const placeholders = keepLanes.map(() => "?").join(", ");
+  const result = db
+    .prepare(
+      `DELETE FROM reader_checkpoints
+       WHERE session_id = ? AND lane != '' AND lane NOT IN (${placeholders})`,
+    )
+    .run(sessionId, ...keepLanes);
+  return Number(result.changes);
+}
+
 export function insertStampedEvents(db: EchoDb, sessionId: string, events: TapeEvent[]): number {
   const insert = db.prepare(
     `INSERT OR IGNORE INTO events (id, session_id, tape_seq, source_sequence, record_key, kind, ts, observed_at, tool_call_id, payload_json, redaction_json, created_at)
@@ -251,7 +370,24 @@ export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
        FROM sessions s WHERE s.project_id = ? ORDER BY s.updated_at DESC`,
     )
     .all(projectId) as Array<Record<string, unknown>>;
-  return rows.map((row) => ({
+  return rows.map(toSessionSummary);
+}
+
+export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary | null {
+  const rows = db
+    .prepare(
+      `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
+              s.status, s.capture_quality,
+              (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count
+       FROM sessions s WHERE s.id = ?`,
+    )
+    .all(sessionId) as Array<Record<string, unknown>>;
+  const row = rows[0];
+  return row ? toSessionSummary(row) : null;
+}
+
+function toSessionSummary(row: Record<string, unknown>): SessionSummary {
+  return {
     id: String(row.id),
     projectId: String(row.project_id),
     title: row.title === null ? null : String(row.title),
@@ -262,7 +398,7 @@ export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
     status: String(row.status),
     captureQuality: String(row.capture_quality),
     eventCount: Number(row.event_count),
-  }));
+  };
 }
 
 export function readEvents(
