@@ -12,14 +12,19 @@ import { runMuseHook } from "@echo/capture-muse";
 import {
   getReaderCheckpoint,
   getSessionBuildPin,
+  getSessionSummary,
   listSnapshots,
+  maxTapeSeq,
   openEchoDb,
   readEvents,
+  setSessionCheckStatus,
+  upsertArtifactRef,
 } from "@echo/db";
 import { resolveRepositoryIdentity } from "@echo/snapshots";
 import git from "isomorphic-git";
 import { describe, expect, it } from "vitest";
 import { createMuseIngest, shouldExportSession } from "./muse-ingest";
+import type { StoryGenerator, StoryOutcome } from "./story-generate";
 
 const log = { info: () => {}, error: () => {} };
 
@@ -693,6 +698,150 @@ describe("createMuseIngest missing child logs", () => {
       payload: { code: "missing_child", subagent_id: "child-9" },
     });
     expect(gaps[0]?.links).toMatchObject({ subagent_id: "child-9", parent_session_id: "ses_gap" });
+    db.close();
+  });
+});
+
+describe("createMuseIngest story wiring", () => {
+  function wsLine(seq: number, sessionId: string, workspaceRoot: string): string {
+    return JSON.stringify({
+      schema_version: 1,
+      id: `id-${seq}`,
+      stream: { kind: "session", id: sessionId },
+      sequence: seq,
+      recorded_at: 1793097343000000 + seq * 1000,
+      record_type: "event",
+      durability: "durable",
+      causation_id: null,
+      payload_type: "runtime.user_intent.accepted",
+      payload_schema_version: 1,
+      payload: { kind: "accepted", metadata: { workspace_root: workspaceRoot } },
+    });
+  }
+
+  function setup() {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-story-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-story-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-story-proj-"));
+    const dir = join(sessionsDir, "2026", "10", "28", "ses_story");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "session.jsonl"), `${wsLine(3, "ses_story", projectRoot)}\n`);
+    const exportJson = JSON.stringify({ export_schema_version: 1, events: [], diagnostics: [] });
+    const museBin = join(dataDir, "muse-stub.sh");
+    writeFileSync(
+      museBin,
+      `#!/bin/sh\nout="";\nwhile [ $# -gt 0 ]; do\n  if [ "$1" = "--out" ]; then out="$2"; shift 2; else shift; fi\ndone\ncat > "$out" <<'EXPORT_EOF'\n${exportJson}\nEXPORT_EOF\n`,
+      { mode: 0o755 },
+    );
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const calls: string[] = [];
+    // Mimics the service contract: a successful generation records its ref.
+    const story: StoryGenerator = {
+      generateStory: async (sessionId: string): Promise<StoryOutcome> => {
+        calls.push(sessionId);
+        upsertArtifactRef(db, {
+          sessionId,
+          kind: "story",
+          path: join(dataDir, "story.json"),
+          tapeWatermark: { eventCount: maxTapeSeq(db, sessionId), sha256: "x" },
+          generator: "skeleton-v1",
+          generatedAt: new Date().toISOString(),
+        });
+        return {
+          status: "degraded",
+          story: null,
+          path: null,
+          generator: "skeleton-v1",
+          diagnostics: [],
+        };
+      },
+    };
+    const ingest = createMuseIngest({
+      dataDir,
+      db,
+      log,
+      sessionsDir,
+      projects: [projectRoot],
+      museBin,
+      story,
+    });
+    return { sessionsDir, dataDir, projectRoot, dir, db, ingest, calls };
+  }
+
+  it("generates the story once after reconcile and never for active sessions", async () => {
+    const { db, ingest, calls } = setup();
+    expect((await ingest.runOnce()).storiesGenerated).toBe(0);
+    expect((await ingest.runOnce()).storiesGenerated).toBe(0);
+    expect(calls).toEqual([]);
+    const reconciled = await ingest.runOnce();
+    expect(reconciled.reconciled).toBe(1);
+    expect(reconciled.storiesGenerated).toBe(1);
+    expect(calls).toEqual(["ses_story"]);
+    const quiet = await ingest.runOnce();
+    expect(quiet.storiesGenerated).toBe(0);
+    expect(calls).toEqual(["ses_story"]);
+    db.close();
+  });
+
+  it("regenerates on post-finalization resume and resets the check status", async () => {
+    const { db, ingest, calls, dir, projectRoot } = setup();
+    await ingest.runOnce();
+    await ingest.runOnce();
+    await ingest.runOnce();
+    expect(calls).toEqual(["ses_story"]);
+    setSessionCheckStatus(db, "ses_story", "checked");
+    appendFileSync(join(dir, "session.jsonl"), `${wsLine(4, "ses_story", projectRoot)}\n`);
+    expect((await ingest.runOnce()).storiesGenerated).toBe(0);
+    expect((await ingest.runOnce()).storiesGenerated).toBe(0);
+    const regen = await ingest.runOnce();
+    expect(regen.storiesGenerated).toBe(1);
+    expect(calls).toEqual(["ses_story", "ses_story"]);
+    expect(getSessionSummary(db, "ses_story")?.checkStatus).toBe("not_checked");
+    db.close();
+  });
+
+  it("survives a throwing story generator without failing ingest", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-story-fail-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-story-fail-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-story-fail-proj-"));
+    const dir = join(sessionsDir, "2026", "10", "28", "ses_story");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "session.jsonl"), `${wsLine(3, "ses_story", projectRoot)}\n`);
+    const exportJson = JSON.stringify({ export_schema_version: 1, events: [], diagnostics: [] });
+    const museBin = join(dataDir, "muse-stub.sh");
+    writeFileSync(
+      museBin,
+      `#!/bin/sh\nout="";\nwhile [ $# -gt 0 ]; do\n  if [ "$1" = "--out" ]; then out="$2"; shift 2; else shift; fi\ndone\ncat > "$out" <<'EXPORT_EOF'\n${exportJson}\nEXPORT_EOF\n`,
+      { mode: 0o755 },
+    );
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const errors: unknown[][] = [];
+    const ingest = createMuseIngest({
+      dataDir,
+      db,
+      log: {
+        info: () => {},
+        error: (...args: unknown[]) => {
+          errors.push(args);
+        },
+      },
+      sessionsDir,
+      projects: [projectRoot],
+      museBin,
+      story: {
+        generateStory: async () => {
+          throw new Error("story down");
+        },
+      },
+    });
+    await ingest.runOnce();
+    await ingest.runOnce();
+    const reconciled = await ingest.runOnce();
+    expect(reconciled.reconciled).toBe(1);
+    expect(reconciled.storiesGenerated).toBe(0);
+    expect(
+      errors.filter((args) => JSON.stringify(args).includes("story generation failed")),
+    ).toHaveLength(1);
     db.close();
   });
 });

@@ -26,6 +26,7 @@ import { createMuseIngest } from "./muse-ingest";
 import { createMuseWatcher } from "./muse-watch";
 import { buildSessionReview } from "./review-index";
 import { readSnapshotFile } from "./snapshot-view";
+import { createStoryService } from "./story-generate";
 
 const VERSION = "0.1.0";
 const DEFAULT_PORT = 4783;
@@ -50,11 +51,13 @@ const db = openEchoDb(join(paths.dataDir, "echo.sqlite"));
 const app = Fastify({ logger: true });
 const ingest = createIngest({ dataDir: paths.dataDir, db, log: app.log });
 const config = loadEchoConfig();
+const story = createStoryService(db, { dataDir: paths.dataDir });
 const museIngest = createMuseIngest({
   dataDir: paths.dataDir,
   db,
   log: app.log,
   projects: config.projects,
+  story,
 });
 const ask = createAskService(db);
 const checks = createChecksService(db, paths.dataDir);
