@@ -8,8 +8,8 @@ import type { FileAttempt, ReviewHunk } from "@echo/tape";
  *
  * Fact IDs are sequential (`F1`, `F2`, …) in a fixed emission order so a
  * finalized session re-extracts to identical IDs: prompts (tape order),
- * hunks (path, position), attempts (path, time), runs (request order),
- * actions (run order), gaps (tape order).
+ * agent texts (tape order), hunks (path, position), attempts (path, time),
+ * runs (request order), actions (run order), gaps (tape order).
  */
 export interface FactExtractionInput {
   sessionId: string;
@@ -18,11 +18,21 @@ export interface FactExtractionInput {
   attempts: FileAttempt[];
 }
 
-export type FactKind = "prompt" | "hunk" | "attempt" | "run" | "action" | "gap";
+export type FactKind = "prompt" | "agent_text" | "hunk" | "attempt" | "run" | "action" | "gap";
 
 export interface PromptFact {
   id: string;
   kind: "prompt";
+  eventId: string;
+  tapeSeq: number;
+  text: string;
+}
+
+/** Quotable agent-said text. Only `agent.unknown` carries a known text shape;
+ *  model.response payloads are adapter-specific and stay out. */
+export interface AgentTextFact {
+  id: string;
+  kind: "agent_text";
   eventId: string;
   tapeSeq: number;
   text: string;
@@ -68,6 +78,9 @@ export interface HunkFact {
   newLines: number;
   addedLines: number;
   removedLines: number;
+  /** Full side texts: the validator checks claim numbers/paths against them. */
+  addedText: string;
+  removedText: string;
   mechanical: MechanicalTag;
   risk: HunkRisk;
   /** A passing run anywhere in the session counts as coverage (coarse: tape
@@ -126,10 +139,19 @@ export interface GapFact {
   detail: string;
 }
 
-export type Fact = PromptFact | HunkFact | AttemptFact | RunFact | ActionFact | GapFact;
+export type Fact =
+  | PromptFact
+  | AgentTextFact
+  | HunkFact
+  | AttemptFact
+  | RunFact
+  | ActionFact
+  | GapFact;
 
 export interface FactSet {
   sessionId: string;
+  /** Raw tape length, so the validator can spot a stale watermark. */
+  tapeEventCount: number;
   facts: Fact[];
 }
 
@@ -447,6 +469,20 @@ export function extractFacts(input: FactExtractionInput): FactSet {
     facts.push(fact);
   }
 
+  for (const event of tape) {
+    if (event.kind !== "agent.unknown") continue;
+    const text = asString(payloadOf(event).text);
+    if (text === null) continue;
+    const fact: AgentTextFact = {
+      id: takeId(),
+      kind: "agent_text",
+      eventId: event.event_id,
+      tapeSeq: event.tape_seq,
+      text,
+    };
+    facts.push(fact);
+  }
+
   const runCalls = calls.filter(isRun);
   const passingRunObserved = runCalls.some((call) => runOutcome(call) === "ok");
   const gaps = tape.filter((event) => event.kind === "capture.gap");
@@ -493,6 +529,8 @@ export function extractFacts(input: FactExtractionInput): FactSet {
       newLines: hunk.newLines,
       addedLines: hunk.addedLines,
       removedLines: hunk.removedLines,
+      addedText: hunk.addedText,
+      removedText: hunk.removedText,
       mechanical,
       risk: {
         flags,
@@ -576,5 +614,5 @@ export function extractFacts(input: FactExtractionInput): FactSet {
     facts.push(fact);
   }
 
-  return { sessionId: input.sessionId, facts };
+  return { sessionId: input.sessionId, tapeEventCount: input.tape.length, facts };
 }
