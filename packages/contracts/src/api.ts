@@ -26,6 +26,14 @@ export const ApiErrorSchema = z.object({
 });
 export type ApiError = z.infer<typeof ApiErrorSchema>;
 
+// Canonical card ID (ARCHITECTURE §12): the hunk ID, `h_` + 16 lowercase hex,
+// used end to end for cards and hunks. One schema object under two names so
+// hunk-typed and card-typed fields each read naturally without drifting.
+export const CardIdSchema = z.string().regex(/^h_[0-9a-f]{16}$/);
+export type CardId = z.infer<typeof CardIdSchema>;
+export const HunkIdSchema = CardIdSchema;
+export type HunkId = z.infer<typeof HunkIdSchema>;
+
 export const ProjectSummarySchema = z.object({
   id: z.string().min(1),
   root: z.string().min(1),
@@ -113,7 +121,7 @@ export const SnapshotFileContentSchema = z.object({
 export type SnapshotFileContent = z.infer<typeof SnapshotFileContentSchema>;
 
 export const ReviewHunkSchema = z.object({
-  id: z.string().min(1),
+  id: HunkIdSchema,
   path: z.string().min(1),
   oldStart: z.number().int().nonnegative(),
   oldLines: z.number().int().nonnegative(),
@@ -190,7 +198,7 @@ export const SessionReviewSchema = z.object({
   finalCommit: z.string().nullable(),
   hunks: z.array(ReviewHunkSchema),
   attempts: z.array(FileAttemptSchema),
-  evidenceByHunk: z.record(z.string(), z.array(HunkEvidenceSchema)),
+  evidenceByHunk: z.record(HunkIdSchema, z.array(HunkEvidenceSchema)),
   diagnostics: z.array(z.string()),
   generatedAt: z.string(),
 });
@@ -257,7 +265,7 @@ export type GenerateChecksRequest = z.infer<typeof GenerateChecksRequestSchema>;
 export const StoredCheckSchema = z.object({
   id: z.string().min(1),
   sessionId: z.string().min(1),
-  hunkId: z.string().min(1),
+  hunkId: HunkIdSchema,
   path: z.string().min(1),
   kind: CheckKindSchema,
   question: z.string().min(1),
@@ -270,7 +278,7 @@ export type StoredCheck = z.infer<typeof StoredCheckSchema>;
 
 export const GenerateChecksResponseSchema = z.object({
   checks: z.array(StoredCheckSchema),
-  dropped: z.array(z.object({ hunkId: z.string(), reason: z.string() })),
+  dropped: z.array(z.object({ hunkId: HunkIdSchema, reason: z.string() })),
   sandboxAvailable: z.boolean(),
 });
 export type GenerateChecksResponse = z.infer<typeof GenerateChecksResponseSchema>;
@@ -396,9 +404,9 @@ const ChangeCardHistorySchema = z.object({
 export type ChangeCardHistory = z.infer<typeof ChangeCardHistorySchema>;
 
 export const ChangeCardSchema = z.object({
-  id: z.string().min(1),
+  id: CardIdSchema,
   headline: z.string().min(1),
-  constituentHunkIds: z.array(z.string()),
+  constituentHunkIds: z.array(HunkIdSchema),
   constituentActionIds: z.array(z.string()),
   rank: z.number().int().min(1),
   sessionOrder: z.number().int().nonnegative(),
@@ -434,7 +442,7 @@ export const LooseEndSchema = z.object({
   id: z.string().min(1),
   kind: LooseEndKindSchema,
   claims: z.array(StoryClaimSchema),
-  cardId: z.string().min(1).nullable(),
+  cardId: CardIdSchema.nullable(),
 });
 export type LooseEnd = z.infer<typeof LooseEndSchema>;
 
@@ -496,7 +504,7 @@ export type EngagementTier = z.infer<typeof EngagementTierSchema>;
 
 export const EngagementEventSchema = z.object({
   id: z.string().min(1),
-  cardId: z.string().min(1).nullable(),
+  cardId: CardIdSchema.nullable(),
   kind: EngagementKindSchema,
   occurredAt: z.string().min(1),
 });
@@ -509,13 +517,13 @@ export type RecordEngagementRequest = z.infer<typeof RecordEngagementRequestSche
 
 export const EngagementStateSchema = z.object({
   sessionId: z.string().min(1),
-  tiers: z.record(z.string(), EngagementTierSchema),
+  tiers: z.record(CardIdSchema, EngagementTierSchema),
 });
 export type EngagementState = z.infer<typeof EngagementStateSchema>;
 
 const StoredCheckQuestionBaseSchema = z.object({
   id: z.string().min(1),
-  cardId: z.string().min(1),
+  cardId: CardIdSchema,
   kind: CheckKindSchema,
   question: z.string().min(1),
   evidenceFactIds: z.array(z.string()),
@@ -524,9 +532,7 @@ const StoredCheckQuestionBaseSchema = z.object({
 
 export const StoredCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend({
   format: z.literal("mcq"),
-  options: z
-    .array(z.object({ id: z.string().min(1), text: z.string().min(1) }))
-    .min(2),
+  options: z.array(z.object({ id: z.string().min(1), text: z.string().min(1) })).min(2),
   correctOptionId: z.string().min(1),
   distractorSources: z.array(z.string()),
 });
@@ -536,9 +542,7 @@ export const StoredCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.e
   format: z.literal("free_text"),
   rubric: z.array(z.string().min(1)).min(1),
 });
-export type StoredCheckFreeTextQuestion = z.infer<
-  typeof StoredCheckFreeTextQuestionSchema
->;
+export type StoredCheckFreeTextQuestion = z.infer<typeof StoredCheckFreeTextQuestionSchema>;
 
 export const StoredCheckQuestionSchema = z.discriminatedUnion("format", [
   StoredCheckMcqQuestionSchema,
@@ -548,18 +552,14 @@ export type StoredCheckQuestion = z.infer<typeof StoredCheckQuestionSchema>;
 
 export const PublicCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend({
   format: z.literal("mcq"),
-  options: z
-    .array(z.object({ id: z.string().min(1), text: z.string().min(1) }))
-    .min(2),
+  options: z.array(z.object({ id: z.string().min(1), text: z.string().min(1) })).min(2),
 });
 export type PublicCheckMcqQuestion = z.infer<typeof PublicCheckMcqQuestionSchema>;
 
 export const PublicCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.extend({
   format: z.literal("free_text"),
 });
-export type PublicCheckFreeTextQuestion = z.infer<
-  typeof PublicCheckFreeTextQuestionSchema
->;
+export type PublicCheckFreeTextQuestion = z.infer<typeof PublicCheckFreeTextQuestionSchema>;
 
 export const PublicCheckQuestionSchema = z.discriminatedUnion("format", [
   PublicCheckMcqQuestionSchema,
@@ -582,18 +582,13 @@ export const CheckAttemptV2Schema = z.object({
 export type CheckAttemptV2 = z.infer<typeof CheckAttemptV2Schema>;
 
 export const CardPictureSchema = z.object({
-  cardId: z.string().min(1),
+  cardId: CardIdSchema,
   bucket: PictureBucketSchema,
   questionId: z.string().min(1).nullable(),
 });
 export type CardPicture = z.infer<typeof CardPictureSchema>;
 
-export const ChecksV2StatusSchema = z.enum([
-  "offered",
-  "in_progress",
-  "completed",
-  "skipped",
-]);
+export const ChecksV2StatusSchema = z.enum(["offered", "in_progress", "completed", "skipped"]);
 export type ChecksV2Status = z.infer<typeof ChecksV2StatusSchema>;
 
 export const ChecksV2StateSchema = z.object({
@@ -626,13 +621,14 @@ export const AskThreadMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["user", "assistant"]),
   text: z.string().min(1),
-  cardId: z.string().min(1).nullable(),
+  cardId: CardIdSchema.nullable(),
   response: AskResponseSchema.nullable(),
   createdAt: z.string().min(1),
 });
 export type AskThreadMessage = z.infer<typeof AskThreadMessageSchema>;
 
 export const AskThreadSchema = z.object({
+  schemaVersion: z.literal(1),
   sessionId: z.string().min(1),
   updatedAt: z.string().min(1),
   messages: z.array(AskThreadMessageSchema),
@@ -641,6 +637,13 @@ export type AskThread = z.infer<typeof AskThreadSchema>;
 
 export const ArtifactKindSchema = z.enum(["story", "checks_v2", "ask_thread"]);
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
+
+// File layout for generated artifacts under the session dir (ARCHITECTURE §6).
+export const ARTIFACT_FILE_NAMES: Record<ArtifactKind, string> = {
+  story: "story.json",
+  checks_v2: "checks_v2.json",
+  ask_thread: "ask_thread.json",
+};
 
 export const ArtifactRefSchema = z.object({
   sessionId: z.string().min(1),
