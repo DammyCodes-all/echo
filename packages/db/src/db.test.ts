@@ -150,10 +150,14 @@ describe("openEchoDb migrations", () => {
     }>;
     expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6]);
     const checkpoints = db
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reader_checkpoints'")
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reader_checkpoints'",
+      )
       .get() as { name?: string } | null;
     expect(checkpoints?.name).toBe("reader_checkpoints");
-    const projectColumns = db.prepare("SELECT name FROM pragma_table_info('projects')").all() as Array<{
+    const projectColumns = db
+      .prepare("SELECT name FROM pragma_table_info('projects')")
+      .all() as Array<{
       name: string;
     }>;
     expect(projectColumns.map((column) => column.name)).toContain("remote_url");
