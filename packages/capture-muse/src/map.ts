@@ -4,6 +4,7 @@ import { TapeEnvelopeSchema } from "@echo/contracts";
 import { stableJson } from "@echo/core";
 import { redactJson } from "@echo/redaction";
 import type { ParsedMuseEvent, ParsedMuseMarker } from "./reader";
+import { isRecord } from "./reader";
 
 export const ADAPTER_VERSION = "0.1.0";
 export const ADAPTER_SCHEMA = "session-jsonl/frame1";
@@ -104,13 +105,12 @@ function canonicalKind(payloadType: string, innerKind: string | null): TapeEvent
   if (payloadType === "tool_batch.effect.terminal") return "tool.completed";
   if (payloadType === "approval_wait.effect.started") return "approval.requested";
   if (payloadType === "approval_wait.effect.terminal") return "approval.decided";
-  if (
-    payloadType === "runtime.user_intent.accepted" ||
-    payloadType === "runtime.user_intent.materialized"
-  ) {
-    return "prompt.submitted";
-  }
-  if (payloadType === "runtime.command_intake.received") return "prompt.submitted";
+  // Only accepted intents carry the prompt text. Materialized is the
+  // outcome twin (same intent_id, no text); intake is session-start
+  // metadata (observed: session_start/run_retract, never message text).
+  if (payloadType === "runtime.user_intent.accepted") return "prompt.submitted";
+  if (payloadType === "runtime.user_intent.materialized") return "notification";
+  if (payloadType === "runtime.command_intake.received") return "session.started";
   if (payloadType === "run.model.configured" || payloadType === "model_input_trace_recorded") {
     return "model.call";
   }
@@ -179,6 +179,35 @@ function canonicalKind(payloadType: string, innerKind: string | null): TapeEvent
     return "session.started";
   }
   return "agent.unknown";
+}
+
+// Prompt text lives in message blocks, never as a top-level field:
+// model_messages[].content[] first, refill_blocks[] as fallback. Hook and
+// fixture payloads that already carry text pass through untouched.
+function textBlocks(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const block of value) {
+    if (isRecord(block) && block.kind === "text" && typeof block.text === "string") {
+      if (block.text.length > 0) out.push(block.text);
+    }
+  }
+  return out;
+}
+
+function promptTextFrom(payload: unknown): string {
+  if (!isRecord(payload)) return "";
+  const messages = payload.model_messages;
+  if (Array.isArray(messages)) {
+    const texts: string[] = [];
+    for (const message of messages) {
+      if (isRecord(message)) texts.push(...textBlocks(message.content));
+    }
+    if (texts.length > 0) return texts.join("\n");
+  }
+  const refill = textBlocks(payload.refill_blocks);
+  if (refill.length > 0) return refill.join("\n");
+  return typeof payload.text === "string" ? payload.text : "";
 }
 
 interface PushInput {
@@ -397,9 +426,13 @@ export function mapMuseToTape(
     ) {
       links.tool_call_id = toolCallId;
     }
+    const payload =
+      kind === "prompt.submitted" && isRecord(record.payload)
+        ? { ...record.payload, text: promptTextFrom(record.payload) }
+        : record.payload;
     push({
       kind,
-      payload: record.payload,
+      payload,
       payloadType: record.payloadType,
       recordType: "event",
       sequence: record.sequence,
