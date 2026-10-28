@@ -347,6 +347,65 @@ describe("risk flags and boost", () => {
     expect(destructive.risk.flags.map((f) => f.flag)).toContain("destructive");
   });
 
+  describe("destructive tuning: actions over filenames", () => {
+    function flagsFor(hunk: Partial<ReviewHunk>): string[] {
+      return riskFor(makeHunk(hunk)).risk.flags.map((f) => f.flag);
+    }
+
+    it("keeps true positives flagged", () => {
+      // rm -rf with a target.
+      expect(flagsFor({ addedText: "rm -rf /tmp/build" })).toContain("destructive");
+      // Hard reset and destructive clean.
+      expect(flagsFor({ addedText: "git reset --hard HEAD" })).toContain("destructive");
+      // SQL destructive statements, not bare words.
+      expect(flagsFor({ addedText: "DROP TABLE users" })).toContain("destructive");
+      expect(flagsFor({ addedText: "TRUNCATE TABLE logs" })).toContain("destructive");
+      // ORM deletes are calls, not prose.
+      expect(flagsFor({ addedText: "await db.deleteMany({})" })).toContain("destructive");
+      // Whole-file deletion: every hunk removed lines and added none.
+      const deleted = riskFor(
+        makeHunk({
+          path: "src/legacy.ts",
+          oldLines: 40,
+          newLines: 0,
+          addedText: "",
+          removedText: "old code",
+          addedLines: 0,
+          removedLines: 40,
+        }),
+      );
+      expect(deleted.risk.flags.map((f) => f.flag)).toContain("destructive");
+      expect(
+        deleted.risk.flags.find((f) => f.flag === "destructive")?.reason,
+      ).toContain("src/legacy.ts deleted");
+    });
+
+    it("leaves prose and non-code paths unflagged", () => {
+      const prose: Partial<ReviewHunk> = {
+        addedText: "truncated tail dropped; wal_checkpoint(TRUNCATE) keeps readers safe",
+      };
+      // The hook.ts false positive: everyday "truncate" prose in source.
+      expect(flagsFor({ ...prose, path: "apps/cli/src/hook.ts" })).not.toContain("destructive");
+      // Test bodies run rm -rf against scratch dirs.
+      expect(
+        flagsFor({
+          path: "apps/server/src/muse-ingest.test.ts",
+          addedText: "rm -rf /tmp/testdir",
+        }),
+      ).not.toContain("destructive");
+      // Docs describe DROP TABLE migrations.
+      expect(
+        flagsFor({ path: "docs/migrations.md", addedText: "DROP TABLE users" }),
+      ).not.toContain("destructive");
+      // Tracker narrates truncations.
+      expect(flagsFor({ ...prose, path: "docs/BuildTracker.md" })).not.toContain("destructive");
+      // Partial deletions are edits, not file removal.
+      expect(
+        flagsFor({ addedText: "", removedText: "old code", addedLines: 0, removedLines: 3 }),
+      ).not.toContain("destructive");
+    });
+  });
+
   it("boosts large mechanical diffs with no observed run", () => {
     const big = `${"x\n".repeat(60)}`;
     const hunk = riskFor(
