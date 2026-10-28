@@ -4,6 +4,7 @@ import type { FileAttempt, ReviewHunk } from "@echo/tape";
 import { describe, expect, it } from "vitest";
 import {
   type ActionFact,
+  type AgentTextFact,
   type AttemptFact,
   extractFacts,
   type FactSet,
@@ -158,11 +159,18 @@ describe("extractFacts over the story fixtures", () => {
     expect(runs[0]).toMatchObject({ command: "pnpm lint", outcome: "ok", exitCode: 0 });
   });
 
-  it("emits only prompts for the research session", () => {
+  it("emits prompts plus quotable agent text for the research session", () => {
     const { facts } = factsFor("research");
-    const prompts = ofKind<PromptFact>(facts, "prompt");
-    expect(prompts).toHaveLength(2);
-    expect(facts.facts.map((fact) => fact.id)).toEqual(["F1", "F2"]);
+    expect(ofKind<PromptFact>(facts, "prompt")).toHaveLength(2);
+    const agentTexts = ofKind<AgentTextFact>(facts, "agent_text");
+    expect(agentTexts).toHaveLength(2);
+    expect(agentTexts[0]?.text).toContain("jitter");
+    expect(facts.facts.map((fact) => `${fact.id}:${fact.kind}`)).toEqual([
+      "F1:prompt",
+      "F2:prompt",
+      "F3:agent_text",
+      "F4:agent_text",
+    ]);
     expect(ofKind(facts, "hunk")).toHaveLength(0);
     expect(ofKind(facts, "run")).toHaveLength(0);
   });
