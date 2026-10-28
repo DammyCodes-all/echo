@@ -19,16 +19,23 @@ export {
   type RunOutcome,
 } from "./facts";
 export {
+  buildNarrationMessages,
+  MAX_PROMPT_CHARS,
+  type NarrationMessages,
+  renderFact,
+  STORY_PROMPT_VERSION,
+} from "./narration";
+export {
+  buildSkeletonStory,
+  isStoryStale,
+  SKELETON_PROMPT_VERSION,
+  type SkeletonMeta,
+  type SkeletonResult,
+} from "./skeleton";
+export {
   type ClaimLocation,
   type ClaimVerdict,
   dropFailedClaims,
   type StoryValidation,
   validateStoryFacts,
 } from "./validate";
-export {
-  SKELETON_PROMPT_VERSION,
-  type SkeletonMeta,
-  type SkeletonResult,
-  buildSkeletonStory,
-  isStoryStale,
-} from "./skeleton";
