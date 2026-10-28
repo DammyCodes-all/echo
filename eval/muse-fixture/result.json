@@ -1,0 +1,129 @@
+{
+  "generated_at": "2026-10-28T07:56:32.423Z",
+  "echo_commit": "862944d665e0ef964ee63129c8e1f55aed5cc39b",
+  "session_id": "ses_eval_1",
+  "project_id": "prj_8ab68f5df608099a",
+  "sample_size": {
+    "tape_events": 34,
+    "snapshots": 7,
+    "snapshot_files": 9,
+    "hook_events_drained": 12,
+    "native_log_lines": 10
+  },
+  "coverage": [
+    {
+      "item": "file read",
+      "status": "pass",
+      "detail": "tool.requested/completed for read"
+    },
+    {
+      "item": "successful edit",
+      "status": "pass",
+      "detail": "tool.completed + final snapshot state"
+    },
+    {
+      "item": "failed tool",
+      "status": "pass",
+      "detail": "tool.failed with exit detail"
+    },
+    {
+      "item": "reverted edit",
+      "status": "pass",
+      "detail": "intermediate echo-fixture-intermediate-app absent; final state captured"
+    },
+    {
+      "item": "shell-driven change",
+      "status": "pass",
+      "detail": "notes/out.txt in final snapshot without editor event"
+    },
+    {
+      "item": "interrupted tool",
+      "status": "pass",
+      "detail": "tool.failed recorded; no fabricated completion"
+    },
+    {
+      "item": "rapid edit/revert",
+      "status": "missed-state",
+      "detail": "intermediate echo-fixture-intermediate-flag unobserved by design"
+    },
+    {
+      "item": "synthetic secret",
+      "status": "pass",
+      "detail": "zero raw occurrences outside input dir"
+    },
+    {
+      "item": "binary + ignored .env",
+      "status": "pass",
+      "detail": "captured:false with reasons"
+    },
+    {
+      "item": "subagent session",
+      "status": "pass",
+      "detail": "child lane linked; missing_child gap for child-9"
+    },
+    {
+      "item": "sequence jump",
+      "status": "pass",
+      "detail": "capture.gap 4→9"
+    },
+    {
+      "item": "retained marker",
+      "status": "pass",
+      "detail": "capture.compaction, no gap for 9→14"
+    },
+    {
+      "item": "torn tail",
+      "status": "missed-state",
+      "detail": "partial line dropped; truncated_tail diagnostic kept"
+    },
+    {
+      "item": "export reconcile",
+      "status": "pass",
+      "detail": "added=1 merged=1 conflicts=0"
+    }
+  ],
+  "capture_gaps": [
+    {
+      "code": "sequence_jump",
+      "stream_id": "ses_eval_1",
+      "from_sequence": 4,
+      "to_sequence": 9
+    },
+    {
+      "code": "missing_child",
+      "subagent_id": "child-9"
+    }
+  ],
+  "reconciled": {
+    "added": 1,
+    "merged": 1,
+    "conflicts": 0,
+    "export_schema_version": 1
+  },
+  "capture_quality": "partial",
+  "quality_matches_finalize": true,
+  "raw_secret_scan": {
+    "surfaces": [
+      "tape",
+      "shadow blobs",
+      "spool",
+      "sqlite",
+      "logs",
+      "demo bundle"
+    ],
+    "forbidden_markers": 5,
+    "findings": 0
+  },
+  "caveats": [
+    "Synthetic fixture: no real Muse build, hook timings, or compaction behavior.",
+    "Single session; concurrency and clock-skew paths are not exercised.",
+    "Oversized threshold is the production default (2 MiB); tool.pre 500 ms budget not stressed.",
+    "Absence of intermediate states is asserted on captured artifacts, not proven for the filesystem."
+  ],
+  "not_measured": [
+    "citation support — needs hand-labeled answers on real tapes",
+    "refusal rate — needs unanswerable questions on real tapes",
+    "check pass rate and time to first check — needs the check engine on real tapes",
+    "hunk selection and attempt tree — need real diffs"
+  ]
+}
