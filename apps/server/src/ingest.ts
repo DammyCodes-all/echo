@@ -41,6 +41,11 @@ export interface IngestOptions {
   dataDir: string;
   db: EchoDb;
   log: IngestLogger;
+  /**
+   * Fire-and-forget hook when a session's final snapshot is persisted.
+   * Must never throw or block: the caller owns async errors.
+   */
+  onSessionQuiescent?: (sessionId: string) => void;
 }
 
 export interface IngestRunResult {
@@ -68,7 +73,7 @@ function emptyResult(): IngestRunResult {
   return { scanned: 0, capturedSessions: 0, eventsAdded: 0, snapshotsTaken: 0 };
 }
 
-export function createIngest({ dataDir, db, log }: IngestOptions) {
+export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOptions) {
   let timer: NodeJS.Timeout | null = null;
   let running = false;
 
@@ -307,6 +312,13 @@ export function createIngest({ dataDir, db, log }: IngestOptions) {
         }
         for (const row of snapshotRows) insertSnapshot(db, row);
         result.snapshotsTaken += snapshotsTaken;
+        if (onSessionQuiescent) {
+          try {
+            onSessionQuiescent(session.id);
+          } catch (error) {
+            log.error({ err: String(error), session_id: session.id }, "story hook failed");
+          }
+        }
       }
     } finally {
       store.close();

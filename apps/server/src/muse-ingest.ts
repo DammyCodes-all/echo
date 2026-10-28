@@ -69,6 +69,11 @@ export interface MuseIngestOptions {
   sessionsDir?: string;
   projects: string[];
   museBin?: string;
+  /**
+   * Fire-and-forget hook when a session export reconciles (finalized).
+   * Must never throw or block: the caller owns async errors.
+   */
+  onSessionQuiescent?: (sessionId: string) => void;
 }
 
 export interface MuseIngestResult {
@@ -862,6 +867,13 @@ export function createMuseIngest(options: MuseIngestOptions) {
             }
           }
           result.reconciled += 1;
+          if (options.onSessionQuiescent) {
+            try {
+              options.onSessionQuiescent(sessionId);
+            } catch (error) {
+              log.error({ err: String(error), session_id: sessionId }, "story hook failed");
+            }
+          }
         }
       } catch (error) {
         log.error({ err: String(error), session_id: sessionId }, "muse export reconcile failed");
