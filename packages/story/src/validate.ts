@@ -310,6 +310,10 @@ function cardVerification(
 }
 
 function rollUpRisk(hunks: HunkFact[]): { highRisk: boolean; riskReasons: string[] } {
+  // High risk needs observed evidence. Blast flags and rewrite notes cite
+  // things the tape shows; boost markers record absence (no run, no
+  // surviving attempt, capture gap, large mechanical diff) and drive the
+  // partly_observed badge instead — never the risk flag.
   const reasons: string[] = [];
   const seen = new Set<string>();
   const push = (reason: string) => {
@@ -320,14 +324,13 @@ function rollUpRisk(hunks: HunkFact[]): { highRisk: boolean; riskReasons: string
   };
   for (const hunk of hunks) {
     for (const flag of hunk.risk.flags) push(flag.reason);
-    for (const reason of hunk.risk.boostReasons) push(reason);
     if (hunk.risk.rewriteCount > 0) {
       push(
         `rewrite: ${hunk.risk.rewriteCount} earlier attempt(s) on ${hunk.path} reverted or replaced before landing`,
       );
     }
   }
-  const highRisk = hunks.some((hunk) => hunk.risk.flags.length > 0 || hunk.risk.unverifiedBoost);
+  const highRisk = hunks.some((hunk) => hunk.risk.flags.length > 0);
   return { highRisk, riskReasons: reasons };
 }
 
