@@ -296,3 +296,31 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 160 files clean, `pnpm test` → 38 files / 249 passed, `pnpm build` ok (docs-only change; gate run against pulled HEAD `c35e7fc`)
 - notes: Replay/check/report pages deleted on paper; verification is four-level (`observed`/`partly_observed`/`agent_stated`/`nothing`, observed-only counts); checks v2 = calibration picture (MCQ + free text, no Brier in web responses), `Skipped` replaces waive; notifications deferred out of v1 (notifier stays future mechanism). Implemented by three Muse Spark 1.3 Contributor subagents with disjoint file ownership + one consistency-fix pass. `docs/BUILD-PLAN.md` still carries the old plan (reviewed/proved/waived) and is superseded by spec §10/§13 + ARCHITECTURE §23 — left untouched this phase. No code changed; Phase 1 (contracts + data substrate) not started.
+
+## 2026-10-28 — Phase 1 contracts + data substrate (landed, tracked late)
+
+- item: story-first API contracts (`packages/contracts/src/api.ts`: SessionStory/ChangeCard/Detour/LooseEnd, engagement, checks-v2 stored/public, ask thread, artifact refs; SessionSummary with checkStatus/highRiskCount/captureState) + migration v6 (`sessions.check_status`/`story_summary`/`high_risk_count`, `engagement_events`, `session_artifacts`) + repositories (engagement record/list/tiers, check status, story state, artifact refs) — commits `112155f` (DammyCodes-all)
+- status: done
+- evidence: `pnpm exec vitest run packages/contracts packages/db` → 3 files / 32 passed (api 11 incl. 5 card-ID tests added later, tape 4, db 17); full gate green at `52b8075`+work (typecheck, biome 172 files, 41 files / 278 passed + 8 skipped, build)
+- notes: Tracked late — landed without a tracker entry. Engagement tiers match spec §4 (card_seen → seen; card_expanded/code_shown/ask_opened → engaged; null-card story_opened ignored). `session_artifacts` header table is not in the ARCH §6 table list but matches its "list views read status columns/artifact headers" rule; `engagement_events` carries `occurred_at` instead of ARCH's `hunk_id`/`meta_json` (card_id already covers the hunk — same namespace). Review found one Phase 1 exit gap (contracts did not enforce canonical card IDs); closed by the next entry. Untouched by this entry's author; lint-format/unused-var fixes only.
+
+## 2026-10-28 — Story-validation fixture sessions + hand labels (landed, tracked late)
+
+- item: six tape-only story fixtures (`packages/fixtures/src/sessions.ts`, computed hunks/attempts/runs via `@echo/tape`) + hand-labelled expected facts (`expected.ts`, validator-scope labels only) pinned as checked-in JSON (`fixtures/expected/*.json`: payment-retry, routine, research, failed-deploy, partial-gap, multi-topic)
+- status: done
+- evidence: `pnpm exec vitest run packages/fixtures` → 3 files / 23 passed (sessions 11, expected 9, fixtures 3); full gate green (see above)
+- notes: Tracked late — commits `11fc738`–`52b8075` (Sam-Charles). Fixture hunk/card IDs come from `hunkIdFor`, so they already satisfy the canonical-ID enforcement added afterwards — no fixture changes needed. Labels assert tape-supported facts only (badges, risk reasons, detour fold/in, blind spots, one must-drop seeded contradiction); the story validator that consumes them is Phase 2 work, not started.
+
+## 2026-10-28 — Contracts enforce canonical card IDs + versioned artifact layout
+
+- item: `CardIdSchema`/`HunkIdSchema` (`h_` + 16 lowercase hex, one schema object under two names per ARCH §12) applied to every card/hunk ID field (ChangeCard id + constituents, ReviewHunk id, evidenceByHunk + tiers record keys, engagement/loose-end/check-picture/ask-thread cardIds, legacy StoredCheck hunkIds); `AskThreadSchema` gains `schemaVersion: 1`; `ARTIFACT_FILE_NAMES` pins story/checks_v2/ask_thread filenames; tape conformance test pins `hunkIdFor` output against the contract schema
+- status: done
+- evidence: full gate green — `tsc` clean, `biome` 172 files clean, `pnpm test` → 41 files / 278 passed + 8 skipped, `pnpm build` ok; new tests: 5 in `api.test.ts` (shape accept/reject incl. `path:index` rejection, card rejection, tiers-key rejection, layout pin, thread version), 1 in `review-index.test.ts` (constructor conformance)
+- notes: Closes the Phase 1 exit criterion "contracts enforce canonical card IDs". Contracts stay browser-safe (zod only; sha256 stays in `@echo/tape`). `z.infer` is still `string`, so no call-site type churn; server/review/checks producers already emit canonical IDs. Deliberately untouched: web still keys hunks as `path:hunkIndex` (dies with the replay UI in Phase 3); `graph.json`/`report.json` artifact kinds (Phase 6/7); Detour/LooseEnd slug ids (ARCH mandates no format). Also fixed the red lint gate on arrival (unused var + biome formatting in the landed files, no semantics).
+
+## 2026-10-28 — Phase 2: deterministic fact extraction (`@echo/story`)
+
+- item: new `packages/story` package (ARCH §4) with pure `extractFacts` — prompts, final-diff hunks, classified attempts, tape-derived runs + consequential actions, capture gaps, per-hunk mechanical classification (format/rename/generated/comment) and blast-radius risk flags with unverified boost; sequential stable F-IDs in documented emission order
+- status: done
+- evidence: full gate green — `tsc` clean, `biome` 176 files clean, `pnpm test` → 42 files / 299 passed + 8 skipped, `pnpm build` ok; `packages/story/src/facts.test.ts` → 21 passed (10 over the six story fixtures incl. F-sequencing, payments/stored_data/production flags, rename-only tool evidence, gap 4→9, rewrite count, determinism-under-shuffle; 11 classifier edge units)
+- notes: Runs derive from tool request/completion pairs (command input or exit code qualifies; lone request → interrupted, lone completion kept, never dropped); run coverage is session-level passing-run by documented coarse rule (no run-to-file linkage on tape yet); centrality always null (import graph unwired); 50-line large-mechanical threshold and flag patterns are provisional per ARCH §12 hand-check note. Fixed during tests: `buildFileAttempts` emits per-file `baseline` pseudo-nodes, now filtered (pre-session state, not behavior). Validator + skeleton fallback are the next units in this slice, not started. `tsconfig.json` gains the `@echo/story` path; `pnpm install` re-run for workspace links.
