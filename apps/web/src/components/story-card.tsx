@@ -25,22 +25,29 @@ type StoryCardProps = {
   onCheck?: (card: { id: string; headline: string }) => void;
 };
 
-const BADGE_STYLES: Record<VerificationBadge, { className: string; title: string }> = {
+export const VERIFICATION_BADGE: Record<
+  VerificationBadge,
+  { className: string; title: string; label: string }
+> = {
   observed: {
     className: "bg-dusk-pass-wash text-dusk-pass",
     title: "Observed — the tape shows this change happened.",
+    label: "Observed",
   },
   partly_observed: {
     className: "bg-dusk-accent-wash text-dusk-accent-soft",
     title: "Partly observed — only some of this change is on the tape.",
+    label: "Partly observed",
   },
   agent_stated: {
     className: "bg-dusk-peach-wash text-dusk-peach",
     title: "Agent-stated — the agent said this; the tape does not confirm it.",
+    label: "Agent-stated",
   },
   nothing: {
     className: "bg-dusk-track text-dusk-muted",
     title: "Nothing observed — no tape evidence for this change.",
+    label: "Nothing observed",
   },
 };
 
@@ -124,7 +131,7 @@ export function StoryCard({
     setShowCode(!showCode);
   };
 
-  const badge = BADGE_STYLES[card.verification];
+  const badge = VERIFICATION_BADGE[card.verification];
   const whyLine = card.why.at(0)?.text ?? "No reason recorded.";
   const rankReason = card.riskReasons.at(0) ?? "No risk signal.";
   const related = historyEntries.filter((entry) =>
@@ -140,9 +147,9 @@ export function StoryCard({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <span
           title={badge.title}
-          className={`shrink-0 rounded-dusk-code px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest ${badge.className}`}
+          className={`shrink-0 rounded-dusk-code px-2.5 py-1 text-xs font-semibold ${badge.className}`}
         >
-          {card.verification.replace("_", " ")}
+          {badge.label}
         </span>
         <button
           type="button"
@@ -164,32 +171,32 @@ export function StoryCard({
 
       {expanded ? (
         <div className="mt-4 space-y-4 border-t border-dusk-hairline pt-4">
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div>
-              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Before</p>
+          {card.before.length > 0 || card.now.length > 0 ? (
+            <div className="grid gap-4 sm:grid-cols-2">
               {card.before.length > 0 ? (
-                <ul className="mt-2 space-y-1 text-sm">
-                  {card.before.map((claim) => (
-                    <ClaimItem key={`${card.id}-before-${claim.text}`} claim={claim} />
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-2 text-sm text-dusk-muted">Nothing recorded.</p>
-              )}
-            </div>
-            <div>
-              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Now</p>
+                <div>
+                  <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+                    Before
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm">
+                    {card.before.map((claim) => (
+                      <ClaimItem key={`${card.id}-before-${claim.text}`} claim={claim} />
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {card.now.length > 0 ? (
-                <ul className="mt-2 space-y-1 text-sm">
-                  {card.now.map((claim) => (
-                    <ClaimItem key={`${card.id}-now-${claim.text}`} claim={claim} />
-                  ))}
-                </ul>
-              ) : (
-                <p className="mt-2 text-sm text-dusk-muted">Nothing recorded.</p>
-              )}
+                <div>
+                  <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Now</p>
+                  <ul className="mt-2 space-y-1 text-sm">
+                    {card.now.map((claim) => (
+                      <ClaimItem key={`${card.id}-now-${claim.text}`} claim={claim} />
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
             </div>
-          </div>
+          ) : null}
 
           <div>
             <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Why</p>

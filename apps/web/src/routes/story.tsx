@@ -7,6 +7,8 @@ import type {
   ReviewHunk,
   SessionStory,
   StoryClaim,
+  VerificationBadge,
+  VerifiedCounts,
 } from "@echo/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -17,7 +19,12 @@ import { CheckOffer } from "../components/check-offer";
 import { CheckPicture } from "../components/check-picture";
 import { CheckRunner } from "../components/check-runner";
 import { ScaffoldPage } from "../components/scaffold-page";
-import { ClaimItem, type HistoryEntry, StoryCard } from "../components/story-card";
+import {
+  ClaimItem,
+  type HistoryEntry,
+  StoryCard,
+  VERIFICATION_BADGE,
+} from "../components/story-card";
 import { useEngagement } from "../hooks/use-engagement";
 
 const CHECK_UNAVAILABLE = "Check unavailable (model off). Your session status is untouched.";
@@ -52,12 +59,69 @@ function toHistoryEntries(raw: unknown): HistoryEntry[] {
   return [];
 }
 
-function looseEndNote(looseEnd: LooseEnd, cards: ChangeCard[]): string {
-  if (looseEnd.cardId === null) return "No linked card.";
-  const linked = cards.find((card) => card.id === looseEnd.cardId);
-  return linked
-    ? `Linked card: ${linked.headline}`
-    : `Linked card ${looseEnd.cardId} is not in this story.`;
+function storySubtitle(story: SessionStory): string {
+  if (story.cards.length === 0) return "No behavior changes — research or answers only.";
+  const parts = [`${story.cards.length} behavior change${story.cards.length === 1 ? "" : "s"}`];
+  if (story.detours.length > 0) {
+    parts.push(`${story.detours.length} detour${story.detours.length === 1 ? "" : "s"}`);
+  }
+  if (story.looseEnds.length > 0) {
+    parts.push(`${story.looseEnds.length} loose end${story.looseEnds.length === 1 ? "" : "s"}`);
+  }
+  return parts.join(" · ");
+}
+
+function groupLooseEndsByBehavior(
+  looseEnds: LooseEnd[],
+  cards: ChangeCard[],
+): { card: ChangeCard | null; ends: LooseEnd[] }[] {
+  const byCard = new Map<string | null, LooseEnd[]>();
+  for (const end of looseEnds) {
+    byCard.set(end.cardId, [...(byCard.get(end.cardId) ?? []), end]);
+  }
+  const cardById = new Map(cards.map((card) => [card.id, card]));
+  const groups: { card: ChangeCard | null; ends: LooseEnd[] }[] = [];
+  let unlinked: LooseEnd[] | null = null;
+  for (const [cardId, ends] of byCard) {
+    if (cardId === null) {
+      unlinked = ends;
+      continue;
+    }
+    groups.push({ card: cardById.get(cardId) ?? null, ends });
+  }
+  if (unlinked) groups.push({ card: null, ends: unlinked });
+  return groups;
+}
+
+function VerificationBand({ counts }: { counts: VerifiedCounts }) {
+  const entries: { badge: VerificationBadge; count: number }[] = [
+    { badge: "observed", count: counts.observed },
+    { badge: "partly_observed", count: counts.partlyObserved },
+    { badge: "agent_stated", count: counts.agentStated },
+    { badge: "nothing", count: counts.nothing },
+  ];
+  return (
+    <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
+      <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+        How much is verified
+      </p>
+      <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-3">
+        {entries.map(({ badge, count }) => {
+          const style = VERIFICATION_BADGE[badge];
+          return (
+            <span key={badge} title={style.title} className="flex items-baseline gap-2">
+              <span className="text-2xl font-semibold text-dusk-ink">{count}</span>
+              <span
+                className={`rounded-dusk-code px-2 py-0.5 text-xs font-semibold ${style.className}`}
+              >
+                {style.label}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function AskGroup({
@@ -69,22 +133,65 @@ function AskGroup({
   claims: StoryClaim[];
   forceUncertain?: boolean;
 }) {
+  if (claims.length === 0) return null;
   return (
     <div>
       <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">{title}</p>
-      {claims.length > 0 ? (
-        <ul className="mt-2 space-y-1 text-sm">
-          {claims.map((claim) => (
-            <ClaimItem
-              key={`${title}-${claim.text}`}
-              claim={claim}
-              forceUncertain={forceUncertain}
-            />
-          ))}
-        </ul>
+      <ul className="mt-2 space-y-1 text-sm">
+        {claims.map((claim) => (
+          <ClaimItem key={`${title}-${claim.text}`} claim={claim} forceUncertain={forceUncertain} />
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function LooseEndGroup({
+  card,
+  ends,
+  onOpenCard,
+}: {
+  card: ChangeCard | null;
+  ends: LooseEnd[];
+  onOpenCard: (cardId: string) => void;
+}) {
+  const singleKind = new Set(ends.map((end) => end.kind)).size === 1 ? ends[0]?.kind : null;
+  return (
+    <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
+      {card ? (
+        <button
+          type="button"
+          onClick={() => onOpenCard(card.id)}
+          className="block text-left text-dusk-body text-dusk-ink underline underline-offset-4"
+        >
+          {card.headline}
+        </button>
       ) : (
-        <p className="mt-2 text-sm text-dusk-muted">None recorded.</p>
+        <p className="text-dusk-body text-dusk-ink">Not tied to one change</p>
       )}
+      {singleKind ? (
+        <p className="mt-1 font-mono text-xs uppercase tracking-widest text-dusk-muted">
+          {singleKind}
+        </p>
+      ) : null}
+      <div className="mt-2 space-y-3">
+        {ends.map((end) => (
+          <div key={end.id}>
+            {singleKind ? null : (
+              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+                {end.kind}
+              </p>
+            )}
+            {end.claims.length > 0 ? (
+              <ul className="mt-1 space-y-1 text-sm">
+                {end.claims.map((claim) => (
+                  <ClaimItem key={`${end.id}-${claim.text}`} claim={claim} />
+                ))}
+              </ul>
+            ) : null}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
@@ -222,7 +329,13 @@ export function StoryPage() {
     reviewQuery.data?.hunks.map((hunk): [string, ReviewHunk] => [hunk.id, hunk]) ?? [],
   );
   const historyEntries = toHistoryEntries(historyQuery.data);
-  const observedCount = story.cards.filter((card) => card.verification === "observed").length;
+  const looseEndGroups = groupLooseEndsByBehavior(story.looseEnds, story.cards);
+  const hasAskVsResult =
+    story.askVsResult.asked.length +
+      story.askVsResult.delivered.length +
+      story.askVsResult.extras.length +
+      story.askVsResult.missing.length >
+    0;
   const sorted =
     sortMode === "risk"
       ? [...story.cards].sort((a, b) => a.rank - b.rank)
@@ -323,64 +436,66 @@ export function StoryPage() {
   };
 
   return (
-    <ScaffoldPage eyebrow="Session story" title={story.summary} description={story.summary}>
+    <ScaffoldPage eyebrow="Session story" title={story.summary} description={storySubtitle(story)}>
       {story.skeleton ? (
-        <div className="rounded-dusk-card bg-dusk-pill px-6 py-3 text-sm text-dusk-accent-soft">
+        <div className="max-w-2xl rounded-dusk-card bg-dusk-pill px-6 py-3 text-sm text-dusk-accent-soft">
           Model unavailable — deterministic skeleton from the tape.
         </div>
       ) : null}
 
-      <div className="space-y-8">
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight">Short version</h2>
-          <p className="text-dusk-body text-dusk-ink">{story.summary}</p>
-          {story.shortVersion.length > 0 ? (
+      <div className="max-w-2xl space-y-8">
+        {story.verifiedCounts.total > 0 ? <VerificationBand counts={story.verifiedCounts} /> : null}
+
+        {story.shortVersion.length > 0 ? (
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold tracking-tight">Short version</h2>
             <ul className="space-y-1 text-sm">
               {story.shortVersion.map((claim) => (
                 <ClaimItem key={`short-${claim.text}`} claim={claim} />
               ))}
             </ul>
-          ) : null}
-          <p className="font-mono text-xs text-dusk-muted">
-            Verified: {observedCount} of {story.cards.length} cards observed
-          </p>
-        </section>
+          </section>
+        ) : null}
 
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight">Ask vs result</h2>
-          <div className="grid gap-4 sm:grid-cols-2">
-            <AskGroup title="Asked" claims={story.askVsResult.asked} />
-            <AskGroup title="Delivered" claims={story.askVsResult.delivered} />
-            <AskGroup title="Extras" claims={story.askVsResult.extras} forceUncertain />
-            <AskGroup title="Missing" claims={story.askVsResult.missing} forceUncertain />
-          </div>
-        </section>
+        {hasAskVsResult ? (
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold tracking-tight">Ask vs result</h2>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <AskGroup title="Asked" claims={story.askVsResult.asked} />
+              <AskGroup title="Delivered" claims={story.askVsResult.delivered} />
+              <AskGroup title="Extras" claims={story.askVsResult.extras} forceUncertain />
+              <AskGroup title="Missing" claims={story.askVsResult.missing} forceUncertain />
+            </div>
+          </section>
+        ) : null}
 
         <section className="space-y-3">
           <h2 className="text-xl font-semibold tracking-tight">What changed</h2>
           {story.routineSummary ? (
             <p className="text-sm text-dusk-muted">{story.routineSummary}</p>
           ) : null}
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setSortMode("risk")}
-              className={`rounded-dusk-code px-3 py-2 text-sm ${
-                sortMode === "risk" ? "bg-dusk-ink text-white" : "bg-dusk-pill text-dusk-ink"
-              }`}
-            >
-              Risk
-            </button>
-            <button
-              type="button"
-              onClick={() => setSortMode("session")}
-              className={`rounded-dusk-code px-3 py-2 text-sm ${
-                sortMode === "session" ? "bg-dusk-ink text-white" : "bg-dusk-pill text-dusk-ink"
-              }`}
-            >
-              Session order
-            </button>
-          </div>
+          {sorted.length > 0 ? (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setSortMode("risk")}
+                className={`rounded-dusk-code px-3 py-2 text-sm ${
+                  sortMode === "risk" ? "bg-dusk-ink text-white" : "bg-dusk-pill text-dusk-ink"
+                }`}
+              >
+                Risk
+              </button>
+              <button
+                type="button"
+                onClick={() => setSortMode("session")}
+                className={`rounded-dusk-code px-3 py-2 text-sm ${
+                  sortMode === "session" ? "bg-dusk-ink text-white" : "bg-dusk-pill text-dusk-ink"
+                }`}
+              >
+                Session order
+              </button>
+            </div>
+          ) : null}
           {sorted.length === 0 ? (
             <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
               <p>No changes shipped in this session.</p>
@@ -414,57 +529,46 @@ export function StoryPage() {
           )}
         </section>
 
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight">Detours</h2>
-          {story.detours.length > 0 ? (
+        {story.detours.length > 0 ? (
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold tracking-tight">Detours</h2>
             <div className="space-y-4">
               {story.detours.map((detour) => (
                 <DetourItem key={detour.id} detour={detour} />
               ))}
             </div>
-          ) : (
-            <p className="text-sm text-dusk-muted">No detours recorded.</p>
-          )}
-        </section>
+          </section>
+        ) : null}
 
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight">Loose ends</h2>
-          {story.looseEnds.length > 0 ? (
-            <div className="space-y-4">
-              {story.looseEnds.map((looseEnd) => (
-                <div key={looseEnd.id} className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-                  <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-                    {looseEnd.kind.replace("_", " ")}
-                  </p>
-                  {looseEnd.claims.length > 0 ? (
-                    <ul className="mt-2 space-y-1 text-sm">
-                      {looseEnd.claims.map((claim) => (
-                        <ClaimItem key={`${looseEnd.id}-${claim.text}`} claim={claim} />
-                      ))}
-                    </ul>
-                  ) : null}
-                  <p className="mt-2 text-sm text-dusk-muted">
-                    {looseEndNote(looseEnd, story.cards)}
-                  </p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-dusk-muted">No loose ends recorded.</p>
-          )}
-          {story.blindSpots.length > 0 ? (
-            <div className="rounded-dusk-card border border-dusk-hairline-strong bg-dusk-surface px-6 py-5">
-              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-                Echo couldn&apos;t see
-              </p>
-              <ul className="mt-2 space-y-1 text-sm text-dusk-muted">
-                {story.blindSpots.map((spot) => (
-                  <li key={spot}>{spot}</li>
+        {story.looseEnds.length > 0 || story.blindSpots.length > 0 ? (
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold tracking-tight">Loose ends</h2>
+            {looseEndGroups.length > 0 ? (
+              <div className="space-y-4">
+                {looseEndGroups.map((group) => (
+                  <LooseEndGroup
+                    key={group.card?.id ?? "session"}
+                    card={group.card}
+                    ends={group.ends}
+                    onOpenCard={openCard}
+                  />
                 ))}
-              </ul>
-            </div>
-          ) : null}
-        </section>
+              </div>
+            ) : null}
+            {story.blindSpots.length > 0 ? (
+              <div className="rounded-dusk-card border border-dusk-hairline-strong bg-dusk-surface px-6 py-5">
+                <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+                  Echo couldn&apos;t see
+                </p>
+                <ul className="mt-2 space-y-1 text-sm text-dusk-muted">
+                  {story.blindSpots.map((spot) => (
+                    <li key={spot}>{spot}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
 
         {story.gaps.length > 0 ? (
           <section className="space-y-3">

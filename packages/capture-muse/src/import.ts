@@ -143,21 +143,30 @@ export function extractWorkspaceRoot(content: string): string | null {
       if (!isRecord(payload)) continue;
       if (payload.kind === "route_facts") {
         const recordFacts = payload.record;
-        if (isRecord(recordFacts) && typeof recordFacts.cwd === "string" && recordFacts.cwd.length > 0) {
+        if (
+          isRecord(recordFacts) &&
+          typeof recordFacts.cwd === "string" &&
+          recordFacts.cwd.length > 0
+        ) {
           return recordFacts.cwd;
         }
       }
       const metadata = payload.metadata;
-      if (isRecord(metadata) && typeof metadata.workspace_root === "string" && metadata.workspace_root.length > 0) {
+      if (
+        isRecord(metadata) &&
+        typeof metadata.workspace_root === "string" &&
+        metadata.workspace_root.length > 0
+      ) {
         return metadata.workspace_root;
       }
       const facts = payload.route_facts;
-      if (isRecord(facts) && typeof facts.cwd === "string" && facts.cwd.length > 0) return facts.cwd;
+      if (isRecord(facts) && typeof facts.cwd === "string" && facts.cwd.length > 0)
+        return facts.cwd;
       for (const root of nestedRoots(payload)) nested.add(root);
     }
   }
   // One workspace per session: conflicting roots mean ambiguity, not a choice.
-  return nested.size === 1 ? [...nested][0] ?? null : null;
+  return nested.size === 1 ? ([...nested][0] ?? null) : null;
 }
 
 function readChildContents(sessionFile: string): Array<{ id: string; content: string }> {
