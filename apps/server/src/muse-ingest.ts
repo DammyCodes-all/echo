@@ -11,18 +11,27 @@ import {
   spoolRoot,
 } from "@echo/capture-muse";
 import type { CaptureQuality, TapeEvent } from "@echo/contracts";
-import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
   getSession,
   getSessionEventIds,
   hasEventKind,
+  insertSnapshot,
   insertStampedEvents,
+  latestSnapshot,
   maxTapeSeq,
   upsertProject,
   upsertSession,
 } from "@echo/db";
+import {
+  findRepositoryRoot,
+  type RepositoryIdentity,
+  resolveRepositoryIdentity,
+  type SnapshotResult,
+  snapshotWorkingTree,
+} from "@echo/snapshots";
 import { TapeWriter } from "@echo/tape";
+import { makeSnapshotEvent, makeSnapshotEventId } from "./tape-events";
 
 export interface MuseIngestLogger {
   info: (obj: unknown, message?: string) => void;
@@ -69,11 +78,9 @@ export function resolveMuseSessionsDir(env: NodeJS.ProcessEnv = process.env): st
   return join(env.XDG_DATA_HOME ?? join(homedir(), ".local", "share"), "muse", "sessions");
 }
 
-// Project identity is shared with the OpenCode adapter via
-// projectIdForDirectory: identical inputs join. Note the OpenCode mapper
-// hashes the agent's session directory, so a session run in a subdirectory
-// joins under a different id there; Muse ingest always resolves to the
-// enabled project root first.
+// Project identity is shared with the OpenCode adapter through canonical
+// repository roots and normalized remotes: sessions run in different
+// subdirectories of one repository join the same project.
 
 function isUnder(directory: string, root: string): boolean {
   const normalizedDirectory = resolve(directory);
@@ -81,6 +88,17 @@ function isUnder(directory: string, root: string): boolean {
   return (
     normalizedDirectory === normalizedRoot || normalizedDirectory.startsWith(normalizedRoot + sep)
   );
+}
+
+async function resolveEnabledIdentity(
+  startDir: string,
+  projects: string[],
+): Promise<RepositoryIdentity | null> {
+  const identity = await resolveRepositoryIdentity(startDir);
+  // The allowlist is about where the agent ran, not the repository it
+  // belongs to: enabling `/repo/docs` must not capture `/repo/other`.
+  const enabled = projects.some((candidate) => isUnder(startDir, candidate));
+  return enabled ? identity : null;
 }
 
 function walkSessionLogs(sessionsDir: string): string[] {
@@ -212,11 +230,79 @@ export function createMuseIngest(options: MuseIngestOptions) {
     return insertStampedEvents(db, sessionId, fresh);
   }
 
+  // Live shadow snapshots for Muse sessions. Baseline and final bracket the
+  // session; tool.post captures post-action file state when a poll observes a
+  // completed or failed tool. Snapshots are best-effort and idempotent: the
+  // deterministic snapshot event id dedupes retries across polls.
+  async function takeLiveSnapshot(input: {
+    sessionId: string;
+    projectId: string;
+    tapePath: string;
+    root: string;
+    trigger: "baseline" | "tool.post" | "final";
+    key: string;
+    observedAt: string;
+  }): Promise<{ added: number; failed: boolean }> {
+    const eventId = makeSnapshotEventId(input.sessionId, input.trigger, input.key);
+    if (getSessionEventIds(db, input.sessionId).has(eventId)) return { added: 0, failed: false };
+    const shadowDir = join(dataDir, "projects", input.projectId, "shadow.git");
+    try {
+      const snapshot: SnapshotResult = await snapshotWorkingTree({
+        shadowDir,
+        root: input.root,
+        sessionId: input.sessionId,
+        projectId: input.projectId,
+        trigger: input.trigger,
+        eventId,
+        takenAt: new Date(),
+      });
+      insertSnapshot(db, {
+        id: snapshot.commitOid,
+        sessionId: input.sessionId,
+        commitOid: snapshot.commitOid,
+        parentOid: snapshot.parentOid,
+        trigger: snapshot.trigger,
+        eventId,
+        takenAt: snapshot.takenAt,
+        fileCount: snapshot.fileCount,
+        totalBytes: snapshot.totalBytes,
+        status: snapshot.status,
+        diagnostics: snapshot.diagnostics,
+        files: snapshot.files.map((file) => ({
+          path: file.path,
+          mode: file.mode,
+          blobOid: file.blobOid,
+          size: file.size,
+          sha256: file.sha256,
+          captured: file.captured,
+          reason: file.reason,
+        })),
+      });
+      const added = persistFresh(input.sessionId, input.tapePath, [
+        makeSnapshotEvent({
+          agent: "muse",
+          sessionId: input.sessionId,
+          projectId: input.projectId,
+          eventId,
+          observedAt: input.observedAt,
+          result: snapshot,
+        }),
+      ]);
+      return { added, failed: snapshot.status !== "ok" };
+    } catch (error) {
+      log.error(
+        { err: String(error), session_id: input.sessionId, trigger: input.trigger },
+        "muse snapshot failed",
+      );
+      return { added: 0, failed: true };
+    }
+  }
+
   // Hook spool drain. Runs before the log scan so a hook-only session gets a
   // minimal row first and the scan's upsert enriches it afterwards — never the
   // reverse. Files are deleted only after a successful insert; a crash between
   // the two replays into the same deterministic event ids and dedupes.
-  function drainSpool(result: MuseIngestResult, observedIso: string): void {
+  async function drainSpool(result: MuseIngestResult, observedIso: string): Promise<void> {
     const root = spoolRoot(dataDir);
     let dirs: string[];
     try {
@@ -225,6 +311,12 @@ export function createMuseIngest(options: MuseIngestOptions) {
       return; // no spool yet
     }
     let processed = 0;
+    // One post-action snapshot per session per poll: a burst of spooled tool
+    // events records only its latest event id here; snapshots run below.
+    const toolActivity = new Map<
+      string,
+      { projectId: string; tapePath: string; root: string; eventId: string }
+    >();
     for (const dirName of dirs) {
       const dir = join(root, dirName);
       let files: string[];
@@ -250,19 +342,21 @@ export function createMuseIngest(options: MuseIngestOptions) {
         }
         const sessionId = entry.sessionId;
         const projectRoot = entry.projectRoot;
-        if (
-          !sessionId ||
-          !projectRoot ||
-          !projects.some((candidate) => isUnder(projectRoot, candidate))
-        ) {
+        if (!sessionId || !projectRoot) {
+          result.unattributed += 1;
+          continue; // leave on disk; the write-time cap bounds it
+        }
+        const identity = await resolveEnabledIdentity(projectRoot, projects);
+        if (!identity) {
           result.unattributed += 1;
           continue; // leave on disk; the write-time cap bounds it
         }
         // Budget covers only entries that reach ingestion: files that can
         // never drain must not starve drainable ones behind the cap.
         processed += 1;
-        const projectId = projectIdForDirectory(resolve(projectRoot));
+        const projectId = identity.projectId;
         const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
+        const snapshotRoot = findRepositoryRoot(projectRoot) ?? identity.canonicalRoot;
         try {
           const { event } = buildTapeEvent({
             kind: entry.kind ?? "capture.gap",
@@ -286,8 +380,9 @@ export function createMuseIngest(options: MuseIngestOptions) {
             mkdirSync(dirname(tapePath), { recursive: true });
             upsertProject(db, {
               id: projectId,
-              root: resolve(projectRoot),
-              name: basename(projectRoot),
+              root: identity.canonicalRoot,
+              remoteUrl: identity.remoteUrl,
+              name: basename(identity.canonicalRoot),
             });
             upsertSession(db, {
               id: sessionId,
@@ -301,6 +396,18 @@ export function createMuseIngest(options: MuseIngestOptions) {
               captureQuality: "degraded",
             });
           }
+          if (latestSnapshot(db, sessionId, "baseline") === null) {
+            const snap = await takeLiveSnapshot({
+              sessionId,
+              projectId,
+              tapePath,
+              root: snapshotRoot,
+              trigger: "baseline",
+              key: "initial",
+              observedAt: observedIso,
+            });
+            result.eventsAdded += snap.added;
+          }
           if (getSessionEventIds(db, sessionId).has(event.event_id)) {
             try {
               rmSync(abs);
@@ -311,6 +418,14 @@ export function createMuseIngest(options: MuseIngestOptions) {
           }
           result.eventsAdded += persistFresh(sessionId, tapePath, [event]);
           result.drained += 1;
+          if (event.kind === "tool.completed" || event.kind === "tool.failed") {
+            toolActivity.set(sessionId, {
+              projectId,
+              tapePath,
+              root: snapshotRoot,
+              eventId: event.event_id,
+            });
+          }
           try {
             rmSync(abs);
           } catch (error) {
@@ -322,6 +437,18 @@ export function createMuseIngest(options: MuseIngestOptions) {
         }
       }
     }
+    for (const [sessionId, activity] of toolActivity) {
+      const snap = await takeLiveSnapshot({
+        sessionId,
+        projectId: activity.projectId,
+        tapePath: activity.tapePath,
+        root: activity.root,
+        trigger: "tool.post",
+        key: activity.eventId,
+        observedAt: observedIso,
+      });
+      result.eventsAdded += snap.added;
+    }
   }
 
   // Export reconciliation for one quiescent session per poll, at most.
@@ -329,7 +456,11 @@ export function createMuseIngest(options: MuseIngestOptions) {
   // never ingested (no project attribution), have no events, or already carry
   // a capture.reconciled marker. Failures keep the live tape and retry later,
   // except a missing binary which is flagged once per boot.
-  function exportOnce(result: MuseIngestResult, observedIso: string, found: Set<string>): void {
+  async function exportOnce(
+    result: MuseIngestResult,
+    observedIso: string,
+    found: Set<string>,
+  ): Promise<void> {
     if (exportBroken) return;
     const museBin = options.museBin ?? "muse";
     for (const sessionFile of [...found].sort()) {
@@ -425,17 +556,43 @@ export function createMuseIngest(options: MuseIngestOptions) {
         if (!existing.has(reconciledEvent.event_id)) all.push(reconciledEvent);
         result.eventsAdded += persistFresh(sessionId, tapePath, all);
         if (finalized.reconciled) {
+          const workspaceRoot = extractWorkspaceRoot(content);
           upsertSession(db, {
             id: sessionId,
             projectId: row.projectId,
             agent: "muse",
             model: null,
-            directory: extractWorkspaceRoot(content),
+            directory: workspaceRoot,
             title: null,
             startedAt: finalized.events[0]?.ts ?? null,
             tapePath,
             captureQuality: finalized.quality,
           });
+          if (workspaceRoot && latestSnapshot(db, sessionId, "final") === null) {
+            const snap = await takeLiveSnapshot({
+              sessionId,
+              projectId: row.projectId,
+              tapePath,
+              root: findRepositoryRoot(workspaceRoot) ?? workspaceRoot,
+              trigger: "final",
+              key: "final",
+              observedAt: observedIso,
+            });
+            result.eventsAdded += snap.added;
+            if (snap.failed) {
+              upsertSession(db, {
+                id: sessionId,
+                projectId: row.projectId,
+                agent: "muse",
+                model: null,
+                directory: workspaceRoot,
+                title: null,
+                startedAt: finalized.events[0]?.ts ?? null,
+                tapePath,
+                captureQuality: "partial",
+              });
+            }
+          }
           result.reconciled += 1;
         }
       } catch (error) {
@@ -451,7 +608,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
     const result = emptyResult();
     if (projects.length === 0) return result;
     const observedAt = new Date().toISOString();
-    drainSpool(result, observedAt);
+    await drainSpool(result, observedAt);
     if (!existsSync(sessionsDir)) return result;
     const found = new Set(walkSessionLogs(sessionsDir));
     for (const key of seen.keys()) {
@@ -496,14 +653,14 @@ export function createMuseIngest(options: MuseIngestOptions) {
         seen.set(sessionFile, fingerprint);
         continue;
       }
-      const root = projects.find((candidate) => isUnder(workspaceRoot, candidate));
-      if (!root) {
+      const identity = await resolveEnabledIdentity(workspaceRoot, projects);
+      if (!identity) {
         result.skipped += 1;
         seen.set(sessionFile, fingerprint);
         continue;
       }
       const sessionId = basename(dirname(sessionFile));
-      const projectId = projectIdForDirectory(resolve(root));
+      const projectId = identity.projectId;
       let finalized: ReturnType<typeof finalizeMuseSession> | undefined;
       try {
         finalized = finalizeMuseSession({
@@ -532,7 +689,15 @@ export function createMuseIngest(options: MuseIngestOptions) {
       }
       const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
       mkdirSync(dirname(tapePath), { recursive: true });
-      upsertProject(db, { id: projectId, root: resolve(root), name: basename(root) });
+      upsertProject(db, {
+        id: projectId,
+        root: identity.canonicalRoot,
+        remoteUrl: identity.remoteUrl,
+        name: basename(identity.canonicalRoot),
+      });
+      const snapshotRoot = findRepositoryRoot(workspaceRoot) ?? identity.canonicalRoot;
+      const preexisting = getSessionEventIds(db, sessionId);
+      let snapshotDegraded = false;
       upsertSession(db, {
         id: sessionId,
         projectId,
@@ -544,16 +709,62 @@ export function createMuseIngest(options: MuseIngestOptions) {
         tapePath,
         captureQuality: quality,
       });
+      if (latestSnapshot(db, sessionId, "baseline") === null) {
+        const snap = await takeLiveSnapshot({
+          sessionId,
+          projectId,
+          tapePath,
+          root: snapshotRoot,
+          trigger: "baseline",
+          key: "initial",
+          observedAt,
+        });
+        result.eventsAdded += snap.added;
+        // A baseline taken after events already exist cannot recover the true
+        // pre-session state, so the session stays partial.
+        if (snap.failed || preexisting.size > 0) snapshotDegraded = true;
+      }
       const existing = getSessionEventIds(db, sessionId);
       const fresh = finalized.events.filter((event: TapeEvent) => !existing.has(event.event_id));
       if (fresh.length > 0) {
         result.eventsAdded += persistFresh(sessionId, tapePath, fresh);
         result.capturedSessions += 1;
       }
+      const latestTool = [...fresh]
+        .reverse()
+        .find((event) => event.kind === "tool.completed" || event.kind === "tool.failed");
+      if (latestTool) {
+        const snap = await takeLiveSnapshot({
+          sessionId,
+          projectId,
+          tapePath,
+          root: snapshotRoot,
+          trigger: "tool.post",
+          key: latestTool.event_id,
+          observedAt,
+        });
+        result.eventsAdded += snap.added;
+        if (snap.failed) snapshotDegraded = true;
+      }
+      const sessionQuality: CaptureQuality =
+        quality === "full" && !snapshotDegraded ? "full" : "partial";
+      if (sessionQuality !== quality) {
+        upsertSession(db, {
+          id: sessionId,
+          projectId,
+          agent: "muse",
+          model: null,
+          directory: workspaceRoot,
+          title: null,
+          startedAt: finalized.events[0]?.ts ?? null,
+          tapePath,
+          captureQuality: sessionQuality,
+        });
+      }
       seen.set(sessionFile, fingerprint);
       stable.set(sessionFile, 0);
     }
-    exportOnce(result, observedAt, found);
+    await exportOnce(result, observedAt, found);
     return result;
   }
 
