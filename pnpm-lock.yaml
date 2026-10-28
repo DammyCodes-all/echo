@@ -199,6 +199,12 @@ importers:
       commander:
         specifier: ^15.0.0
         version: 15.0.0
+      ignore:
+        specifier: ^7.0.5
+        version: 7.0.14
+      isomorphic-git:
+        specifier: ^1.32.0
+        version: 1.44.5
 
   apps/server:
     dependencies:
