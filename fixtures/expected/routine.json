@@ -1,0 +1,13 @@
+{
+  "slug": "routine",
+  "sessionId": "sess_fixture_routine",
+  "cards": [],
+  "detoursIn": [],
+  "detoursOut": [],
+  "looseEnds": [],
+  "blindSpots": [],
+  "suppressChecksFor": [],
+  "routineLine": "Formatting, import order and an internal rename in src/util/format.ts — no behaviour change.",
+  "noCheckNeeded": false,
+  "seededContradictions": []
+}
