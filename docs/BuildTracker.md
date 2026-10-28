@@ -289,3 +289,10 @@ notes.
 - status: done
 - evidence: single adjacent-append conflict in `docs/BuildTracker.md` resolved by keeping both entries; full gate green (typecheck, biome 160 files, `pnpm test` → 38 files / 241 passed + 8 skipped, build)
 - notes: Merge initially refused — concurrent session had 26 unstaged tracker lines; waited for quiescence, stashed the file, merged, popped. Server dotenv files (env.ts/env.test.ts/index.ts/package.json/lockfile) auto-merged with no conflicts. Merge staged but uncommitted; tracker has additional unstaged entries from the concurrent session — coordinate before committing.
+
+## 2026-10-28 — Phase 0: story-first paper (spec, architecture, ADR 0011/0012)
+
+- item: product-intent + mechanism rewrite for the confirmed story-first redesign — `docs/echo-spec.md` (draft v4), `docs/ARCHITECTURE.md` (story pipeline §12, story-first UI §13, checks v2 §15, persistence decision §6, routes §17, phases §23), `docs/adr/0011-story-first-session-surface.md`, `docs/adr/0012-calibration-checks-v2.md`
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 160 files clean, `pnpm test` → 38 files / 249 passed, `pnpm build` ok (docs-only change; gate run against pulled HEAD `c35e7fc`)
+- notes: Replay/check/report pages deleted on paper; verification is four-level (`observed`/`partly_observed`/`agent_stated`/`nothing`, observed-only counts); checks v2 = calibration picture (MCQ + free text, no Brier in web responses), `Skipped` replaces waive; notifications deferred out of v1 (notifier stays future mechanism). Implemented by three Muse Spark 1.3 Contributor subagents with disjoint file ownership + one consistency-fix pass. `docs/BUILD-PLAN.md` still carries the old plan (reviewed/proved/waived) and is superseded by spec §10/§13 + ARCHITECTURE §23 — left untouched this phase. No code changed; Phase 1 (contracts + data substrate) not started.
