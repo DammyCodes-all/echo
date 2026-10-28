@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runMuseHook } from "@echo/capture-muse";
 import { projectIdForDirectory } from "@echo/core";
-import { openEchoDb } from "@echo/db";
+import { getReaderCheckpoint, openEchoDb } from "@echo/db";
 import { describe, expect, it } from "vitest";
 import { createMuseIngest, shouldExportSession } from "./muse-ingest";
 
@@ -83,6 +83,37 @@ describe("createMuseIngest", () => {
     );
     const third = await ingest.runOnce();
     expect(third.eventsAdded).toBe(1);
+    db.close();
+  });
+
+  it("resumes tailing from persisted checkpoints across restarts", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-resume-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-resume-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-resume-proj-"));
+    const logFile = join(sessionsDir, "2026", "10", "28", "ses_muse_9", "session.jsonl");
+    writeSession(sessionsDir, "2026/10/28", "ses_muse_9", [envelope(3, "id-3", projectRoot)]);
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const first = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    // 1 log event + 1 baseline file.snapshot.
+    expect((await first.runOnce()).eventsAdded).toBe(2);
+    const checkpoint = getReaderCheckpoint(db, "ses_muse_9", "");
+    expect(checkpoint?.offset).toBeGreaterThan(0);
+    expect(checkpoint?.lastSequence).toBe(3);
+    // A new instance on the same DB reads zero new bytes and ingests nothing.
+    const restarted = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    expect((await restarted.runOnce()).eventsAdded).toBe(0);
+    // Appends after the restart are picked up exactly once with no re-ingest.
+    appendFileSync(logFile, `${envelope(4, "id-4", projectRoot)}\n`);
+    const afterAppend = createMuseIngest({
+      dataDir,
+      db,
+      log,
+      sessionsDir,
+      projects: [projectRoot],
+    });
+    expect((await afterAppend.runOnce()).eventsAdded).toBe(1);
+    expect(getReaderCheckpoint(db, "ses_muse_9", "")?.lastSequence).toBe(4);
+    expect((await afterAppend.runOnce()).eventsAdded).toBe(0);
     db.close();
   });
 

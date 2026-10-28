@@ -17,6 +17,7 @@ import {
   emptyLinks,
   finalizeMuseSession,
   freshLaneCursor,
+  isoFromUs,
   parseSpoolFile,
   runRedactedExport,
   spoolEntryKey,
@@ -27,7 +28,6 @@ import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
-  type ReaderCheckpoint,
   getReaderCheckpoint,
   getSession,
   getSessionEventIds,
@@ -36,6 +36,7 @@ import {
   insertStampedEvents,
   maxTapeSeq,
   pruneReaderCheckpoints,
+  type ReaderCheckpoint,
   upsertProject,
   upsertReaderCheckpoint,
   upsertSession,
@@ -735,18 +736,15 @@ export function createMuseIngest(options: MuseIngestOptions) {
     await snapshotDrainedHooks(drained, result, observedAt);
     if (!existsSync(sessionsDir)) return result;
     const found = new Set(walkSessionLogs(sessionsDir));
-    for (const key of seen.keys()) {
-      if (!found.has(key)) seen.delete(key);
-    }
     for (const key of stable.keys()) {
       if (!found.has(key)) stable.delete(key);
     }
     for (const sessionFile of found) {
       result.scanned += 1;
-      let fingerprint: { size: number; mtimeMs: number };
+      let fingerprint: { size: number; ino: number };
       try {
         const stat = statSync(sessionFile);
-        fingerprint = { size: stat.size, mtimeMs: stat.mtimeMs };
+        fingerprint = { size: stat.size, ino: stat.ino };
       } catch (error) {
         log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
         continue;
@@ -755,66 +753,175 @@ export function createMuseIngest(options: MuseIngestOptions) {
         result.skipped += 1;
         continue;
       }
-      const previous = seen.get(sessionFile);
-      if (
-        previous !== undefined &&
-        previous.size === fingerprint.size &&
-        previous.mtimeMs === fingerprint.mtimeMs
-      ) {
-        stable.set(sessionFile, (stable.get(sessionFile) ?? 0) + 1);
-        continue;
-      }
-      let content: string;
-      try {
-        content = readFileSync(sessionFile, "utf8");
-      } catch (error) {
-        log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
-        continue;
-      }
-      const workspaceRoot = extractWorkspaceRoot(content);
-      if (!workspaceRoot) {
-        result.skipped += 1;
-        seen.set(sessionFile, fingerprint);
-        continue;
-      }
-      const root = projects.find((candidate) => isUnder(workspaceRoot, candidate));
-      if (!root) {
-        result.skipped += 1;
-        seen.set(sessionFile, fingerprint);
-        continue;
-      }
       const sessionId = basename(dirname(sessionFile));
-      const projectId = projectIdForDirectory(resolve(root));
-      let finalized: ReturnType<typeof finalizeMuseSession> | undefined;
+      const childDir = join(dirname(sessionFile), "subagent");
+      const lanes: Array<{ lane: string; file: string }> = [{ lane: "", file: sessionFile }];
       try {
-        finalized = finalizeMuseSession({
+        for (const child of readdirSync(childDir).sort()) {
+          lanes.push({ lane: child, file: join(childDir, child, "session.jsonl") });
+        }
+      } catch {
+        // No child logs yet.
+      }
+      const sessionRow = getSession(db, sessionId);
+      const summary = sessionRow ? getSessionSummary(db, sessionId) : null;
+      const isNewSession = !sessionRow;
+      // Fast path: every lane already at EOF with a matching inode. Steady
+      // state is one stat plus one checkpoint select per lane per poll.
+      if (!isNewSession) {
+        let quiet = true;
+        for (const { lane, file } of lanes) {
+          let current: { size: number; ino: number } | null = null;
+          try {
+            const stat = statSync(file);
+            current = { size: stat.size, ino: stat.ino };
+          } catch {
+            current = null;
+          }
+          const checkpoint = getReaderCheckpoint(db, sessionId, lane);
+          if (
+            current === null ||
+            checkpoint === null ||
+            checkpoint.inode !== current.ino ||
+            current.size !== checkpoint.offset ||
+            current.size > MAX_LOG_BYTES
+          ) {
+            quiet = false;
+            break;
+          }
+        }
+        if (quiet) {
+          stable.set(sessionFile, (stable.get(sessionFile) ?? 0) + 1);
+          continue;
+        }
+      }
+      // Attribution without guessing: first-sight sessions probe the parent
+      // log once; known sessions reuse their stored directory. Unattributed
+      // logs advance nothing, so a later project-enablement still ingests
+      // full history from offset zero.
+      let workspaceRoot: string | null = summary?.directory ?? null;
+      let root: string | null = null;
+      let projectId: string | null = sessionRow?.projectId ?? null;
+      if (isNewSession) {
+        let probe: string;
+        try {
+          probe = readFileSync(sessionFile, "utf8");
+        } catch (error) {
+          log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
+          continue;
+        }
+        const foundWorkspace = extractWorkspaceRoot(probe);
+        if (!foundWorkspace) {
+          result.skipped += 1;
+          continue;
+        }
+        const matched = projects.find((candidate) => isUnder(foundWorkspace, candidate));
+        if (!matched) {
+          result.skipped += 1;
+          continue;
+        }
+        workspaceRoot = foundWorkspace;
+        root = matched;
+        projectId = projectIdForDirectory(resolve(matched));
+      } else {
+        if (!workspaceRoot) {
+          result.skipped += 1;
+          continue;
+        }
+        const knownRoot = workspaceRoot;
+        const matched = projects.find((candidate) => isUnder(knownRoot, candidate));
+        if (!matched) {
+          // Project disabled since: hold every checkpoint, resume on re-enable.
+          result.skipped += 1;
+          continue;
+        }
+        root = matched;
+        projectId = projectIdForDirectory(resolve(matched));
+      }
+      const startedFallback = hasEventKind(db, sessionId, "session.started");
+      const observedDate = new Date(observedAt);
+      const combined: TapeEvent[] = [];
+      const combinedDiagnostics: string[] = [];
+      let combinedPartial = false;
+      const referenced = new Map<string, number>();
+      const presentChildIds: string[] = [];
+      let parentGrew = false;
+      let laneFailed = false;
+      for (const { lane, file } of lanes) {
+        const outcome = tailLaneFile({
+          db,
+          log,
+          sessionId,
+          projectId,
+          lane,
+          file,
+          startedFallback:
+            startedFallback || combined.some((event) => event.kind === "session.started"),
+          observedAt: observedDate,
+          observedIso: observedAt,
+        });
+        if (outcome.status === "skipped") continue;
+        if (outcome.status === "failed") {
+          laneFailed = true;
+          continue;
+        }
+        if (lane === "") parentGrew = outcome.grew;
+        else presentChildIds.push(lane);
+        if (outcome.quality !== "full") combinedPartial = true;
+        combined.push(...outcome.events);
+        combinedDiagnostics.push(...outcome.diagnostics);
+        for (const [childId, recordedAtUs] of outcome.referenced) {
+          if (!referenced.has(childId)) referenced.set(childId, recordedAtUs);
+        }
+      }
+      // Referenced-but-absent child logs are gaps with subagent linkage,
+      // never invented actions. Same recordKeys as a full finalize.
+      for (const [childId, recordedAtUs] of referenced) {
+        if (presentChildIds.includes(childId)) continue;
+        if (getReaderCheckpoint(db, sessionId, childId)) continue;
+        combinedDiagnostics.push(`missing_child:${childId}`);
+        const { event } = buildTapeEvent({
+          kind: "capture.gap",
+          payload: { code: "missing_child", subagent_id: childId },
+          payloadType: null,
+          recordType: "gap",
+          sequence: null,
+          ts: isoFromUs(recordedAtUs),
+          recordKey: `muse:${sessionId}:gap:missing-child:${childId}`,
+          links: { ...emptyLinks(), subagent_id: childId, parent_session_id: sessionId },
+          diagnostics: ["missing_child"],
           sessionId,
           projectId,
           build: null,
-          liveContent: content,
-          childContents: childContents(sessionFile),
-          observedAt: new Date(observedAt),
+          observedAt,
+          tapeSeq: combined.length,
+          schema: null,
+          origin: "live",
         });
-      } catch (error) {
-        log.error({ err: String(error), session_id: sessionId }, "muse finalize failed");
-        stable.set(sessionFile, 0);
+        combined.push(event);
+      }
+      pruneReaderCheckpoints(db, sessionId, presentChildIds);
+      if (combined.length === 0 && !isNewSession) {
+        stable.set(sessionFile, laneFailed ? 0 : (stable.get(sessionFile) ?? 0) + 1);
         continue;
       }
-      const quality: CaptureQuality = finalized.quality;
-      // Surface finalize diagnostics in daemon logs: per-event diagnostics live
-      // on the tape and gaps get their own capture.gap events, but session-level
-      // notes would otherwise be invisible. Bounded: finalize runs only when the
-      // log changed.
-      if (finalized.diagnostics.length > 0) {
+      // Quality is sticky: a partial tape never heals, but a degraded
+      // hook-only session adopts native capture once the log arrives.
+      let quality: CaptureQuality = combinedPartial ? "partial" : "full";
+      if (summary?.captureQuality === "partial") quality = "partial";
+      // Surface tail diagnostics in daemon logs: per-event diagnostics live
+      // on the tape and gaps get their own capture.gap events, but
+      // session-level notes would otherwise be invisible. Bounded: only logs
+      // when new bytes were ingested.
+      if (combinedDiagnostics.length > 0) {
         log.info(
-          { session_id: sessionId, diagnostics: finalized.diagnostics },
+          { session_id: sessionId, diagnostics: combinedDiagnostics },
           "muse finalize diagnostics",
         );
       }
       const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
       mkdirSync(dirname(tapePath), { recursive: true });
-      const isNewSession = !getSession(db, sessionId);
-      upsertProject(db, { id: projectId, root: resolve(root), name: basename(root) });
+      if (root) upsertProject(db, { id: projectId, root: resolve(root), name: basename(root) });
       upsertSession(db, {
         id: sessionId,
         projectId,
@@ -822,19 +929,21 @@ export function createMuseIngest(options: MuseIngestOptions) {
         model: null,
         directory: workspaceRoot,
         title: null,
-        startedAt: finalized.events[0]?.ts ?? null,
+        startedAt: isNewSession
+          ? (combined[0]?.ts ?? null)
+          : (summary?.startedAt ?? combined[0]?.ts ?? null),
         tapePath,
         captureQuality: quality,
       });
       const existing = getSessionEventIds(db, sessionId);
-      const fresh = finalized.events.filter((event: TapeEvent) => !existing.has(event.event_id));
+      const fresh = combined.filter((event: TapeEvent) => !existing.has(event.event_id));
       if (fresh.length > 0) {
         result.eventsAdded += persistFresh(sessionId, tapePath, fresh);
         result.capturedSessions += 1;
       }
       // First-seen session via the native log (the wrapper or SessionStart hook
       // may have missed it): exactly one baseline via latestSnapshot dedupe.
-      if (isNewSession) {
+      if (isNewSession && root && workspaceRoot) {
         try {
           const snapRoot = findRepositoryRoot(workspaceRoot) ?? resolve(root);
           const baseline = await ensureBaselineSnapshot(
@@ -846,8 +955,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
           log.error({ err: String(error), session_id: sessionId }, "muse baseline failed");
         }
       }
-      seen.set(sessionFile, fingerprint);
-      stable.set(sessionFile, 0);
+      stable.set(sessionFile, laneFailed || parentGrew ? 0 : (stable.get(sessionFile) ?? 0) + 1);
     }
     await exportOnce(result, observedAt, found);
     return result;
