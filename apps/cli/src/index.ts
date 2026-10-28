@@ -131,4 +131,4 @@ hooks
     }
   });
 
-program.parse();
+void program.parseAsync();
