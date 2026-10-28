@@ -14,6 +14,7 @@ import {
 import Fastify from "fastify";
 import { createIngest } from "./ingest";
 import { createMuseIngest } from "./muse-ingest";
+import { buildSessionReview } from "./review-index";
 import { readSnapshotFile } from "./snapshot-view";
 
 const VERSION = "0.1.0";
@@ -80,6 +81,22 @@ app.get<{ Params: { id: string }; Querystring: { after?: string; limit?: string 
     return { events: readEvents(db, request.params.id, after, limit) };
   },
 );
+
+app.get<{ Params: { id: string } }>("/api/sessions/:id/review", async (request, reply) => {
+  try {
+    return await buildSessionReview(db, paths.dataDir, request.params.id);
+  } catch (error) {
+    if (error instanceof Error && error.message.startsWith("unknown session")) {
+      return reply.code(404).send({
+        error: { code: "not_found", message: "unknown session" },
+      });
+    }
+    request.log.error({ err: String(error) }, "session review failed");
+    return reply.code(500).send({
+      error: { code: "invalid_request", message: "could not build session review" },
+    });
+  }
+});
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/snapshots", async (request) =>
   listSnapshots(db, request.params.id).map((row) => ({
