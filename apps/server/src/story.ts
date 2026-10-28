@@ -271,7 +271,8 @@ function enrichStory(facts: FactSet, story: SessionStory): SessionStory {
           claims: [
             {
               text: `no observed test run covers ${hunk.path}`,
-              label: "uncertain",
+              // The full tape was scanned for runs, so the absence is observed.
+              label: "observed",
               factIds: [hunk.id],
             },
           ],
@@ -284,7 +285,8 @@ function enrichStory(facts: FactSet, story: SessionStory): SessionStory {
           claims: [
             {
               text: "no observed test run covers these changes",
-              label: "uncertain",
+              // The full tape was scanned for runs, so the absence is observed.
+              label: "observed",
               factIds: constituents.map((hunk) => hunk.id),
             },
           ],
@@ -302,7 +304,8 @@ function enrichStory(facts: FactSet, story: SessionStory): SessionStory {
         claims: [
           {
             text: "no observed test run covers these changes",
-            label: "uncertain",
+            // The full tape was scanned for runs, so the absence is observed.
+            label: "observed",
             factIds: orphans.slice(0, 1).map((hunk) => hunk.id),
           },
         ],

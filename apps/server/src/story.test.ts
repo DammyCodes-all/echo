@@ -856,6 +856,7 @@ describe("finalizeStory", () => {
     expect(untested).toHaveLength(1);
     expect(untested[0]?.claims[0]?.text).toContain("src/app.ts");
     expect(untested[0]?.cardId).toBe("h_cccccccccccccccc");
+    expect(untested[0]?.claims[0]?.label).toBe("observed");
   });
 
   it("folds untested ends for hunks without cards into one shared end", () => {
