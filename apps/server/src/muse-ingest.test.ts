@@ -1,4 +1,4 @@
-import {
+import fs, {
   appendFileSync,
   mkdirSync,
   mkdtempSync,
@@ -9,12 +9,17 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { runMuseHook } from "@echo/capture-muse";
-import { projectIdForDirectory } from "@echo/core";
-import { openEchoDb } from "@echo/db";
+import { listSnapshots, openEchoDb, readEvents } from "@echo/db";
+import { resolveRepositoryIdentity } from "@echo/snapshots";
+import git from "isomorphic-git";
 import { describe, expect, it } from "vitest";
 import { createMuseIngest, shouldExportSession } from "./muse-ingest";
 
 const log = { info: () => {}, error: () => {} };
+
+async function projectIdForRoot(projectRoot: string): Promise<string> {
+  return (await resolveRepositoryIdentity(projectRoot)).projectId;
+}
 
 function writeSession(root: string, date: string, id: string, lines: string[]): void {
   const dir = join(root, ...date.split("/"), id);
@@ -54,7 +59,7 @@ describe("createMuseIngest", () => {
     return ingest.runOnce().then((result) => {
       expect(result.scanned).toBe(2);
       expect(result.capturedSessions).toBe(1);
-      expect(result.eventsAdded).toBe(2);
+      expect(result.eventsAdded).toBe(3);
       expect(result.skipped).toBe(1);
       const again = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
       return again.runOnce().then((second) => {
@@ -62,6 +67,73 @@ describe("createMuseIngest", () => {
         db.close();
       });
     });
+  });
+
+  it("joins a subdirectory session to its repository remote project", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-identity-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-identity-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-identity-proj-"));
+    await git.init({ fs, dir: projectRoot });
+    await git.setConfig({
+      fs,
+      dir: projectRoot,
+      path: "remote.origin.url",
+      value: "git@github.com:example/echo.git",
+    });
+    const workDir = join(projectRoot, "packages", "app");
+    mkdirSync(workDir, { recursive: true });
+    writeSession(sessionsDir, "2026/10/28", "ses_muse_identity", [
+      envelope(3, "id-identity", workDir),
+    ]);
+
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({
+      dataDir,
+      db,
+      log,
+      sessionsDir,
+      projects: [join(projectRoot, "packages")],
+    });
+    const result = await ingest.runOnce();
+    expect(result.capturedSessions).toBe(1);
+    expect(result.eventsAdded).toBe(2);
+
+    const identity = await resolveRepositoryIdentity(projectRoot);
+    expect(identity.remoteUrl).toBe("github.com/example/echo");
+    const tape = readFileSync(
+      join(dataDir, "projects", identity.projectId, "sessions", "ses_muse_identity", "tape.jsonl"),
+      "utf8",
+    );
+    expect(tape).toContain(identity.projectId);
+    expect(tape).toContain(workDir);
+    db.close();
+  });
+
+  it("does not capture a sibling directory just because it shares the repo", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-scope-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-scope-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-scope-proj-"));
+    await git.init({ fs, dir: projectRoot });
+    const workDir = join(projectRoot, "packages", "app");
+    const otherDir = join(projectRoot, "packages", "other");
+    mkdirSync(workDir, { recursive: true });
+    mkdirSync(otherDir, { recursive: true });
+    writeSession(sessionsDir, "2026/10/28", "ses_muse_scope", [envelope(3, "id-scope", otherDir)]);
+
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({
+      dataDir,
+      db,
+      log,
+      sessionsDir,
+      projects: [workDir],
+    });
+    const result = await ingest.runOnce();
+    expect(result.scanned).toBe(1);
+    expect(result.capturedSessions).toBe(0);
+    expect(result.eventsAdded).toBe(0);
+    expect(result.skipped).toBe(1);
+    db.close();
   });
 
   it("re-ingests an appended log and skips unchanged files", async () => {
@@ -72,7 +144,7 @@ describe("createMuseIngest", () => {
     const db = openEchoDb(join(dataDir, "echo.sqlite"));
     const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
     const first = await ingest.runOnce();
-    expect(first.eventsAdded).toBe(1);
+    expect(first.eventsAdded).toBe(2);
     const second = await ingest.runOnce();
     expect(second.eventsAdded).toBe(0);
     appendFileSync(
@@ -128,7 +200,7 @@ describe("createMuseIngest spool drain", () => {
     const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
     const first = await ingest.runOnce();
     expect(first.drained).toBe(1);
-    expect(first.eventsAdded).toBe(1);
+    expect(first.eventsAdded).toBe(2);
     expect(first.unattributed).toBe(0);
     const spoolRoot = join(dataDir, "spool", "muse", "s1");
     const remaining = readdirSync(spoolRoot).filter((name) => name.endsWith(".json"));
@@ -136,6 +208,32 @@ describe("createMuseIngest spool drain", () => {
     const second = await ingest.runOnce();
     expect(second.drained).toBe(0);
     expect(second.eventsAdded).toBe(0);
+    db.close();
+  });
+
+  it("captures baseline and post-action snapshots for hook tool activity", async () => {
+    const sessionsDir = mkdtempSync(join(tmpdir(), "echo-muse-snap-"));
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-muse-snap-data-"));
+    const projectRoot = mkdtempSync(join(tmpdir(), "echo-muse-snap-proj-"));
+    writeFileSync(join(projectRoot, "notes.txt"), "a\n");
+    runMuseHook({
+      dataDir,
+      event: "PostToolUse",
+      rawStdin: JSON.stringify({ session_id: "ses_snap", cwd: projectRoot, tool_name: "write" }),
+      stdinTruncated: false,
+      projects: [projectRoot],
+      receivedAt: "2026-10-28T10:00:00.000Z",
+    });
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
+    const result = await ingest.runOnce();
+    expect(result.drained).toBe(1);
+    expect(result.eventsAdded).toBe(3);
+
+    const snapshots = listSnapshots(db, "ses_snap");
+    expect(snapshots.map((snapshot) => snapshot.trigger)).toEqual(["baseline", "tool.post"]);
+    const kinds = readEvents(db, "ses_snap", 0, 10).map((event) => event.kind);
+    expect(kinds).toEqual(["file.snapshot", "tool.completed", "file.snapshot"]);
     db.close();
   });
 
@@ -207,7 +305,7 @@ describe("createMuseIngest spool drain", () => {
     const result = await ingest.runOnce();
     expect(result.unattributed).toBe(200);
     expect(result.drained).toBe(1);
-    expect(result.eventsAdded).toBe(1);
+    expect(result.eventsAdded).toBe(2);
     db.close();
   });
 
@@ -244,12 +342,12 @@ describe("createMuseIngest spool drain", () => {
     const ingest = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
     const result = await ingest.runOnce();
     expect(result.drained).toBe(1);
-    expect(result.eventsAdded).toBe(2);
+    expect(result.eventsAdded).toBe(3);
     const tape = readFileSync(
       join(
         dataDir,
         "projects",
-        projectIdForDirectory(projectRoot),
+        await projectIdForRoot(projectRoot),
         "sessions",
         "ses_both",
         "tape.jsonl",
@@ -330,16 +428,16 @@ describe("createMuseIngest export reconciliation", () => {
       projects: [projectRoot],
       museBin,
     });
-    expect((await ingest.runOnce()).eventsAdded).toBe(1);
+    expect((await ingest.runOnce()).eventsAdded).toBe(2);
     expect((await ingest.runOnce()).eventsAdded).toBe(0);
     const reconciled = await ingest.runOnce();
     expect(reconciled.reconciled).toBe(1);
-    expect(reconciled.eventsAdded).toBe(2);
+    expect(reconciled.eventsAdded).toBe(3);
     const tape = readFileSync(
       join(
         dataDir,
         "projects",
-        projectIdForDirectory(projectRoot),
+        await projectIdForRoot(projectRoot),
         "sessions",
         "ses_exp",
         "tape.jsonl",
@@ -357,6 +455,10 @@ describe("createMuseIngest export reconciliation", () => {
     const quiet = await ingest.runOnce();
     expect(quiet.eventsAdded).toBe(0);
     expect(quiet.reconciled).toBe(0);
+    expect(listSnapshots(db, "ses_exp").map((snapshot) => snapshot.trigger)).toEqual([
+      "baseline",
+      "final",
+    ]);
     db.close();
   });
 
@@ -387,7 +489,7 @@ describe("createMuseIngest export reconciliation", () => {
       projects: [projectRoot],
       museBin,
     });
-    expect((await ingest.runOnce()).eventsAdded).toBe(1);
+    expect((await ingest.runOnce()).eventsAdded).toBe(2);
     expect((await ingest.runOnce()).eventsAdded).toBe(0);
     await ingest.runOnce();
     expect(
@@ -401,7 +503,7 @@ describe("createMuseIngest export reconciliation", () => {
       join(
         dataDir,
         "projects",
-        projectIdForDirectory(projectRoot),
+        await projectIdForRoot(projectRoot),
         "sessions",
         "ses_fail",
         "tape.jsonl",
@@ -534,7 +636,7 @@ describe("createMuseIngest missing child logs", () => {
     const tapePath = join(
       dataDir,
       "projects",
-      projectIdForDirectory(projectRoot),
+      await projectIdForRoot(projectRoot),
       "sessions",
       "ses_gap",
       "tape.jsonl",
