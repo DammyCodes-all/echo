@@ -5,18 +5,23 @@ import type { TapeEvent } from "@echo/contracts";
 import { describe, expect, it } from "vitest";
 import {
   appendEvents,
+  getReaderCheckpoint,
   getSession,
   getSessionEventIds,
+  getSessionSummary,
   getSnapshotByCommit,
   hasEventKind,
   insertSnapshot,
   latestSnapshot,
   listProjects,
+  listReaderCheckpoints,
   listSessions,
   listSnapshotFiles,
   openEchoDb,
+  pruneReaderCheckpoints,
   readEvents,
   upsertProject,
+  upsertReaderCheckpoint,
   upsertSession,
 } from "./index";
 
@@ -89,7 +94,14 @@ describe("openEchoDb migrations", () => {
       version: number;
     }>;
     second.close();
-    expect(rows.map((row) => row.version)).toEqual([1, 2]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3]);
+  });
+
+  it("waits on locked writers instead of failing fast", () => {
+    const db = openTestDb();
+    const row = db.prepare("PRAGMA busy_timeout").get() as { timeout: number };
+    expect(row.timeout).toBeGreaterThan(0);
+    db.close();
   });
 });
 
@@ -123,6 +135,20 @@ describe("repositories", () => {
     const sessions = listSessions(db, "prj_1");
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({ id: "ses_1", eventCount: 1, title: "spike" });
+    db.close();
+  });
+
+  it("returns a single session summary and null for unknown sessions", () => {
+    const db = openTestDb();
+    seed(db);
+    appendEvents(db, "ses_1", [makeEvent(0)]);
+    expect(getSessionSummary(db, "ses_1")).toMatchObject({
+      id: "ses_1",
+      projectId: "prj_1",
+      captureQuality: "import_only",
+      eventCount: 1,
+    });
+    expect(getSessionSummary(db, "ses_missing")).toBeNull();
     db.close();
   });
 
@@ -259,6 +285,68 @@ describe("repositories", () => {
       ["assets/logo.png", false, "binary"],
       ["src/index.ts", true, null],
     ]);
+    db.close();
+  });
+
+  it("round-trips reader checkpoints per lane and prunes dead child lanes", () => {
+    const db = openTestDb();
+    seed(db);
+    const now = "2026-10-28T10:00:00.000Z";
+    expect(getReaderCheckpoint(db, "ses_1", "")).toBeNull();
+    upsertReaderCheckpoint(db, {
+      sessionId: "ses_1",
+      lane: "",
+      sourcePath: "/sessions/ses_1/session.jsonl",
+      inode: 42,
+      offset: 128,
+      lastSequence: 7,
+      lastEventTs: "2026-10-28T09:59:00.000Z",
+      lastMarkerAfter: null,
+      markerCount: 1,
+      sessionStarted: true,
+      schemaVersion: 1,
+      adapterVersion: "0.1.0",
+      build: null,
+      status: "active",
+      error: null,
+      lastReadAt: now,
+    });
+    upsertReaderCheckpoint(db, {
+      sessionId: "ses_1",
+      lane: "child-9",
+      sourcePath: "/sessions/ses_1/subagent/child-9/session.jsonl",
+      inode: 43,
+      offset: 64,
+      lastSequence: 3,
+      lastEventTs: null,
+      lastMarkerAfter: null,
+      markerCount: 0,
+      sessionStarted: false,
+      schemaVersion: 1,
+      adapterVersion: "0.1.0",
+      build: null,
+      status: "active",
+      error: null,
+      lastReadAt: now,
+    });
+    expect(getReaderCheckpoint(db, "ses_1", "")).toMatchObject({
+      offset: 128,
+      lastSequence: 7,
+      inode: 42,
+      sessionStarted: true,
+    });
+    expect(listReaderCheckpoints(db, "ses_1").map((row) => row.lane)).toEqual(["", "child-9"]);
+    // Resume state survives an update; the parent lane is never pruned.
+    upsertReaderCheckpoint(db, {
+      ...(getReaderCheckpoint(db, "ses_1", "") as NonNullable<
+        ReturnType<typeof getReaderCheckpoint>
+      >),
+      offset: 256,
+    });
+    expect(getReaderCheckpoint(db, "ses_1", "")?.offset).toBe(256);
+    expect(pruneReaderCheckpoints(db, "ses_1", [])).toBe(1);
+    expect(listReaderCheckpoints(db, "ses_1").map((row) => row.lane)).toEqual([""]);
+    expect(getReaderCheckpoint(db, "ses_missing", "")).toBeNull();
     db.close();
   });
 });

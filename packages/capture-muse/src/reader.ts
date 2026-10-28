@@ -30,9 +30,13 @@ export interface ParseResult {
   headerFrames: number;
   invalidLines: number;
   truncatedTail: boolean;
+  // Highest envelope schema_version observed in this parse, if any.
+  schemaVersion: number | null;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+// Exported for chunked ingestion, which must apply the same acceptance
+// rules per line to key diagnostics by absolute byte offset.
+export function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
@@ -43,7 +47,7 @@ function asStream(value: unknown): MuseStream | null {
 }
 
 // Marker lines carry omission evidence, never a sequence number.
-function tryParseMarker(
+export function tryParseMarker(
   parsed: Record<string, unknown>,
   afterSequence: number | null,
 ): ParsedMuseMarker | null {
@@ -61,7 +65,7 @@ function tryParseMarker(
   return { stream, omissionClass, afterSequence, raw: parsed };
 }
 
-function tryParseEvent(parsed: Record<string, unknown>): ParsedMuseEvent | null {
+export function tryParseEvent(parsed: Record<string, unknown>): ParsedMuseEvent | null {
   const stream = asStream(parsed.stream);
   if (!stream) return null;
   if (typeof parsed.sequence !== "number" || !Number.isInteger(parsed.sequence)) return null;
@@ -87,6 +91,7 @@ export function parseMuseLines(lines: string[]): ParseResult {
     headerFrames: 0,
     invalidLines: 0,
     truncatedTail: false,
+    schemaVersion: null,
   };
   let lastSequence: number | null = null;
   for (const line of lines) {
@@ -101,6 +106,12 @@ export function parseMuseLines(lines: string[]): ParseResult {
     if (!isRecord(parsed)) {
       result.invalidLines++;
       continue;
+    }
+    if (
+      typeof parsed.schema_version === "number" &&
+      (result.schemaVersion === null || parsed.schema_version > result.schemaVersion)
+    ) {
+      result.schemaVersion = parsed.schema_version;
     }
     // Header frame: no stream/sequence, carries embedded records.
     if (!("stream" in parsed) || !("sequence" in parsed)) {
@@ -139,6 +150,12 @@ export function parseMuseContent(content: string): ParseResult {
     result.markers.push(...extra.markers);
     result.headerFrames += extra.headerFrames;
     result.invalidLines += extra.invalidLines;
+    if (
+      extra.schemaVersion !== null &&
+      (result.schemaVersion === null || extra.schemaVersion > result.schemaVersion)
+    ) {
+      result.schemaVersion = extra.schemaVersion;
+    }
     result.events.sort((a, b) => a.sequence - b.sequence);
   }
   return result;
