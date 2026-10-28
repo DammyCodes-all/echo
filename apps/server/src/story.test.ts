@@ -17,12 +17,13 @@ import {
   openEchoDb,
   readAllEvents,
   setSessionCheckStatus,
+  upsertArtifactRef,
   upsertProject,
   upsertSession,
 } from "@echo/db";
 import type { SnapshotResult } from "@echo/snapshots";
 import { snapshotWorkingTree } from "@echo/snapshots";
-import { buildSkeletonStory, extractFacts } from "@echo/story";
+import { buildSkeletonStory, extractFacts, SKELETON_PROMPT_VERSION } from "@echo/story";
 import type { FileAttempt } from "@echo/tape";
 import { describe, expect, it } from "vitest";
 import { computeWatermark, createStoryService, finalizeStory, normalizeDraftShape } from "./story";
@@ -277,7 +278,7 @@ describe("maybeGenerateStory", () => {
       expect(story.generator).toEqual({
         kind: "skeleton",
         model: null,
-        promptVersion: "skeleton-v1",
+        promptVersion: SKELETON_PROMPT_VERSION,
       });
       expect(story.cards).toHaveLength(1);
       expect(story.summary).toBe("Prompts, changes in notes.txt.");
@@ -287,7 +288,7 @@ describe("maybeGenerateStory", () => {
       expect(story.looseEnds.some((end) => end.claims[0]?.text.includes("notes.txt"))).toBe(true);
 
       const ref = getArtifactRef(db, sessionId, "story");
-      expect(ref?.generator).toBe("skeleton-v1");
+      expect(ref?.generator).toBe(SKELETON_PROMPT_VERSION);
       expect(ref?.path).toBe(
         join(dataDir, "projects", "prj_story", "sessions", sessionId, ARTIFACT_FILE_NAMES.story),
       );
@@ -332,6 +333,28 @@ describe("maybeGenerateStory", () => {
       const second = await service.maybeGenerateStory(sessionId);
       expect(second.outcome).toBe("skeleton");
       expect(getSessionSummary(db, sessionId)?.checkStatus).toBe("not_checked");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("regenerates a story cached by a superseded skeleton builder", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch },
+      );
+      const first = await service.maybeGenerateStory(sessionId);
+      expect(first.outcome).toBe("skeleton");
+      const ref = getArtifactRef(db, sessionId, "story");
+      expect(ref?.generator).toBe(SKELETON_PROMPT_VERSION);
+      // Simulate a cache written by the previous builder, same watermark.
+      if (!ref) throw new Error("expected story artifact ref");
+      upsertArtifactRef(db, { ...ref, generator: "skeleton-v1" });
+      const second = await service.maybeGenerateStory(sessionId, { reason: "read-through" });
+      expect(second.outcome).toBe("skeleton");
+      expect(getArtifactRef(db, sessionId, "story")?.generator).toBe(SKELETON_PROMPT_VERSION);
     } finally {
       db.close();
     }
@@ -427,7 +450,7 @@ describe("maybeGenerateStory", () => {
       const outcome = await service.maybeGenerateStory(sessionId);
       expect(outcome.outcome).toBe("skeleton");
       expect(outcome.story?.skeleton).toBe(true);
-      expect(outcome.story?.generator.promptVersion).toBe("skeleton-v1");
+      expect(outcome.story?.generator.promptVersion).toBe(SKELETON_PROMPT_VERSION);
     } finally {
       db.close();
     }
@@ -444,8 +467,8 @@ describe("maybeGenerateStory", () => {
       const outcome = await service.maybeGenerateStory(sessionId);
       expect(outcome.outcome).toBe("generated");
       const request = JSON.parse(bodies()[0] ?? "{}") as Record<string, unknown>;
-      expect(request["reasoning_effort"]).toBe("medium");
-      expect(Number(request["max_tokens"])).toBeGreaterThanOrEqual(50000);
+      expect(request.reasoning_effort).toBe("medium");
+      expect(Number(request.max_tokens)).toBeGreaterThanOrEqual(50000);
     } finally {
       db.close();
     }
@@ -478,8 +501,8 @@ describe("maybeGenerateStory", () => {
     const { dataDir, db, sessionId } = await seedSession();
     try {
       const draft = modelDraft("add a greeting line") as unknown as Record<string, unknown>;
-      delete draft["tapeWatermark"];
-      delete draft["generator"];
+      delete draft.tapeWatermark;
+      delete draft.generator;
       const { fetchImpl } = stubFetchSequence([draft]);
       const service = createStoryService(
         { db, dataDir, log: silentLog },
@@ -833,6 +856,120 @@ describe("finalizeStory", () => {
     expect(untested).toHaveLength(1);
     expect(untested[0]?.claims[0]?.text).toContain("src/app.ts");
     expect(untested[0]?.cardId).toBe("h_cccccccccccccccc");
+  });
+
+  it("folds untested ends for hunks without cards into one shared end", () => {
+    const tape: TapeEvent[] = [synEvent(1, "e-prompt", "prompt.submitted", { text: "fix all" })];
+    const hunks = Array.from({ length: 25 }, (_, index) => {
+      const hex = index.toString(16).padStart(16, "0");
+      return {
+        id: `h_${hex}`,
+        path: `src/file${index}.ts`,
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        patch: "@@ -1 +1,2 @@\n+x",
+        addedText: "x",
+        removedText: "",
+        addedLines: 1,
+        removedLines: 0,
+      };
+    });
+    const facts = extractFacts({ sessionId: SYN_SESSION, tape, hunks, attempts: [] });
+    const draft = buildSkeletonStory(facts, { generatedAt: ISO, tapeSha256: "syn-sha" }).story;
+    expect(draft.cards).toHaveLength(21);
+    const story = SessionStorySchema.parse(
+      finalizeStory({ facts, draft, tape, reviewDiagnostics: [], captureQuality: "full" }),
+    );
+    const untested = story.looseEnds.filter((end) => end.kind === "untested");
+    // One end per kept card plus a single end for the folded hunks.
+    expect(untested).toHaveLength(21);
+    const folded = untested.filter((end) => end.cardId === story.cards[20]?.id);
+    expect(folded).toHaveLength(1);
+    expect(folded[0]?.claims[0]?.text).toContain("these changes");
+    expect(
+      untested
+        .filter((end) => end !== folded[0])
+        .every((end) => story.cards.slice(0, 20).some((card) => card.id === end.cardId)),
+    ).toBe(true);
+  });
+
+  it("skips untested ends for mechanical hunks", () => {
+    const tape: TapeEvent[] = [synEvent(1, "e-prompt", "prompt.submitted", { text: "fix it" })];
+    const hunks = [
+      {
+        id: "h_cccccccccccccccc",
+        path: "src/app.ts",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        patch: "@@ -1 +1,2 @@\n+x",
+        addedText: "x",
+        removedText: "",
+        addedLines: 1,
+        removedLines: 0,
+      },
+      {
+        id: "h_dddddddddddddddd",
+        path: "pnpm-lock.yaml",
+        oldStart: 1,
+        oldLines: 1,
+        newStart: 1,
+        newLines: 2,
+        patch: "@@ -1 +1,2 @@\n+y",
+        addedText: "y",
+        removedText: "",
+        addedLines: 1,
+        removedLines: 0,
+      },
+    ];
+    const facts = extractFacts({ sessionId: SYN_SESSION, tape, hunks, attempts: [] });
+    const draft = buildSkeletonStory(facts, { generatedAt: ISO, tapeSha256: "syn-sha" }).story;
+    // Lockfile hunk folds into the routine line, not a card.
+    expect(draft.cards).toHaveLength(1);
+    expect(draft.routineSummary ?? "").toContain("pnpm-lock.yaml");
+    const story = SessionStorySchema.parse(
+      finalizeStory({ facts, draft, tape, reviewDiagnostics: [], captureQuality: "full" }),
+    );
+    const untested = story.looseEnds.filter((end) => end.kind === "untested");
+    expect(untested).toHaveLength(1);
+    expect(untested[0]?.cardId).toBe("h_cccccccccccccccc");
+  });
+
+  it("collapses untested ends for hunks no card covers into one orphan end", () => {
+    const tape: TapeEvent[] = [synEvent(1, "e-prompt", "prompt.submitted", { text: "fix it" })];
+    const hunk = (id: string, path: string) => ({
+      id,
+      path,
+      oldStart: 1,
+      oldLines: 1,
+      newStart: 1,
+      newLines: 2,
+      patch: "@@ -1 +1,2 @@\n+x",
+      addedText: "x",
+      removedText: "",
+      addedLines: 1,
+      removedLines: 0,
+    });
+    const hunks = [
+      hunk("h_eeeeeeeeeeeeeeee", "src/kept.ts"),
+      hunk("h_ffffffffffffffff", "src/dropped-a.ts"),
+      hunk("h_0000000000000000", "src/dropped-b.ts"),
+    ];
+    const facts = extractFacts({ sessionId: SYN_SESSION, tape, hunks, attempts: [] });
+    const full = buildSkeletonStory(facts, { generatedAt: ISO, tapeSha256: "syn-sha" }).story;
+    // Simulate a model draft that covers only the first hunk.
+    const draft = { ...full, cards: full.cards.slice(0, 1) };
+    const story = SessionStorySchema.parse(
+      finalizeStory({ facts, draft, tape, reviewDiagnostics: [], captureQuality: "full" }),
+    );
+    const untested = story.looseEnds.filter((end) => end.kind === "untested");
+    expect(untested).toHaveLength(2);
+    const orphan = untested.filter((end) => end.cardId === null);
+    expect(orphan).toHaveLength(1);
+    expect(orphan[0]?.claims[0]?.text).toContain("these changes");
   });
 
   it("ranks by risk while sessionOrder stays chronological", () => {

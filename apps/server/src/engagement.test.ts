@@ -134,7 +134,7 @@ describe("engagement service", () => {
       const outcome = service.state(sessionId, ["h_cccccccccccccccc", "h_ffffffffffffffff"]);
       expect(outcome.status).toBe(200);
       const parsed = EngagementStateSchema.parse(outcome.body);
-      expect(parsed.tiers["h_ffffffffffffffff"]).toBe("unseen");
+      expect(parsed.tiers.h_ffffffffffffffff).toBe("unseen");
     } finally {
       db.close();
     }
