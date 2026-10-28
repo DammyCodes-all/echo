@@ -298,10 +298,11 @@ describe("maybeGenerateStory", () => {
 
       const summary = getSessionSummary(db, sessionId);
       expect(summary?.summary).toBe("Prompts, changes in notes.txt.");
-      // Engine risk: no passing run on the tape, so the single card is high-risk.
-      expect(summary?.highRiskCount).toBe(1);
-      expect(story.cards[0]?.highRisk).toBe(true);
-      expect(story.cards[0]?.riskReasons).toContain("no passing run observed in this session");
+      // Risk needs observed evidence: no flags on this hunk, so the card is
+      // not high-risk even though no passing run covers it.
+      expect(summary?.highRiskCount).toBe(0);
+      expect(story.cards[0]?.highRisk).toBe(false);
+      expect(story.cards[0]?.riskReasons).toEqual([]);
 
       // Read-through with no new events: no model call, no rewrite.
       const second = await service.maybeGenerateStory(sessionId, { reason: "read-through" });
@@ -971,6 +972,28 @@ describe("finalizeStory", () => {
     const orphan = untested.filter((end) => end.cardId === null);
     expect(orphan).toHaveLength(1);
     expect(orphan[0]?.claims[0]?.text).toContain("these changes");
+  });
+
+  it("surfaces the no-surviving-attempt gap as verification context", () => {
+    const { tape, facts, draft } = buildScenario();
+    const story = SessionStorySchema.parse(
+      finalizeStory({ facts, draft, tape, reviewDiagnostics: [], captureQuality: "full" }),
+    );
+    const auth = story.cards.find((card) => card.touches.includes("src/auth/login.ts"));
+    expect(
+      auth?.checkedBy.some(
+        (claim) => claim.text === "No surviving attempt evidence for src/auth/login.ts",
+      ),
+    ).toBe(true);
+    const note = auth?.checkedBy.find((claim) =>
+      claim.text.includes("No surviving attempt evidence"),
+    );
+    expect(note?.label).toBe("uncertain");
+    // The landed docs hunk has surviving evidence: no note there.
+    const docs = story.cards.find((card) => card.touches.includes("docs/notes.md"));
+    expect(
+      docs?.checkedBy.some((claim) => claim.text.includes("No surviving attempt evidence")),
+    ).toBe(false);
   });
 
   it("ranks by risk while sessionOrder stays chronological", () => {
