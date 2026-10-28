@@ -214,8 +214,12 @@ describe("eval/muse-fixture capture integrity", () => {
     const first = await ingest.runOnce();
     expect(first.drained).toBe(hooks.length);
     expect(first.capturedSessions).toBe(1);
-    await ingest.runOnce();
-    const reconciled = await ingest.runOnce();
+    // Poll until the quiescent session reconciles instead of assuming a
+    // fixed poll count: quiescence timing is an ingest internal.
+    let reconciled = await ingest.runOnce();
+    for (let poll = 0; poll < 8 && reconciled.reconciled === 0; poll++) {
+      reconciled = await ingest.runOnce();
+    }
     expect(reconciled.reconciled).toBe(1);
 
     const projectId = projectIdForDirectory(repo);
@@ -358,6 +362,9 @@ describe("eval/muse-fixture capture integrity", () => {
       sessionRef,
     ]);
     writeFileSync(join(logsDir, "echo.log"), `${logLines.join("\n")}\n`);
+    // Checkpoint WAL into the main file before the raw-secret scan: rows
+    // still in -wal would otherwise be invisible and a leak could pass.
+    db.exec("PRAGMA wal_checkpoint(TRUNCATE)");
     const forbidden = [SECRET, INTERMEDIATE_APP, INTERMEDIATE_FLAG, ENCRYPTED_MARKER, TORN_MARKER];
     const hits = scanSurfaces(
       [join(dataDir, "spool"), logsDir, bundleDir],
