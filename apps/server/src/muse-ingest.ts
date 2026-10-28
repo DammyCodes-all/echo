@@ -17,6 +17,7 @@ import {
   emptyLinks,
   finalizeMuseSession,
   freshLaneCursor,
+  getMuseVersion,
   isoFromUs,
   parseSpoolFile,
   runRedactedExport,
@@ -30,6 +31,7 @@ import {
   type EchoDb,
   getReaderCheckpoint,
   getSession,
+  getSessionBuildPin,
   getSessionEventIds,
   getSessionSummary,
   hasEventKind,
@@ -42,6 +44,7 @@ import {
   upsertProject,
   upsertReaderCheckpoint,
   upsertSession,
+  upsertSessionBuildPin,
 } from "@echo/db";
 import {
   findRepositoryRoot,
@@ -400,6 +403,16 @@ export function createMuseIngest(options: MuseIngestOptions) {
   // Set once per boot when the muse binary is missing: export_unavailable is
   // environmental, not per-session, so retrying every poll only spams the log.
   let exportBroken = false;
+  // Installed Muse version, fetched once per boot and pinned per ingested
+  // session. A mid-boot upgrade surfaces on restart, which also re-reads
+  // checkpoints — no per-poll spawn cost, no stale pins.
+  let cachedMuseVersion: string | null | undefined;
+  function currentMuseVersion(): string | null {
+    if (cachedMuseVersion === undefined) {
+      cachedMuseVersion = getMuseVersion(options.museBin ?? "muse");
+    }
+    return cachedMuseVersion;
+  }
   // Consecutive unchanged polls per log. Reaching QUIESCENT_POLLS means the
   // session went quiet; reset to 0 whenever new parent bytes are processed or
   // processing fails so only stably-quiet sessions reconcile. In-memory only:
@@ -537,7 +550,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
         continue;
       }
       for (const file of files) {
-        if (processed >= MAX_SPOOL_PER_POLL) return drained;
+        if (processed >= MAX_SPOOL_PER_POLL) return;
         const abs = join(dir, file);
         const entry = parseSpoolFile(abs);
         if (!entry) {
@@ -816,6 +829,13 @@ export function createMuseIngest(options: MuseIngestOptions) {
             tapePath,
             captureQuality: finalized.quality,
           });
+          upsertSessionBuildPin(db, {
+            sessionId,
+            museVersion: currentMuseVersion(),
+            adapterVersion: ADAPTER_VERSION,
+            exportSchemaVersion: finalized.reconciled.schemaVersion,
+            observedAt: observedIso,
+          });
           if (workspaceRoot && latestSnapshot(db, sessionId, "final") === null) {
             const snap = await takeLiveSnapshot({
               sessionId,
@@ -1064,6 +1084,15 @@ export function createMuseIngest(options: MuseIngestOptions) {
           : (summary?.startedAt ?? combined[0]?.ts ?? null),
         tapePath,
         captureQuality: quality,
+      });
+      // Pin what produced this tape. The export schema version is filled in
+      // by the reconcile path; live polls preserve whatever is already there.
+      upsertSessionBuildPin(db, {
+        sessionId,
+        museVersion: currentMuseVersion(),
+        adapterVersion: ADAPTER_VERSION,
+        exportSchemaVersion: getSessionBuildPin(db, sessionId)?.exportSchemaVersion ?? null,
+        observedAt,
       });
       if (latestSnapshot(db, sessionId, "baseline") === null) {
         const snap = await takeLiveSnapshot({
