@@ -16,6 +16,9 @@ export interface FactExtractionInput {
   tape: TapeEvent[];
   hunks: ReviewHunk[];
   attempts: FileAttempt[];
+  /** Raw tape length. Defaults to the input length; callers that dedupe
+   *  revisions pass the raw count so the watermark matches the tape. */
+  tapeEventCount?: number;
 }
 
 export type FactKind = "prompt" | "agent_text" | "hunk" | "attempt" | "run" | "action" | "gap";
@@ -614,5 +617,9 @@ export function extractFacts(input: FactExtractionInput): FactSet {
     facts.push(fact);
   }
 
-  return { sessionId: input.sessionId, tapeEventCount: input.tape.length, facts };
+  return {
+    sessionId: input.sessionId,
+    tapeEventCount: input.tapeEventCount ?? input.tape.length,
+    facts,
+  };
 }
