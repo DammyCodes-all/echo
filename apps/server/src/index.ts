@@ -20,6 +20,7 @@ import {
 import Fastify from "fastify";
 import { createAskService } from "./ask";
 import { createChecksService } from "./checks";
+import { loadLocalEnv } from "./env";
 import { createIngest } from "./ingest";
 import { createMuseIngest } from "./muse-ingest";
 import { createMuseWatcher } from "./muse-watch";
@@ -42,6 +43,7 @@ function resolvePort(): number {
 }
 
 const startedAt = Date.now();
+loadLocalEnv();
 const paths = resolveEchoPaths();
 mkdirSync(paths.dataDir, { recursive: true });
 const db = openEchoDb(join(paths.dataDir, "echo.sqlite"));

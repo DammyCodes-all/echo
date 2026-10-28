@@ -259,6 +259,9 @@ importers:
       '@echo/tape':
         specifier: workspace:*
         version: link:../../packages/tape
+      dotenv:
+        specifier: ^18.0.9
+        version: 18.0.9
       fastify:
         specifier: ^5.12.7
         version: 5.12.7
@@ -1581,6 +1584,11 @@ packages:
   diff@9.0.0:
     resolution: {integrity: sha512-svtcdpS8CgJyqAjEQIXdb3OjhFVVYjzGAPO8WGCmRbrml64SPw/jJD4GoE98aR7r25A0XcgrK3F02yw9R/vhQw==}
     engines: {node: '>=0.3.1'}
+
+  dotenv@18.0.9:
+    resolution: {integrity: sha512-3fVOW4cB02R066PUSwn8O4TJyz9NckQl7F81blIbaq9jKBm2tSmOKky7ZHIXzGvkVPXCSn6jkpziBPZdGFs8Tw==}
+    engines: {node: '>=12'}
+    hasBin: true
 
   drizzle-orm@0.44.7:
     resolution: {integrity: sha512-quIpnYznjU9lHshEOAYLoZ9s3jweleHlZIAWR/jX9gAWNg/JhQ1wj0KGRf7/Zm+obRrYd9GjPVJg790QY9N5AQ==}
@@ -3378,6 +3386,8 @@ snapshots:
   diff3@0.0.3: {}
 
   diff@9.0.0: {}
+
+  dotenv@18.0.9: {}
 
   drizzle-orm@0.44.7(better-sqlite3@12.11.1):
     optionalDependencies:
