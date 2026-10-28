@@ -1,7 +1,14 @@
 import { SessionStorySchema } from "@echo/contracts";
 import { buildAllStorySessions, type FixtureStorySession } from "@echo/fixtures";
 import { describe, expect, it } from "vitest";
-import { buildSkeletonStory, extractFacts, type FactSet, isStoryStale } from "./index";
+import {
+  buildSkeletonStory,
+  extractFacts,
+  type Fact,
+  type FactSet,
+  isStoryStale,
+  SKELETON_PROMPT_VERSION,
+} from "./index";
 
 const META = { generatedAt: "2026-10-28T12:00:00.000Z", tapeSha256: "test-sha" };
 
@@ -41,7 +48,7 @@ describe("buildSkeletonStory", () => {
     expect(story.generator).toEqual({
       kind: "skeleton",
       model: null,
-      promptVersion: "skeleton-v1",
+      promptVersion: SKELETON_PROMPT_VERSION,
     });
     expect(story.tapeWatermark).toEqual({ eventCount: session.tape.length, sha256: "test-sha" });
     expect(story.shortVersion).toHaveLength(1);
@@ -127,6 +134,84 @@ describe("buildSkeletonStory", () => {
     const first = buildSkeletonStory(facts, META).story;
     const second = buildSkeletonStory(facts, META).story;
     expect(second).toEqual(first);
+  });
+});
+
+describe("skeleton readability caps", () => {
+  function bigHunkFact(index: number, mechanical: boolean): Fact {
+    const hex = index.toString(16).padStart(16, "0");
+    return {
+      id: `F${index + 1}`,
+      kind: "hunk",
+      hunkId: `h_${hex}`,
+      path: `src/file${index}.ts`,
+      oldStart: 1,
+      oldLines: 1,
+      newStart: 1,
+      newLines: 2,
+      addedLines: 1,
+      removedLines: 0,
+      addedText: "x",
+      removedText: "",
+      mechanical: mechanical
+        ? { class: "format_only", reason: "whitespace" }
+        : { class: null, reason: null },
+      risk: {
+        flags: [],
+        unverifiedBoost: true,
+        boostReasons: ["no tool linkage"],
+        rewriteCount: 0,
+        centrality: null,
+      },
+      passingRunObserved: false,
+    };
+  }
+
+  function wideFacts(count: number, mechanical: boolean): FactSet {
+    const facts: Fact[] = [];
+    for (let index = 0; index < count; index++) facts.push(bigHunkFact(index, mechanical));
+    return { sessionId: "ses_wide", tapeEventCount: count, facts };
+  }
+
+  it("caps the summary path list with no novel evidence", () => {
+    const { story, validation } = buildSkeletonStory(wideFacts(8, false), META);
+    expect(story.summary).toContain("and other files");
+    expect(story.summary).not.toContain("src/file7.ts");
+    expect(story.summary).toContain("src/file0.ts");
+    expect(validation.verdicts.every((verdict) => verdict.valid)).toBe(true);
+    expect(validation.diagnostics).toEqual([]);
+    expect(SessionStorySchema.safeParse(story).success).toBe(true);
+  });
+
+  it("caps the routine path list", () => {
+    const { story, validation } = buildSkeletonStory(wideFacts(8, true), META);
+    expect(story.cards).toEqual([]);
+    expect(story.routineSummary ?? "").toContain("and other files");
+    expect(story.routineSummary ?? "").not.toContain("src/file7.ts");
+    expect(validation.verdicts.every((verdict) => verdict.valid)).toBe(true);
+  });
+
+  it("folds cards past the cap into one overflow card", () => {
+    const facts = wideFacts(25, false);
+    const { story, validation } = buildSkeletonStory(facts, META);
+    expect(story.cards).toHaveLength(21);
+    const overflow = story.cards[20];
+    expect(overflow?.id).toMatch(/^h_[0-9a-f]{16}$/);
+    expect(overflow?.constituentHunkIds).toHaveLength(5);
+    expect(overflow?.touches).toHaveLength(5);
+    expect(overflow?.verification).toBe("nothing");
+    expect(overflow?.rank).toBe(21);
+    // Kept cards hold the top ranks in order.
+    expect(story.cards.slice(0, 20).map((card) => card.rank)).toEqual(
+      Array.from({ length: 20 }, (_, index) => index + 1),
+    );
+    expect(story.verifiedCounts.total).toBe(21);
+    expect(validation.verdicts.every((verdict) => verdict.valid)).toBe(true);
+    expect(validation.diagnostics).toEqual([]);
+    expect(SessionStorySchema.safeParse(story).success).toBe(true);
+    // Deterministic across runs.
+    const again = buildSkeletonStory(facts, META).story;
+    expect(again).toEqual(story);
   });
 });
 

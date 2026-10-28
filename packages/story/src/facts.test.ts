@@ -395,7 +395,8 @@ describe("risk flags and boost", () => {
       sessionId: "ses_test",
       tape: [
         tapeEvent(1, "prompt.submitted", { payload: {} }),
-        tapeEvent(2, "capture.gap", { payload: { code: "schema_drift" } }),
+        tapeEvent(2, "prompt.submitted", { payload: { text: "" } }),
+        tapeEvent(3, "capture.gap", { payload: { code: "schema_drift" } }),
       ],
       hunks: [],
       attempts: [],

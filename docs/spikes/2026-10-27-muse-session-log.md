@@ -83,3 +83,11 @@ Key shapes:
 4. Reasoning expectation lowered: export states reasoning is **encrypted** verbatim; `show_reasoning` readability is still untested but `agent_stated` should not depend on it.
 5. Redaction disclosure must list the undocumented surfaces: `session.peer-history.sqlite3`, `cli-<uuid>.log`, `cron.db`.
 6. Next prerequisite: one tool-using session in a scratch repo to observe tool call/result payloads and confirm where message bodies live in the live log.
+
+## Addendum 2026-10-28 (live verification, Muse Code 1.4.14)
+
+Observed against 9 real parent logs + 2 headless `muse exec` sessions:
+
+- Attribution markers (exact paths): `payload.kind === "route_facts"` carries launch cwd at `payload.record.cwd` (payload_type `runtime.session.route_facts`); `workspace_root` appears nested at varying depths (`payload.record.workspace_root`, `payload.record.command.session_metadata.workspace_root`, `payload.payload.session_metadata.workspace_root`, meta/vcs objects). The guessed paths `payload.metadata.workspace_root` / `payload.route_facts.cwd` match zero real lines. Frame `children[].record_json` wraps real records and must be unwrapped for attribution. Fix: unified `extractWorkspaceRoot` in `@echo/capture-muse` (route_facts first, legacy paths kept, nested exact-key fallback with single-distinct-value rule, ambiguity refuses).
+- Prompt text: `runtime.user_intent.accepted` carries text in `model_messages[].content[]` (`kind: "text"`) with `refill_blocks[]` fallback; the `materialized` twin (same `intent_id`) carries outcome only, no text. `runtime.command_intake.received` carries session-start/retract metadata only (10 session_start + 2 run_retract across all logs, zero with message text). Remap: accepted → `prompt.submitted` + extracted `text`; materialized → `notification`; intake → `session.started` (existing first-wins dedup applies).
+- `muse exec` (headless) fires no hooks: spool `drained: 0` across all polls; capture came 100% from log tailing. Hook firing in live interactive use remains unobserved.

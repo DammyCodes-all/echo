@@ -252,3 +252,46 @@ describe("mapMuseToTape", () => {
     expect(event.diagnostics).not.toContain("truncation");
   });
 });
+
+describe("prompt mapping from observed shapes", () => {
+  it("extracts prompt text from model_messages with a refill fallback", () => {
+    const parsed = parseMuseLines([
+      envelope(3, "id-3", "runtime.user_intent.accepted", {
+        kind: "accepted",
+        intent_id: "intent-1",
+        model_messages: [{ content: [{ kind: "text", text: "Do the thing" }] }],
+        refill_blocks: [{ kind: "text", text: "Do the thing" }],
+      }),
+      envelope(4, "id-4", "runtime.user_intent.accepted", {
+        kind: "accepted",
+        intent_id: "intent-2",
+        model_messages: [],
+        refill_blocks: [{ kind: "text", text: "Refilled prompt" }],
+      }),
+    ]);
+    const result = mapMuseToTape(parsed.events, parsed.markers, parsed.invalidLines, CTX);
+    expect(result.events.map((event) => event.kind)).toEqual([
+      "prompt.submitted",
+      "prompt.submitted",
+    ]);
+    const [first, second] = result.events;
+    if (!first || !second) throw new Error("events missing");
+    expect((first.payload as { text: string }).text).toBe("Do the thing");
+    expect((second.payload as { text: string }).text).toBe("Refilled prompt");
+  });
+
+  it("maps the textless materialized twin and intake metadata off prompt.submitted", () => {
+    const parsed = parseMuseLines([
+      envelope(5, "id-5", "runtime.user_intent.materialized", {
+        intent_id: "intent-1",
+        outcome: "ok",
+      }),
+      envelope(2, "id-2", "runtime.command_intake.received", {
+        kind: "command_intake",
+        record: { kind: "received", command: { kind: "session_start" } },
+      }),
+    ]);
+    const result = mapMuseToTape(parsed.events, parsed.markers, parsed.invalidLines, CTX);
+    expect(result.events.map((event) => event.kind)).toEqual(["session.started", "notification"]);
+  });
+});
