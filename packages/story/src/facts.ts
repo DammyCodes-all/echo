@@ -382,14 +382,27 @@ const PATH_FLAGS: Array<{ flag: BlastFlagName; pattern: RegExp; boundary: string
 ];
 
 const DESTRUCTIVE_PATTERN =
-  /rm\s+-rf|DROP\s+(TABLE|DATABASE)|deleteMany|deleteFrom|TRUNCATE|mkfs|:\(\)\s*\{/i;
+  /rm\s+-rf?\s+[\/~.]|git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f[a-z]*d[a-z]*|DROP\s+(TABLE|DATABASE)|TRUNCATE\s+TABLE|deleteMany\s*\(|deleteFrom\s*\(|mkfs\b|:\(\)\s*\{/i;
 const PRODUCTION_COMMAND = /deploy|release|prod/i;
 
 // Large-mechanical-diff boost threshold (lines). Provisional until the
 // ARCHITECTURE §12 hand-check against 3 tapes.
 const LARGE_MECHANICAL_LINES = 50;
 
-function blastFlagsFor(hunk: ReviewHunk, linkedCommands: string[]): BlastFlag[] {
+/**
+ * Paths where destructive code patterns are routine, not risky: test bodies
+ * run `rm -rf` against scratch dirs, docs describe DROP TABLE migrations,
+ * and the tracker narrates truncations. A genuinely destructive *command*
+ * still flags below regardless of which hunk it links to — the exclusion
+ * covers file content only.
+ */
+const NON_DESTRUCTIVE_PATHS = [/\.test\.[cm]?[jt]sx?$/, /\.md$/, /(^|\/)docs\//, /BuildTracker/];
+
+function blastFlagsFor(
+  hunk: ReviewHunk,
+  linkedCommands: string[],
+  fileDeleted: boolean,
+): BlastFlag[] {
   const flags: BlastFlag[] = [];
   for (const { flag, pattern, boundary } of PATH_FLAGS) {
     if (pattern.test(hunk.path)) {
@@ -397,10 +410,16 @@ function blastFlagsFor(hunk: ReviewHunk, linkedCommands: string[]): BlastFlag[] 
     }
   }
   const code = `${hunk.addedText}\n${hunk.removedText}`;
-  if (DESTRUCTIVE_PATTERN.test(code)) {
+  if (
+    fileDeleted ||
+    (!NON_DESTRUCTIVE_PATHS.some((pattern) => pattern.test(hunk.path)) &&
+      DESTRUCTIVE_PATTERN.test(code))
+  ) {
     flags.push({
       flag: "destructive",
-      reason: `destructive: ${hunk.path} matches a destructive pattern`,
+      reason: fileDeleted
+        ? `destructive: file ${hunk.path} deleted`
+        : `destructive: ${hunk.path} matches a destructive pattern`,
     });
   }
   for (const command of linkedCommands) {
@@ -498,6 +517,22 @@ export function extractFacts(input: FactExtractionInput): FactSet {
     runCalls.map((call) => [call.toolCallId, runCommand(call)] as const),
   );
 
+  // Whole-file deletion works at file granularity: every hunk of the path
+  // removed lines and added none. Computed once — blastFlagsFor sees one
+  // hunk at a time.
+  const deletedPaths = new Set<string>();
+  {
+    const newByPath = new Map<string, number>();
+    const oldByPath = new Map<string, number>();
+    for (const hunk of hunks) {
+      newByPath.set(hunk.path, (newByPath.get(hunk.path) ?? 0) + hunk.newLines);
+      oldByPath.set(hunk.path, (oldByPath.get(hunk.path) ?? 0) + hunk.oldLines);
+    }
+    for (const [path, newLines] of newByPath) {
+      if (newLines === 0 && (oldByPath.get(path) ?? 0) > 0) deletedPaths.add(path);
+    }
+  }
+
   for (const hunk of hunks) {
     const mechanical = classifyMechanical(hunk, fileTools);
     const linkedCommands = attempts.flatMap((attempt) => {
@@ -505,7 +540,7 @@ export function extractFacts(input: FactExtractionInput): FactSet {
       const command = commandsByCall.get(attempt.link.toolCallId);
       return command === undefined ? [] : [command];
     });
-    const flags = blastFlagsFor(hunk, linkedCommands);
+    const flags = blastFlagsFor(hunk, linkedCommands, deletedPaths.has(hunk.path));
     const boostReasons: string[] = [];
     if (!passingRunObserved) boostReasons.push("no passing run observed in this session");
     for (const summary of gapSummaries) boostReasons.push(`capture gap in session: ${summary}`);
