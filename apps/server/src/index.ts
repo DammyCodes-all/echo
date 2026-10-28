@@ -2,6 +2,11 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import {
+  AnswerCheckRequestSchema,
+  AskRequestSchema,
+  GenerateChecksRequestSchema,
+} from "@echo/contracts";
+import {
   getSession,
   getSnapshotByCommit,
   listProjects,
@@ -12,6 +17,8 @@ import {
   readEvents,
 } from "@echo/db";
 import Fastify from "fastify";
+import { createAskService } from "./ask";
+import { createChecksService } from "./checks";
 import { createIngest } from "./ingest";
 import { createMuseIngest } from "./muse-ingest";
 import { buildSessionReview } from "./review-index";
@@ -45,6 +52,8 @@ const museIngest = createMuseIngest({
   log: app.log,
   projects: config.projects,
 });
+const ask = createAskService(db);
+const checks = createChecksService(db, paths.dataDir);
 
 app.get("/api/health", async () => ({
   status: "ok",
@@ -96,6 +105,52 @@ app.get<{ Params: { id: string } }>("/api/sessions/:id/review", async (request, 
       error: { code: "invalid_request", message: "could not build session review" },
     });
   }
+});
+
+app.post<{ Params: { id: string } }>("/api/sessions/:id/ask", async (request, reply) => {
+  const parsed = AskRequestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({
+      error: { code: "invalid_request", message: "question is required (max 2000 chars)" },
+    });
+  }
+  const outcome = await ask.answer(request.params.id, parsed.data);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.get<{ Params: { id: string } }>("/api/sessions/:id/checks", async (request, reply) => {
+  const outcome = await checks.sessionChecks(request.params.id);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.post<{ Params: { id: string } }>(
+  "/api/sessions/:id/checks/generate",
+  async (request, reply) => {
+    const parsed = GenerateChecksRequestSchema.safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "limit 1..5 with opened/waived hunk lists" },
+      });
+    }
+    const outcome = await checks.generate(request.params.id, parsed.data);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.post<{ Params: { id: string } }>("/api/checks/:id/answer", async (request, reply) => {
+  const parsed = AnswerCheckRequestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({
+      error: { code: "invalid_request", message: "confidence plus a non-empty answer" },
+    });
+  }
+  const outcome = await checks.answer(request.params.id, parsed.data);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.get<{ Params: { id: string } }>("/api/sessions/:id/report", async (request, reply) => {
+  const outcome = await checks.report(request.params.id);
+  return reply.code(outcome.status).send(outcome.body);
 });
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/snapshots", async (request) =>
