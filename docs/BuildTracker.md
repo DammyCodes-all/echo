@@ -237,6 +237,32 @@ notes.
 - evidence: full gate green → `tsc` clean, `biome` 139 files clean, `pnpm test` → 28 files / 184 passed (+5 ask tests: 404, pre-model refusal with zero model calls, answered+cached, bad-citation refusal, model-off/keyless 503), `pnpm build` ok; live-server probe on temp data dir + alt port returned `not_found` / `invalid_request` shapes correctly
 - notes: Answers are JSON, not SSE streaming (arch §17 shows a streaming POST; UI polls nothing here — single round-trip). No cost ledger or `asks`/`citations` tables yet (DB still 5 tables); no Baseten path; eval counts (20/10) not run. Citation chips scrub the timeline to the cited moment, which also covers cut-line item 5 for the ask panel.
 
+## 2026-10-28 — `echo-cli record` wrapper
+
+- item: `apps/cli/src/record.ts` + `record` subcommand (passthrough wrapper around interactive muse)
+- status: done
+- evidence: `apps/cli/src/record.test.ts` → 4 passed (arg/bin/cwd passthrough with inherited stdio, exit-code propagation, signal death mapping, spawn-failure diagnostic); live stub runs via tsx and the built bundle (`stub got: --model x hello`, exit 3 passes through; missing bin → `record failed`, exit 1); `import --bogus` still strict
+- notes: `allowUnknownOption` scoped to `record` only, so muse owns all non-wrapper flags while `--muse-bin` stays parsed; `passThroughOptions` rejected (requires parent opt-in that would disturb `import` parsing — verified against commander 15). Wrapper adds no session linkage of its own: attribution stays in the hook translator via the real cwd (commented at the call site). Exit codes: child code passes through, signal death maps to 130/143 with the name on stderr. The earlier "muse ran instead of echo-cli" scare was pnpm injecting `--` into argv (dev-mode only); the built bundle path is unaffected.
+
+## 2026-10-28 — Muse sessions-dir watcher (poll latency shortcut)
+
+- item: `apps/server/src/muse-watch.ts` + daemon wiring (recursive `node:fs` watch → debounced early `runOnce`)
+- status: done
+- evidence: `apps/server/src/muse-watch.test.ts` → 4 passed (all nested dirs watched, burst coalesced to one pass under fake timers, new subdirs picked up, silence after stop); live `tsx --eval` smoke with real `fs.watch` (5 dirs, 1 coalesced fire on file write, clean stop); full gate green
+- notes: Manual recursion (fs.watch is non-recursive on Linux); new date/session/child dirs picked up when the parent reports them. `runOnce` self-guards while running, so the watcher can never overlap a poll — every event also arrives via the 3s interval, so a dead watcher degrades to polling instead of losing data. Default 500ms debounce; injectable `watchFn` keeps tests deterministic. `createMuseIngest` now also returns `sessionsDir` (additive). No new dependencies.
+
+## 2026-10-28 — Build pinning + `echo-cli doctor`
+
+- item: migration v5 `session_build_pins` + per-ingest pins + `doctor` drift report
+- status: done
+- evidence: full gate green — `tsc` clean, `biome check` clean (158 files), `pnpm test` → 37 files / 238 passed + 8 skipped, `pnpm build` clean. New tests: db pin round-trip + version summary, `getMuseVersion` (trimmed output, null on exit-3/missing), doctor empty-DB + drift/clean cases, ingest pin assertion on the restart path. Live `doctor` against the real env (2 projects, `Muse Code 1.4.13`, no pins yet, zero warnings — correctly no drift claim with nothing pinned).
+- notes: `getMuseVersion` treats `--version` output as opaque (trimmed, 256-char cap, never throws — format unverified, so no parsing per the ground-truth rule). Pins written on every ingested poll (live path preserves a prior export schema version; reconcile fills it in). Version fetched once per boot and cached; a mid-boot upgrade surfaces on restart alongside checkpoint re-reads. `doctor` is read-only (WAL readers don't block the daemon) and exits 0 with `warning:` lines; only an unreadable config is exit 1. Migration v4 in the same file is parallel work (projects.remote_url), not mine. `pnpm install` re-run once to link the already-declared `@echo/db` dep for the CLI tests.
+
+- item: Phase 4 wiring — `POST /api/sessions/:id/ask` (retrieval bundle, pre-model refusal, one structured model call, server-side citation validation, in-memory content-hash cache, `ECHO_MODEL=off` fails closed), ask request/response contracts, replay ask panel with citation click-to-scrub
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 139 files clean, `pnpm test` → 28 files / 184 passed (+5 ask tests: 404, pre-model refusal with zero model calls, answered+cached, bad-citation refusal, model-off/keyless 503), `pnpm build` ok; live-server probe on temp data dir + alt port returned `not_found` / `invalid_request` shapes correctly
+- notes: Answers are JSON, not SSE streaming (arch §17 shows a streaming POST; UI polls nothing here — single round-trip). No cost ledger or `asks`/`citations` tables yet (DB still 5 tables); no Baseten path; eval counts (20/10) not run. Citation chips scrub the timeline to the cited moment, which also covers cut-line item 5 for the ask panel.
+
 ## 2026-10-28 — Checks wiring (selection, quiz, calibration, report)
 
 - item: Phase 5 wiring — risk + never-opened hunk selection (top 3, max 2/file, waivers), template-drafted ownership questions (consequence/decision/tradeoff/teach_back, easiest first), verification gate with real sandbox runner, model-graded rubric answers with confidence-first flow + Brier calibration, file-persisted checks/attempts artifacts, `GET/POST checks`, `POST /api/checks/:id/answer`, `GET report` endpoints, quiz UI + report UI
@@ -250,3 +276,16 @@ notes.
 - status: done
 - evidence: full gate green (typecheck, biome 158 files, `pnpm test` → 37 files / 238 passed + 8 skipped, build)
 - notes: Kept local checkpoint lane engine (resume test pins it) + remote repository-identity attribution (projectId/remoteUrl; identity test pins it); recordedAtUs nullability adopted across finalize/tailer/ingest (fork lines omit recorded_at). Drain uses remote inline baseline/tool.post (kinds-order test pins it); ingest-level tool.pre/batch.post/budget dropped — handleHookTriggerSnapshots stays exported+tested but unwired. Migration clash (both sides v3) resolved as v3 checkpoints + v4 remote_url. Also fixed 3 gate errors outside the merge per user: CLI record SpawnedChild adapter, record.test never-cast removal, server watcher type widening; added missing `@echo/db` workspace dep to CLI + pnpm install; biome-organized 4 files. Merge still open (uncommitted); concurrent session is staging/editing CLI + watcher files, so verify before committing.
+## 2026-10-28 — Daemon loads repo .env.local
+
+- item: `.env.local` fix — `dotenv` in `@echo/server`, `loadLocalEnv()` walks up from the launch dir at daemon startup; real env vars still win, missing file is fine
+- status: done
+- evidence: `pnpm exec vitest run apps/server/src/env.test.ts` → 3 passed; full gate green (typecheck, biome 144 files, 192 tests, build); loader probe from `apps/server` cwd found `/home/dev-aluminate/dev/echo/.env.local` with `META_API_KEY set: true` (presence only, value never printed)
+- notes: Restart `pnpm dev` to pick this up. `tsx` also auto-injects `.env.local` in dev, but the built `node dist` daemon does not — the explicit loader covers both.
+
+## 2026-10-28 — Merge origin/main (fifth divergence, dotenv)
+
+- item: merge remote dotenv/server-env work into local tree — 1 conflicted file
+- status: done
+- evidence: single adjacent-append conflict in `docs/BuildTracker.md` resolved by keeping both entries; full gate green (typecheck, biome 160 files, `pnpm test` → 38 files / 241 passed + 8 skipped, build)
+- notes: Merge initially refused — concurrent session had 26 unstaged tracker lines; waited for quiescence, stashed the file, merged, popped. Server dotenv files (env.ts/env.test.ts/index.ts/package.json/lockfile) auto-merged with no conflicts. Merge staged but uncommitted; tracker has additional unstaged entries from the concurrent session — coordinate before committing.
