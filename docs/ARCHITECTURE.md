@@ -4,14 +4,14 @@ Status: draft for build, October 27, 2026. Architecture only; this document does
 
 Canonical product spec: [`echo-spec.md`](./echo-spec.md) (v3). Where this document and the spec disagree on product intent, the spec wins. Where they disagree on technical mechanism, this document is the current default until a spike or ADR replaces it.
 
-The target is one narrow path that works end to end: record a normal interactive Muse Code session, replay it locally, answer questions only from captured evidence, and verify understanding by running code. Everything else is either in service of that path or explicitly cut.
+The target is one narrow path that works end to end: record a normal interactive Muse Code session, review its story locally, answer questions only from captured evidence, and verify understanding by running code. Everything else is either in service of that path or explicitly cut.
 
 **At a glance**
 
 - **Runtime:** one local daemon, one thin CLI, one browser UI. The daemon owns canonical writes and long-running work.
 - **Capture:** Muse native session JSONL + lifecycle hooks + independent shadow-Git snapshots. No PTY authority.
 - **Storage:** append-only redacted JSONL tape + shadow Git commits as the source of truth; SQLite as a rebuildable index.
-- **Review:** timeline, file state, final diff, hunk inspector, evidence Q&A with refusal, execution-verified checks and calibration.
+- **Review:** story cards with inline code, persisted ask thread with refusal, checks v2 with a picture (no scores).
 - **Delivery:** a local app for the demo and a read-only hosted demo built from the same code and a baked tape.
 
 **How to read this:** sections 1–4 are the shape and stack; 5–12 are capture, storage, redaction and evidence mapping; 13–16 are the review, Q&A, checks and project view; 17–23 are the API/security, hosted demo, CLI, failure behavior, performance, tests and build order; 24–27 are the verification log, spec discrepancies, decisions and spikes; 28–29 are boundaries and references.
@@ -32,7 +32,7 @@ The target is one narrow path that works end to end: record a normal interactive
 | Local-first, but local stops at the model call | The UI and storage are local. Retrieved, redacted tape segments go to a hosted model. The submission must say so. |
 | Hosted read-only demo | The same web app runs in a `demo` profile against a baked tape. No ingest, no filesystem browsing, no arbitrary code execution, spending caps. |
 | No Windows support in scope | Target Linux and macOS. Windows remains documented as out of scope. |
-| Three-minute demo, tight cut line | The replay path, refusal and one execution-verified check are the demo. Project view, attempt tree and OpenCode are later or cut. |
+| Three-minute demo, tight cut line | The story page, refusal and one checks-v2 question are the demo. Project graph/overlay and extra readers follow the cut line. |
 
 **Non-goals:** a universal terminal recorder, a PTY-authoritative transcript, complete private reasoning, lossless filesystem history, a general chat product, an IDE plugin, cloud sync, login, team accounts, Windows, installer packaging, or a second agent reader in the core path.
 
@@ -64,7 +64,6 @@ flowchart TB
     Web["React review UI"]
     Model["Muse Spark client"]
     Sandbox["check sandbox"]
-    Notify["desktop notifier"]
   end
 
   Repo["Project working tree"]
@@ -88,7 +87,6 @@ flowchart TB
   API --> Web
   API --> Model
   API --> Sandbox
-  Daemon --> Notify
 ```
 
 ### Processes
@@ -96,7 +94,7 @@ flowchart TB
 | Process | Lifetime | Responsibility |
 | --- | --- | --- |
 | `echo-cli` | Short-lived | User commands: `record`, `replay`, `import`, `daemon`, `hook`, `doctor`, `enable`/`disable`, `demo`. Starts the daemon if needed. The hook subcommand is deliberately tiny and fast. |
-| `echo-daemon` | Long-lived, one per user per machine | Owns all writes. Runs the HTTP API, session discovery, native-log tailers, snapshotter, redaction, indexer, job queue, model calls, sandbox jobs and notifications. |
+| `echo-daemon` | Long-lived, one per user per machine | Owns all writes. Runs the HTTP API, session discovery, native-log tailers, snapshotter, redaction, indexer, job queue, model calls and sandbox jobs. |
 | `echo-web` | Static assets loaded in a browser | React SPA. No secrets in the bundle. Talks only to the loopback API. Served by the daemon in production; Vite dev server in development. |
 
 The daemon is the only writer to canonical Echo-owned storage. Hooks and the CLI never open SQLite for writing and never append directly to a session tape. They send already-redacted events to the daemon, or to a bounded redacted spool that the daemon drains. The spool is a transport buffer, not a second source of truth. This keeps the concurrency model simple and makes redaction a single enforced boundary.
@@ -148,11 +146,12 @@ echo/
     snapshots/               # shadow Git repo, manifest, snapshotter, blame queries
     redaction/               # detectors, placeholders, preview, policy
     retrieval/               # evidence bundle builder, FTS ranking, token budget
+    story/                   # deterministic facts, story validator, skeleton fallback
     model/                   # provider interface, Meta/Baseten clients, structured output, cache
-    checks/                  # hunk scoring, generation, verification gate, grading, calibration
+    checks/                  # checks v2: selection, generation, rubric grading, picture mapping (no Brier in web responses)
     sandbox/                 # runner interface, container/bwrap/WASM backends
     graph/                   # TypeScript import graph and project overlay
-    notifier/                # desktop notification, browser open
+    notifier/                # desktop notification, browser open (future mechanism; not wired in v1)
     fixtures/                # fixture builders used by tests and evals
   eval/                      # section 9 metric scripts and hand-label files
   fixtures/                  # synthetic repos, fake Muse logs, baked tapes
@@ -169,14 +168,14 @@ Dependency direction:
 
 ```text
 contracts <- core <- config, db, tape
-contracts <- redaction, snapshots, capture, model, sandbox
+contracts <- redaction, snapshots, capture, model, sandbox, story
 capture + tape + db + redaction + snapshots <- capture-muse, capture-opencode
 all of the above <- server
 contracts <- web (types and fetch client only)
 cli <- server client + config + contracts
 ```
 
-The web app must not import server code or Node built-ins. The adapters must not import the server. The model package must not import the database; the server composes them.
+The web app must not import server code or Node built-ins. The adapters must not import the server. The model package must not import the database; the server composes them. Card/hunk IDs are defined in `@echo/contracts` and shared end to end: the canonical card ID is `h_`-prefixed (section 12); the web never invents `path:hunkIndex` IDs. Engagement events go through the API; the web still imports contracts only.
 
 ### Runtime stack
 
@@ -205,7 +204,7 @@ The web app must not import server code or Node built-ins. The adapters must not
 | Tests | Vitest, Playwright | Unit/integration and browser E2E. |
 | Logging | pino | Structured local logs with redaction. |
 | CLI | commander + execa | Small command surface and reliable child-process handling. |
-| Notifications | node-notifier, with native fallbacks | Desktop popup after a session; click opens the review URL. |
+| Notifications | node-notifier, with native fallbacks | Future mechanism; not wired in v1 — no popup is sent. |
 
 No Electron, no Tauri, no installer in the hackathon build. The browser is the UI.
 
@@ -231,8 +230,11 @@ $XDG_DATA_HOME/echo/                  # default ~/.local/share/echo
       diagnostics.jsonl               # capture gaps and adapter notes
       artifacts/
         graph.json
-        report.json
-        checks/<check_id>.json
+        story.json                    # generated story payload (versioned, watermark-stamped)
+        checks_v2.json                # checks v2 state machine + answers (versioned, watermark-stamped)
+        ask_thread.json               # persisted ask thread (versioned, watermark-stamped)
+        report.json                   # legacy summary artifact; story page supersedes it for review
+        checks/<check_id>.json        # legacy per-check files; superseded by checks_v2.json
   spool/<session_id>/                 # redacted hook events awaiting ingest
   cache/model/                        # content-addressed model responses
   logs/echo.log
@@ -281,7 +283,7 @@ sequenceDiagram
   M->>H: SessionEnd
   H->>D: session end
   D->>S: final snapshot + reconciliation
-  D->>D: index, analysis jobs, notification
+  D->>D: index, analysis jobs
   CLI->>U: print review URL
 ```
 
@@ -309,8 +311,10 @@ Finalization is a job, not a single hook callback. It runs after `SessionEnd`, o
 3. Run a final snapshot after filesystem quiescence.
 4. If Muse export is available and the installed build supports `--redacted`, export to a private temp directory, stream it through redaction, reconcile it with the live tape, and delete the temp file.
 5. Mark `capture_quality` and write diagnostics.
-6. Enqueue indexing, hunk/attempt building, optional graph rebuild, optional check generation and the report.
-7. Send a desktop notification when the review is ready.
+6. Enqueue indexing, hunk/attempt building, optional graph rebuild, story generation (`generate_story`), optional check preparation and the report.
+7. Mark `story.ready`: the inbox row updates and SSE notifies the open UI. No desktop notification is sent in v1 (spec: notifications are out of v1).
+
+Story generation is a finalization job, not inline UI work. It is idempotent and keyed by the tape watermark: `(event_count, sha256 of the redacted tape)`. New tape activity past the stored watermark marks the stored story stale, triggers regeneration, and resets the session check status (section 6).
 
 The daemon never deletes the live tape on a failed export. It keeps the live evidence and records the export failure.
 
@@ -318,10 +322,11 @@ The daemon never deletes the live tape on a failed export. It keeps the live evi
 
 A `jobs` table with `id`, `type`, `payload_json`, `status`, `priority`, `run_after`, `attempts`, `lease_until`, `last_error`, `created_at`, `updated_at`.
 
-- Types: `finalize_session`, `reconcile_export`, `index_session`, `build_hunks`, `build_attempts`, `build_graph`, `generate_checks`, `generate_report`, `notify`, `gc`.
+- Types: `finalize_session`, `reconcile_export`, `index_session`, `build_hunks`, `build_attempts`, `build_graph`, `generate_story`, `generate_checks`, `generate_report`, `notify`, `gc`.
 - One worker loop in the daemon, concurrency 2 for I/O jobs, 1 for sandbox jobs. A per-project snapshot mutex prevents two sessions from writing shadow commits at the same time.
 - Jobs are idempotent and keyed by `(type, session_id, input_hash)` so a retry does not duplicate rows.
 - A crashed `running` job is requeued after its lease expires.
+- The `notify` job type and `packages/notifier` exist as a future mechanism; v1 never enqueues `notify` and sends no desktop notifications.
 - The queue is deliberately not a general workflow engine. It exists so a model call or a sandbox run cannot block ingest or the UI.
 
 ---
@@ -336,7 +341,16 @@ A `jobs` table with `id`, `type`, `payload_json`, `status`, `priority`, `run_aft
 | Shadow Git (`shadow.git`) | Canonical redacted file states as commits, with diffs and blame. | No; it is the primary file record. Back it up. |
 | SQLite (`echo.sqlite`) | Query index for review data plus operational state: projects, sessions, events, snapshots, hunks, evidence links, checks, attempts, engagement, model ledger, jobs and settings. | Review data: yes, from tape + shadow Git + artifacts. Jobs/settings: no, and they do not need to be. |
 
-Artifacts (`graph.json`, `report.json`, generated checks) are derived and can be regenerated. They are stored as files so they can be inspected and exported without the database.
+Artifacts (`graph.json`, `story.json`, `checks_v2.json`, `ask_thread.json`, `report.json`) are derived and can be regenerated. They are stored as versioned JSON files under the session dir so they can be inspected and exported without the database. Each generated payload is stamped with the tape watermark it was built from (`tape_event_count`, `tape_sha256`) plus a generator version (`generator: story-vX / checks-vX / ask-vX`).
+
+### Persistence decision (story-first)
+
+Recorded Oct 28, 2026: the database currently has 5 tables (`projects`, `sessions`, `events`, `snapshots`, `snapshot_files`) while the table contract below assumes more. Going forward:
+
+- SQLite holds list-queryable state only: session check status and engagement events (plus the existing projects/sessions/events/snapshots/snapshot_files, hunks/attempts/evidence index, model ledger, diagnostics, jobs, settings).
+- Generated payloads live as versioned JSON artifacts under the session dir: `story.json`, `checks_v2.json`, `ask_thread.json`. SQLite never duplicates their full payloads; list views read status columns/artifact headers, detail views read the artifact file.
+- Session check status is stored on `sessions.check_status` with values `not_checked` / `checked` / `skipped`, kept consistent with the `checks_v2.json` state machine (`offered` / `in_progress` / `completed` / `skipped`, with resumable answers). `not_checked` is the initial state; `checked` requires a completed check set; `skipped` is an explicit user skip. "No check needed" for no-change sessions is a derived display state in the UI, not a stored status value.
+- Every artifact write passes the redaction gate before the file is written. A redaction failure drops the content and records a content-free diagnostic; no partial raw artifact is kept.
 
 ### SQLite tables
 
@@ -346,19 +360,19 @@ The exact DDL belongs in `packages/db/migrations`. This is the contract the rest
 | --- | --- | --- |
 | `schema_migrations` | `version`, `applied_at` | Migration tracking. |
 | `projects` | `id`, `root_path`, `canonical_root`, `remote_url`, `name`, `created_at`, `updated_at`, `settings_json` | One row per repository. |
-| `sessions` | `id`, `project_id`, `agent`, `agent_version`, `source_path`, `started_at`, `ended_at`, `status`, `tape_path`, `base_commit`, `final_commit`, `user_head`, `capture_quality`, `metadata_json` | One row per captured agent session. |
+| `sessions` | `id`, `project_id`, `agent`, `agent_version`, `source_path`, `started_at`, `ended_at`, `status`, `check_status`, `tape_path`, `base_commit`, `final_commit`, `user_head`, `capture_quality`, `metadata_json` | One row per captured agent session. `check_status`: `not_checked` / `checked` / `skipped`. |
 | `events` | `id`, `session_id`, `tape_seq`, `source_sequence`, `kind`, `ts`, `observed_at`, `turn_id`, `tool_call_id`, `batch_id`, `parent_session_id`, `summary`, `payload_json`, `search_text`, `redaction_json` | Queryable projection of the tape. The tape remains canonical. |
 | `snapshots` | `id`, `session_id`, `commit_oid`, `parent_oid`, `trigger`, `event_id`, `taken_at`, `file_count`, `total_bytes`, `status`, `diagnostics_json` | Shadow-Git commit metadata. |
 | `snapshot_files` | `snapshot_id`, `path`, `mode`, `blob_oid`, `size`, `sha256`, `redaction_version`, `captured`, `reason` | Per-file manifest for a snapshot. |
 | `file_changes` | `id`, `session_id`, `snapshot_id`, `path`, `change_type`, `old_blob`, `new_blob`, `added_lines`, `deleted_lines`, `patch_hash` | Derived diff summary. |
-| `hunks` | `id`, `session_id`, `file_path`, `old_start`, `old_lines`, `new_start`, `new_lines`, `patch`, `hunk_hash`, `risk_score`, `risk_reasons_json`, `opened_count`, `selected_for_check` | Final-diff hunks and review state. |
+| `hunks` | `id`, `session_id`, `file_path`, `old_start`, `old_lines`, `new_start`, `new_lines`, `patch`, `hunk_hash`, `risk_score`, `risk_reasons_json` | Final-diff hunks and deterministic risk. Engagement and check selection live in `engagement_events` and `checks_v2.json`, not here. |
 | `hunk_evidence` | `hunk_id`, `event_id`, `snapshot_id`, `relation`, `confidence`, `detail_json` | Links a hunk to introduced/touched/reverted evidence. |
 | `attempts` | `id`, `session_id`, `file_path`, `event_id`, `snapshot_id`, `status`, `introduced_lines`, `surviving_lines`, `evidence_json` | Attempt-tree nodes. |
-| `hunk_views` | `session_id`, `hunk_id`, `opened_at`, `dwell_ms`, `source` | Engagement tracking from the UI. |
-| `asks` | `id`, `session_id`, `hunk_id`, `question`, `status`, `answer_json`, `model`, `latency_ms`, `cost_usd`, `created_at` | One Q&A request. |
-| `citations` | `id`, `ask_id`, `evidence_id`, `quote`, `verified` | Validated citations. |
-| `checks` | `id`, `session_id`, `hunk_id`, `type`, `prompt`, `snippet`, `reference_answer`, `verification_json`, `status`, `created_at` | Generated checks that cleared the gate. |
-| `check_attempts` | `id`, `check_id`, `confidence`, `answer`, `result`, `sandbox_run_id`, `brier`, `created_at` | User answers and calibration. |
+| `engagement_events` | `id`, `session_id`, `card_id`, `hunk_id`, `kind`, `created_at`, `meta_json` | Server-side engagement from the web (batched POSTs). `kind`: `story_opened`, `card_seen`, `card_expanded`, `code_shown`, `ask_opened`. List-queryable; feeds check targeting as a ranking nudge only. Replaces the old `hunk_views`/localStorage design. |
+| `asks` | `id`, `session_id`, `hunk_id`, `question`, `status`, `answer_json`, `model`, `latency_ms`, `cost_usd`, `created_at` | Legacy per-question rows. Superseded by `ask_thread.json` (persisted per-session thread); kept for spend/debug joins only. |
+| `citations` | `id`, `ask_id`, `evidence_id`, `quote`, `verified` | Validated citations. Mirror of the citations stored in `ask_thread.json`. |
+| `checks` | `id`, `session_id`, `hunk_id`, `type`, `prompt`, `snippet`, `reference_answer`, `verification_json`, `status`, `created_at` | Legacy generated checks. Superseded by `checks_v2.json` (MCQ + free-text rubric, state machine `offered`/`in_progress`/`completed`/`skipped`). No waive column; no Brier/score in web-consumed responses. |
+| `check_attempts` | `id`, `check_id`, `confidence`, `answer`, `result`, `sandbox_run_id`, `created_at` | User answers and grading. Confidence enum `guessing`/`think_so`/`certain`. No `brier` column in web-consumed state. |
 | `sandbox_runs` | `id`, `check_id`, `backend`, `image`, `status`, `stdout`, `stderr`, `exit_code`, `duration_ms`, `resource_json` | Sandbox evidence for a check. |
 | `model_calls` | `id`, `provider`, `model`, `purpose`, `prompt_hash`, `response_hash`, `input_tokens`, `output_tokens`, `cost_usd`, `status`, `created_at` | Spend ledger and cache key. |
 | `redaction_findings` | `id`, `scope`, `ref_id`, `rule_id`, `placeholder`, `path`, `line`, `severity`, `created_at` | What was removed, never the secret itself. |
@@ -469,10 +483,13 @@ Field rules:
 | `subagent.started` / `subagent.stopped` | Hook / child log | Child session linkage. |
 | `turn.ended` / `turn.failed` | Hook | End of a turn. |
 | `session.ended` | Hook / wrapper | Session finished; finalization follows. |
-| `review.hunk_opened` | Web UI | Review engagement, not agent evidence. |
-| `review.answer` | Web UI | User answer/waiver metadata, not agent evidence. |
-| `check.generated` / `check.answered` | Check engine | Proof-half state. |
-| `report.generated` | Report job | Summary artifact reference. |
+| `review.hunk_opened` | Web UI | Review engagement, not agent evidence. Kept for compat; new code posts `engagement.*` via the API. |
+| `review.answer` | Web UI | User answer metadata, not agent evidence. Checks v2 uses `check.answered` with the v2 state machine. |
+| `engagement.story_opened` / `engagement.card_seen` / `engagement.card_expanded` / `engagement.code_shown` / `engagement.ask_opened` | Web UI via API | Server-side engagement events. `card_seen` = closed card in viewport for >= ~1s. Canonical card IDs (`h_…`) end to end. Stored in `engagement_events`; appended to the tape namespaced, never agent evidence. |
+| `story.generated` / `story.stale` | Story job | Story artifact built from a tape watermark; stale marker when new tape activity passes the watermark. |
+| `ask.asked` / `ask.answered` | Ask thread | Persisted per-session ask thread entries (`ask_thread.json`). |
+| `check.generated` / `check.answered` | Check engine | Proof-half state (checks v2). |
+| `report.generated` | Report job | Summary artifact reference. Legacy; the story page supersedes it for review. |
 
 `agent.unknown` is allowed for an unrecognized source record. It stores the redacted payload, `source.record_type`, a hash and a diagnostic. Unknown records are preserved, not dropped, because they may be the only clue after a schema change.
 
@@ -630,7 +647,7 @@ Do not rely on a late export as the only source: Muse's changelog describes trim
 - Tail `subagent/<child-id>/session.jsonl` when the path exists.
 - Link child events to the parent with `parent_session_id` and `subagent_id`.
 - Prefer an explicit ID from `SubagentStart` or the child envelope. Do not link by timestamp alone.
-- Child events go into the parent tape with a `subagent` lane, or into a child tape referenced by the parent. For the hackathon, one parent tape with lane IDs is simpler for replay and export.
+- Child events go into the parent tape with a `subagent` lane, or into a child tape referenced by the parent. For the hackathon, one parent tape with lane IDs is simpler for story generation and export.
 - If a child log is missing or export omits it, mark `capture.gap` with `subagent_id`; do not flatten the child's actions into the parent as if the parent performed them.
 
 ### Reasoning text
@@ -659,7 +676,7 @@ If the build changes mid-session or the schema is unknown, set `capture_quality:
 
 - If hooks were never active, there are no intermediate snapshots. The importer reads the native log and, if possible, the redacted export, then takes one final working-tree snapshot.
 - The session is marked `capture_quality: import_only`.
-- Replay shows the action timeline and the final file state. It does not claim intermediate file states.
+- Import shows the recorded actions and the final file state. It does not claim intermediate file states.
 - Import is useful for fixtures and for judges who want to try a tape, not a substitute for live capture.
 
 ### Capture quality
@@ -668,16 +685,16 @@ If the build changes mid-session or the schema is unknown, set `capture_quality:
 | --- | --- |
 | `full` | Native records + hooks + snapshots + successful reconciliation; no critical gaps. |
 | `partial` | One input missing, or known gaps/conflicts/truncation. |
-| `degraded` | Native records only, or snapshots only; timeline is usable but file history or action detail is incomplete. |
+| `degraded` | Native records only, or snapshots only; action history is usable but file history or action detail is incomplete. |
 | `import_only` | No live capture; final state and native actions only. |
 
 The quality value is shown in the session header, the report and the hosted demo. It is computed from diagnostics, not hand-set.
 
 ---
 
-## 9. OpenCode V2 capture (optional)
+## 9. OpenCode V2 capture (V1 second adapter)
 
-OpenCode V2 is the documented second path, not a core guarantee. It ships as `packages/capture-opencode`, a plugin package that can be loaded from `.opencode/plugins/` or the `plugins` field in `opencode.json(c)`.
+OpenCode V2 is the documented second path, not a core guarantee. It ships as `packages/capture-opencode`, a plugin package that can be loaded from `.opencode/plugins/` or the `plugins` field in `opencode.json(c)`. V1 capture claim: Muse + OpenCode adapters feed the same tape/story pipeline (same envelope, same shadow-Git snapshots, same story validator); other agents are future adapters.
 
 ### Verified plugin surface
 
@@ -709,7 +726,7 @@ Live event subscriptions are live-only: they do not replay missed events or reco
 - No universal schema promise; the plugin API can change.
 - No PTY or terminal capture.
 - No claim of complete file history. File snapshots still come from Echo's snapshotter when the project is enabled, using the same shadow Git path.
-- This adapter is cut-line item 7. It must not delay the Muse path, the replay UI, Q&A or checks.
+- This adapter is cut-line item 7. It must not delay the Muse path, the story pipeline, ask or checks.
 
 ---
 
@@ -843,7 +860,7 @@ Redaction is a gate, not a cleanup pass. It runs before any Echo-owned write and
 | SQLite event/search rows | From already-redacted tape payloads. | Indexing fails and retries; no raw path. |
 | Model request | Re-redact the evidence bundle immediately before the call. | Abort the call; return a model error, not a partial raw prompt. |
 | Logs and errors | pino redaction + a final scrub. | Log a generic error with a correlation ID. |
-| Artifacts (graph, report, checks) | Built from redacted data; scanned before write. | Omit the field or fail the job. |
+| Artifacts (story, checks v2, ask thread, graph, report) | Built from redacted data; scanned before write. | Omit the field or fail the job. |
 | Demo bundle | Scanned with the same rules plus a fixture-specific scan. | Do not bake; fail the build. |
 
 ### Detectors
@@ -927,8 +944,9 @@ Indexing turns the tape and shadow commits into the review model. It is determin
 2. `build_hunks`: diff the baseline snapshot against the final snapshot per file, parse hunks, compute IDs and risk features.
 3. `build_attempts`: walk snapshot commits, compute line survival with blame, classify nodes, link to events.
 4. `build_evidence`: link hunks to introduced/touched/reverted events and snapshots.
-5. `build_graph`: optional project import graph from the final tree.
-6. `generate_report`: summarize review state, gaps, checks and calibration.
+5. `generate_story`: extract deterministic facts, call the model for a fact-referenced story, validate, write `story.json` stamped with the tape watermark.
+6. `build_graph`: optional project import graph from the final tree.
+7. `generate_report`: summarize review state, gaps, checks and calibration (legacy; the story page is the review surface).
 
 Each step writes a `job` checkpoint so a retry resumes rather than duplicating.
 
@@ -947,7 +965,11 @@ hunk_id = "h_" + sha256(
 
 `normalize` strips trailing whitespace and the `index` line from the patch header, not the code. If the same logical hunk shifts because an unrelated line was added earlier in the file, the ID changes; that is acceptable for a session-scoped review. The UI can keep a mapping from old to new IDs during a live re-index.
 
-The final diff is baseline → final. Per-snapshot diffs are computed on demand for the timeline. Hunk rows store the final diff only; timeline diffs are generated from Git and cached.
+The final diff is baseline → final. Per-snapshot diffs are computed on demand for inline "show the code" slices (before/after + session slice); there is no timeline scrubber page. Hunk rows store the final diff only; inline slices are generated from Git and cached.
+
+### Story cards and canonical IDs
+
+Each final-diff hunk maps to one story card. The canonical card ID is the hunk ID (`h_` + 16 hex chars, section 12) end to end — tape, DB, `story.json`, API and web. The web never invents `path:hunkIndex` IDs; the `path:hunkIndex` vs `h_…` mismatch is fixed by contract (`@echo/contracts` owns the ID schema, section 4).
 
 ### Evidence relations
 
@@ -998,26 +1020,35 @@ session
 
 The UI can pivot by file (all attempts on `src/retry.ts` in order) or by turn. A flat list per file is the fallback if the tree layout runs long.
 
-### Risk scoring
+### Risk scoring (blast-radius taxonomy)
 
-Risk is a deterministic first pass, then optionally a model label. Draft score, each component normalized to 0–1:
+Risk is deterministic. It replaces the old size+pattern weighted score with a blast-radius taxonomy, stored with human-readable reasons per hunk/card:
 
 ```text
-risk =
-  0.25 * size_score +
-  0.30 * pattern_score +
-  0.20 * rewrite_score +
-  0.15 * skipped_score +
-  0.10 * centrality_score
+risk = blast_radius × P(model_wrong)
 ```
 
-- `size_score`: changed lines relative to the session's 90th percentile.
-- `pattern_score`: removed error handling, auth/crypto, async/concurrency, null/undefined, data loss, API boundary, security-sensitive paths.
-- `rewrite_score`: number of earlier attempts on the same file/region that were reverted or replaced.
-- `skipped_score`: 1 if the hunk was never opened in replay, 0 otherwise.
-- `centrality_score`: import-graph in-degree, capped.
+- `blast_radius`: deterministic taxonomy flags — `auth`, `payments`, `stored_data`, `destructive` (deletes/drops/migrations without guard), `secrets` (touches secret-adjacent paths), `production` (prod config/infra/deploy paths). Each flag carries a stored human-readable reason (e.g. "touches `src/auth/session.ts` — auth boundary").
+- `P(model_wrong)` (`unverified boost`): deterministic boost when the change is hard to verify from the tape — no linked test/command run, no surviving attempt evidence, large mechanical diff with no observed run, or capture gap over the region.
+- `rewrite` signal: number of earlier attempts on the same file/region that were reverted or replaced (from the attempt tree).
+- `centrality`: import-graph in-degree, capped, as a tiebreak only.
+- Routine/mechanical classification is deterministic-first (format-only, rename-only, generated/lockfile, comment-only): classified from diff + path + tool evidence before any model label, stored with reason, and down-ranked for checks.
 
-Store the component values and human-readable reasons. The top 3–5 hunks are offered for checks; the user can skip any hunk. The weights are a guess until hand-checked against 3 tapes, and the report says so.
+Store the flags, the boost, and human-readable reasons in `risk_reasons_json`. Card risk rolls up as the max over constituent hunks. Engagement tiers (`unseen` / `seen` / `engaged`) do NOT enter the risk score; they feed check targeting as a ranking nudge only (section 15). The flag set and boost thresholds are a guess until hand-checked against 3 tapes, and the story artifact says so.
+
+### Story pipeline (`generate_story`)
+
+The story is built at finalization from the redacted tape plus shadow snapshots:
+
+1. **Deterministic fact extraction (no model).** Prompts, final-diff hunks, consequential non-file tool actions (shell/test/deploy commands with observed runs), attempts (landed/reverted/replaced with evidence links), observed test/command runs, mechanical-change classification, and risk flags (section 12 taxonomy). Each fact gets a stable fact ID (`F…`).
+2. **Model narration over fact IDs only.** The model returns a structured story: cards referencing fact IDs, never free-form file/number/name claims. Request schema and prompt version are recorded.
+3. **Server-side validator (deterministic).** Every claim's numbers, file paths and names are checked against the fact set. Verification is overwritten by the server, never trusted from the model: `observed` (recorded evidence covers all of the card's key behaviour) / `partly_observed` (recorded evidence covers part but not all of the key behaviour) / `agent_stated` (quoted agent text) / `nothing` (no supporting evidence). Only `observed` counts as verified. `uncertain` remains a claim-provenance label (gap or weak link), not a badge level. Risk is recomputed deterministically (`blast × model-wrong`, max-constituent rollup) with human-readable reasons.
+4. **Failed claim → 1 regeneration → drop.** A claim that fails validation gets one regeneration with the validation errors. If it still fails, it is dropped to a gap line ("what the tape could not show") with a diagnostic.
+5. **Deterministic skeleton fallback.** When the model is off (`ECHO_MODEL=off`) or fails, write a skeleton story from facts alone (prompts, hunks, runs, gaps) with verification labels intact. The UI renders the skeleton with a "model unavailable" badge.
+6. **Watermark + staleness.** `story.json` stores `{ tape_event_count, tape_sha256, generator }`. New tape activity past the watermark (e.g. session resumed, still-recording) marks the story stale, triggers regeneration, and resets `sessions.check_status` to `not_checked` unless a completed check set was built from the same watermark.
+7. **Redaction gate.** The fact set is built from redacted data; the model request is re-redacted; the artifact is scanned before write. A redaction failure drops the content with a content-free diagnostic.
+
+Partial capture degrades honestly: `import_only` / `partial` sessions get a skeleton plus a blind-spot line ("intermediate states not captured"), and checks are suppressed for unsupported targets.
 
 ### Rebuild
 
@@ -1025,82 +1056,66 @@ Store the component values and human-readable reasons. The top 3–5 hunks are o
 
 ---
 
-## 13. Replay and review UI
+## 13. Story-first review UI
 
-The UI is a local web app, not a native shell. It is served by the daemon at `http://127.0.0.1:<port>` and is the only place the review loop is exposed. The hosted demo uses the same app in a read-only profile.
+The UI is a local web app, not a native shell. It is served by the daemon at `http://127.0.0.1:<port>` and is the only place the review loop is exposed. The hosted demo uses the same app in a read-only profile. There is no timeline scrubber page; the story page is the review surface.
 
 ### Routes
 
 | Route | View |
 | --- | --- |
-| `/` | Project list: repositories, session counts, last activity, capture warnings. |
-| `/projects/:projectId` | Project view: session list, import graph, agent-touched overlay. |
-| `/sessions/:sessionId/replay` | Timeline, file state at a moment, final diff, hunk inspector, ask panel. |
-| `/sessions/:sessionId/checks` | Check queue, confidence-first answer flow, calibration. |
-| `/sessions/:sessionId/report` | Review report: what was reviewed, proved, waived, and what the tape could not show. |
+| `/` | Redirects to the last-active project (`/projects/:id`); falls back to `/projects` when none exists. |
+| `/projects` | Project switcher/list: repositories, session counts, last activity, capture warnings. |
+| `/projects/:projectId` | Triage inbox: sessions newest-first with one-line summary, check status (`not_checked`/`checked`/`skipped`), high-risk flag, and capture state including still-recording. |
+| `/sessions/:sessionId` | Story page: cards, inline code, check flow, picture, ask side panel. Replaces `/sessions/:id/replay`, `/sessions/:id/checks` and `/sessions/:id/report`, which are removed. |
 | `/demo` | Hosted/demo landing page for the baked project. |
 
-URL state is first-class: selected snapshot, selected hunk, open panel and playback position are encoded in the query string so a citation can deep-link to the exact moment.
+URL state is first-class: selected card, expanded code, open panel and check position are encoded in the query string so a citation can deep-link to the exact card. Backend evidence endpoints (tape pages, snapshots, file blobs, diffs, hunk evidence) stay as substrate for inline slices; they are not pages.
 
 ### Page composition
 
-**Session header.** Project, session time, agent and build, model(s) used, `capture_quality` badge, counts of gaps/conflicts, redaction summary, and a link to the report. If the session is still live, a “recording” indicator and a refresh/live toggle.
+**Inbox (`/projects/:id`).** Session rows newest-first: summary line (from `story.json` or the deterministic skeleton), check status badge, high-risk flag (top blast-radius card), capture state (`recording` / `partial` / `import_only` / gaps count). "No check needed" for no-change sessions is a derived display state. Clicking opens the story page.
 
-**Timeline.** Horizontal or vertical lanes for prompts, model calls, tool calls, approvals, snapshots, subagents and diagnostics. A scrubber selects a snapshot or event. Snapshot markers are dense; diagnostics are visually distinct. Keyboard: left/right step, shift for larger steps, `Home`/`End`, `Enter` opens the selected event. The timeline is virtualized; a 10k-event session must not render 10k DOM nodes.
+**Session header (story page).** Project, session time, agent and build, model(s) used, `capture_quality` badge, counts of gaps/conflicts, redaction summary, story watermark + staleness badge. If the session is still live, a "recording" indicator and a refresh/live toggle; new tape activity past the watermark marks the story stale.
 
-**File state.** At a selected snapshot, a file tree with captured/not-captured badges. Selecting a file shows its redacted content with syntax highlighting. A toggle switches between “state at this moment” and “diff from previous snapshot.” Files that were not captured (binary, ignored, oversized) show metadata and a reason, not an empty file.
+**Story cards.** One card per consequential change (constituent hunks + actions + evidence). Each card shows: summary, verification badge (`observed` / `partly_observed` / `agent_stated` / `nothing`; only `observed` reads as verified), risk reasons, and "show the code" toggle rendering the before/after diff plus the relevant session slice inline. Citation/moment links render inline in the card; no timeline scrubber. Cards carry canonical `h_…` IDs.
 
-**Final diff.** Baseline → final, split or unified, with hunk-level actions. This is the primary review surface. Each hunk shows its risk score, whether it was opened, and a compact evidence count.
+**Check flow (inside the story page).** Per-card single-question entry feeds the session set (section 15). Confidence is locked before the answer is revealed. Results map cards to the 5 picture buckets; no Brier/score is displayed or present in web-consumed responses.
 
-**Hunk inspector.** For a selected hunk:
-- introduced by (snapshot/event, confidence);
-- touched by (later snapshots);
-- captured attempts that were reverted or replaced, with links;
-- related prompts, model calls, tool calls and approvals;
-- agent-stated text, if any, labeled as such;
-- “ask about this hunk” input;
-- “select for check” / “waive” actions.
+**Ask Why (side panel thread on the story page).** Persisted per-session thread (`ask_thread.json`). Requests carry optional card context (card ID → constituent hunks/actions/evidence). Answers render inline with claim-level citations and refusal state ("not on the tape").
 
-Requested edits, observed effects and uncertain mappings are visually separate. The inspector never says “the agent did X because Y” unless Y is quoted agent-stated text or an explicit observed sequence.
-
-**Ask panel.** Question input, streaming answer, claim-level citations, refusal state. Citation chips scroll the timeline and select the snapshot/event. A refusal shows “not on the tape” and, optionally, what evidence was searched.
-
-**Check wizard.** One check at a time. Confidence selection is locked before the answer input appears. After submission: correctness, reference behavior, sandbox output, calibration reading, and next/waive. The UI never reveals the reference answer before submission.
-
-**Report.** Reviewed hunks, checks passed/failed, calibration (Brier, overconfidence events), waivers, capture gaps, model calls and estimated cost. Export as JSON/Markdown. The report is generated from stored state, not from model memory.
-
-**Project view.** Session list plus two visualizations: the import graph and the agent-touched overlay. The attempt tree lives in the session replay; the project view is about where agent work sits in the codebase, not a second attempt tree.
+Requested edits, observed effects and uncertain mappings are visually separate. Cards never say "the agent did X because Y" unless Y is quoted agent-stated text or an explicit observed sequence.
 
 ### State management
 
-- TanStack Query for server state: projects, sessions, timeline, snapshots, hunks, checks, report.
-- Zustand for ephemeral UI state: playback position, selected hunk, panel layout, hover/selection.
-- URL for deep-linkable state: `?snapshot=...&hunk=...&panel=ask`.
+- TanStack Query for server state: projects, inbox sessions, story, checks v2, ask thread.
+- Zustand for ephemeral UI state: selected card, expanded code, panel layout, hover/selection.
+- URL for deep-linkable state: `?card=...&code=...&panel=ask&check=...`.
 - SSE invalidation for live sessions. On reconnect, refetch the session summary and the tape tail; do not assume missed events are replayed.
-- Optimistic updates only for local UI actions (open/waive). Server-confirmed state wins.
+- Optimistic updates only for local UI actions (expand/collapse). Server-confirmed state wins.
 
 ### Engagement tracking
 
-The product’s “target what I skipped” feature depends on reliable, low-friction tracking.
+The product's "target what I skipped" feature uses server-side engagement events posted by the web (batched). The web still imports contracts only; events go through the API.
 
-- A hunk is `opened` when the user expands it, clicks it, or keeps it in the viewport for at least 1 second.
-- `dwell_ms` accumulates while the hunk is visible and the tab is focused, capped per view.
+- Event kinds: `story_opened`, `card_seen` (closed card in viewport for >= ~1s), `card_expanded`, `code_shown`, `ask_opened`.
+- Canonical card/hunk IDs (`h_…`) end to end; the `path:hunkIndex` vs `h_…` mismatch is fixed by contract.
 - Events are batched and sent every 5 seconds and on `visibilitychange`/`pagehide`, with `navigator.sendBeacon` fallback.
-- A hunk with zero opens is “skipped.” Dwell time is a later refinement, not the definition.
-- Engagement events are stored in the tape as `review.*` and in `hunk_views`; they are not agent evidence.
+- Tiers derived server-side: `unseen` (no events), `seen` (`card_seen` without expansion), `engaged` (`card_expanded` or `code_shown` or `ask_opened` on the card).
+- Engagement rows live in `engagement_events` and namespaced tape events (`engagement.*`); they are never agent evidence. Tiers feed check targeting as a ranking nudge only, not as risk.
 
 ### Live updates
 
-The daemon exposes `GET /api/events` as SSE. Event types: `session.updated`, `snapshot.created`, `analysis.ready`, `check.ready`, `report.ready`, `capture.warning`. The UI refetches the affected query keys. SSE is one-way; mutations use normal POSTs. The stream sends a heartbeat every 15 seconds and closes idle connections. If the browser reconnects, it gets a fresh snapshot, not a replay of missed events.
+The daemon exposes `GET /api/events` as SSE. Event types: `session.updated`, `snapshot.created`, `analysis.ready`, `story.ready`, `check.ready`, `report.ready`, `capture.warning`. The UI refetches the affected query keys. SSE is one-way; mutations use normal POSTs. The stream sends a heartbeat every 15 seconds and closes idle connections. If the browser reconnects, it gets a fresh snapshot, not a replay of missed events.
 
 ### Performance and accessibility
 
-- Virtualize the timeline and file tree.
+- Virtualize the inbox list and card list.
 - Fetch file blobs lazily; cache by blob OID in the query cache.
 - Parse/format large diffs in a Web Worker if the main thread stalls; otherwise use the diff library’s async mode.
-- Cap the import graph at a configurable node count (default 1,500) and show a “graph truncated” notice. The session list and replay must still work.
-- Prefetch the session summary and first screen of the timeline on hover.
-- Keyboard navigation for timeline, file tree, hunk list and check flow.
+- Cap the import graph at a configurable node count (default 1,500) and show a “graph truncated” notice. The inbox and story page must still work.
+- Prefetch the story payload on inbox hover.
+- Keyboard navigation for inbox, card list and check flow.
 - Color is never the only signal: status text and icons accompany red/green/amber.
 - Respect `prefers-reduced-motion`; playback is opt-in.
 - Focus management for the ask panel and check modal; no keyboard trap.
@@ -1115,26 +1130,26 @@ The daemon exposes `GET /api/events` as SSE. Event types: `session.updated`, `sn
 
 ---
 
-## 14. Evidence Q&A
+## 14. Evidence Q&A (persisted ask thread)
 
-The Q&A path is deliberately not a generic “chat with your logs” feature. It is a constrained evidence-answering pipeline with a refusal state.
+Ask is a persisted per-session thread on the story page, not a one-shot panel. Retrieval, citation validation and refusal are unchanged in principle (below); the thread adds card context and artifact storage.
 
 ```mermaid
 flowchart LR
-  Q["Question + selected hunk"] --> R["Candidate retrieval<br/>FTS5 + file/symbol/sequence filters"]
+  Q["Question + optional card context"] --> R["Candidate retrieval<br/>FTS5 + file/symbol/sequence filters"]
   R --> B["Evidence bundle<br/>IDs, text, provenance, confidence"]
   B --> P["Prompt<br/>answer only from bundle"]
   P --> M["Muse Spark<br/>structured output"]
   M --> V["Validation<br/>schema, IDs, quote support"]
-  V -->|valid claims| A["Answer with citations"]
+  V -->|valid claims| A["Answer with citations<br/>appended to ask_thread.json"]
   V -->|no valid claims| F["Refuse: not on the tape"]
 ```
 
 ### Evidence bundle
 
-The bundle is built deterministically before the model sees anything. It contains, in priority order:
+The bundle is built deterministically before the model sees anything. Requests carry optional card context: a card ID resolving to its constituent hunks, consequential actions and linked evidence. The bundle contains, in priority order:
 
-1. The selected hunk: file path, patch, baseline and final snippets, line ranges.
+1. The selected card's hunks: file paths, patches, baseline and final snippets, line ranges.
 2. The snapshot commits that introduced/touched those lines, with their triggering events.
 3. Tool requests, results and failures that mention the file, symbol or hunk region.
 4. Prompts and model responses in the same turn(s), including agent-stated text when readable.
@@ -1256,9 +1271,10 @@ Both providers implement it. The server records provider, model, tokens, cost an
 - Cache value: the validated answer, citations, usage and timestamp.
 - Cache location: SQLite or `cache/model/<hash>.json`; both are redacted.
 - Refusals are cached too; they are deterministic given the bundle.
+- The thread is stored with the session in `ask_thread.json` (versioned, watermark-stamped): ordered entries `{ question, card_id, answer, citations, refusal, model, latency_ms, cost_usd, created_at }`, redacted before write. A redaction failure drops the entry with a content-free diagnostic.
 - Per-session and per-day cost caps. When the cap is hit, return a budget error; do not silently switch to a cheaper model with different behavior.
 - The model receives only the redacted bundle. The submission discloses that retrieved source code goes to the model provider.
-- `ECHO_MODEL=off` disables Q&A and check generation for a fully local replay.
+- `ECHO_MODEL=off` disables Q&A and check generation for a fully local review.
 
 ### Failure behavior
 
@@ -1283,57 +1299,26 @@ The eval harness stores the question, bundle hash, answer, citations and a human
 
 ---
 
-## 15. Checks, sandbox and calibration
+## 15. Checks v2
 
-The proof half exists to catch the answer the user is confident about and wrong about. It is not a quiz feature and not a tutor.
+The proof half exists to catch the answer the user is confident about and wrong about. It is not a quiz feature and not a tutor. Checks v2 live inside the story page; there is no separate checks route. Waive is removed everywhere (selection, API, storage). No Brier/score appears in any API response consumed by the web.
 
-### Hunk selection
+### Selection (risk-ranked cards × engagement tiers)
 
-1. Compute risk scores for final-diff hunks (section 12).
-2. Exclude hunks that are purely generated, binary, not captured, or too small to ask about.
-3. Prefer hunks the user never opened.
-4. Pick 3–5 per session, with at most 2 from the same file.
-5. Let the user waive a hunk; a waiver is recorded and appears in the report.
-6. If fewer than 3 hunks qualify, show fewer. Never pad with trivia.
+1. Rank story cards by deterministic risk (section 12 blast-radius taxonomy, max-constituent rollup).
+2. Nudge by engagement tier: `unseen` first, then `seen`, then `engaged` — a ranking nudge only, never a risk input.
+3. Exclude cards that are purely generated, binary, not captured, too small to ask about, or unsupported by partial capture (blind-spot targets suppress checks).
+4. Per-card single-question entry: each selected card contributes one question to the session set. Pick 3–5 per session, at most 2 from the same file. If fewer qualify, show fewer. Never pad with trivia.
+5. Skip is explicit (`skipped` state); there is no waive.
 
-### Check generation
+### Check generation (at check start)
 
-For each selected hunk, the model receives the redacted hunk, surrounding snippet, file path, imports/types summary, the reverted attempts linked to it, and the instruction to produce one ownership question (ADR 0010).
+Questions are generated at check start via the model. If the model is unavailable, the check is unavailable — no fallback questions, no cached generic set.
 
-Supported kinds, easiest first:
-
-- `consequence`: what did this change cost or open up (concrete, local).
-- `decision`: why this approach over the reverted alternative (drawn from the attempt tree).
-- `tradeoff`: what price was accepted for this choice.
-- `blast_radius` (runnable): what breaks if this changes; a self-contained snippet plus the breakage to predict.
-- `teach_back`: explain it so a new teammate can act on it (hardest).
-
-Puzzle kinds (`predict_output`, `spot_bug`) are cut: a model answers them
-unsupervised, so they prove no ownership and are not worth asking.
-
-Proposed schema:
-
-```json
-{
-  "kind": "blast_radius",
-  "question": "What breaks if the guard is removed?",
-  "language": "typescript",
-  "snippet": "function retry(...) { ... }\nconsole.log(retry(...))",
-  "entrypoint": "main",
-  "expected_stdout": "2\n",
-  "explanation": "The second attempt succeeds.",
-  "rubric": ["names the retry path", "names the failure mode"],
-  "evidence_paths": ["src/retry.ts"],
-  "confidence": 0.82
-}
-```
-
-Open kinds (`consequence`, `decision`, `tradeoff`, `teach_back`) carry a
-rubric instead of a snippet and grade against it; they never get
-exact-match treatment. The default is snippet scope, not whole-repo
-execution: if the hunk depends on repo modules, the generator may include
-a minimal stub or a bundled subset, but it must not pull in secrets,
-network calls or the whole repository.
+- Input: the redacted card (constituent hunks, surrounding snippets, file paths, imports/types summary, linked reverted attempts) plus the ownership-kind instruction (ADR 0010: `consequence`, `decision`, `tradeoff`, `blast_radius`, `teach_back`).
+- Output schema: MCQ (`question`, `options[]`, `key`, distractor provenance per option) OR free-text (`question`, `rubric[]` with evidence pointers). Puzzle kinds (`predict_output`, `spot_bug`) stay cut per ADR 0010.
+- The runnable `blast_radius` kind keeps the sandbox verification gate below; other kinds grade against the rubric.
+- Store in `checks_v2.json` (versioned, watermark-stamped) with the state machine `offered` → `in_progress` → `completed`, plus `skipped`. Answers are resumable: re-entering a card restores the in-progress answer; confidence stays locked once set.
 
 ### Verification gate
 
@@ -1383,21 +1368,13 @@ Additional rules:
 - A check that times out in the reference run is rejected. A user answer that times out is graded as incorrect with a timeout reason.
 - If no strong backend is available, checks are disabled with a visible message. The app does not fall back to in-process execution and call it verified.
 
-### Answer flow and calibration
+### Answer flow and picture
 
-1. The user selects confidence before seeing the answer input: `guessing` (0.4), `think so` (0.7), `certain` (0.95).
-2. The user answers.
-3. The answer runs in the same backend/harness that verified the reference.
-4. Grading: every kind grades against its rubric — each point pass/fail with a quote from the answer, correct only if all points hit. For `blast_radius` the sandbox first establishes the ground truth (the demonstration must run twice with identical output); the model then judges whether the explanation matches it. No exact-match grading anywhere.
-5. Results: correct/incorrect, reference behavior, sandbox output, time, and calibration.
-6. Calibration:
-   - Brier score per answer: `(p - outcome)^2`, where `outcome` is 1 for correct, 0 for incorrect.
-   - Overconfident: incorrect with confidence 0.95.
-   - Underconfident: correct with confidence 0.4.
-   - Session summary: mean Brier, overconfidence count, per-confidence accuracy.
-7. The report treats a wrong-and-certain answer as the key event, not an average to hide.
-
-The check’s reference answer is never shown before submission. The explanation is shown after, alongside the sandbox output.
+1. The user selects confidence before the answer is revealed: `guessing` / `think_so` / `certain`. The choice locks before the answer input appears.
+2. The user answers. MCQ is scored by key; free text is rubric-graded against the evidence with quoted excerpts from the answer (each rubric point pass/fail with a quote; correct only if all points hit, per ADR 0010). For `blast_radius` the sandbox first establishes ground truth (reference runs twice with identical output); the model then judges whether the explanation matches it. No exact-match grading anywhere.
+3. The check's reference answer is never shown before submission. The explanation is shown after, alongside sandbox output where applicable.
+4. Results map each card to one of 5 picture buckets: `solid` (correct + certain/engaged), `right_but_unsure` (correct + guessing), `confident_but_wrong` (incorrect + certain — the key event), `wrong_and_knew_it` (incorrect + guessing), `never_looked` (unseen tier, unanswered or incorrect without engagement).
+5. `sessions.check_status` becomes `checked` when the session set completes, `skipped` on explicit skip, else `not_checked`. New tape activity past the story watermark resets it (section 12).
 
 ### Limits
 
@@ -1407,6 +1384,7 @@ The check’s reference answer is never shown before submission. The explanation
 - Execution verifies the answer to the question, not the user’s understanding of the whole change.
 - The sandbox is a security boundary, not a perfect one. Local containers depend on the host runtime; WASM depends on the engine. The threat model and tests are in section 17/22.
 - No mutation testing in the core gate. “Reference passes twice” is the cut-line fallback; mutation testing is a stretch.
+- Calibration scores (Brier and friends) may exist in server-internal eval only; they never appear in web-consumed API responses or stored web state.
 
 ---
 
@@ -1455,7 +1433,7 @@ The attempt tree is a session view (section 12). The project view links to it bu
 
 - Import graph: React Flow, file nodes with degree-based size, touched files highlighted, filters by session and change count.
 - Overlay: a side panel and a table; the graph is not the only way to read the data.
-- Session list: sortable by date, files changed, capture quality, checks.
+- Inbox session list: sortable by date, files changed, capture quality, check status; each row shows summary, high-risk flag and capture state (incl. still-recording). "No check needed" is a derived display state for no-change sessions.
 - Empty states: “no graph yet,” “no captured changes,” “session imported without file history.”
 
 ### Limits
@@ -1478,24 +1456,25 @@ All routes are under `/api`. Local mode requires the session cookie except for `
 | `GET` | `/api/health` | Liveness, version, mode, uptime. No secrets. |
 | `GET` | `/api/projects` | Project list with counts and warnings. |
 | `GET` | `/api/projects/:id` | Project detail. |
-| `GET` | `/api/projects/:id/sessions` | Session list, cursor pagination. |
+| `GET` | `/api/projects/:id/sessions` | Inbox session list (newest-first, summary, check status, high-risk flag, capture state), cursor pagination. |
 | `GET` | `/api/projects/:id/graph` | Cached import graph + overlay. |
-| `GET` | `/api/sessions/:id` | Session metadata, capture quality, diagnostics summary. |
-| `GET` | `/api/sessions/:id/tape?after=<seq>` | Tape events, bounded pages. |
-| `GET` | `/api/sessions/:id/timeline` | Denormalized timeline lanes. |
-| `GET` | `/api/sessions/:id/snapshots` | Snapshot list. |
-| `GET` | `/api/sessions/:id/snapshots/:sid/tree` | File tree at a snapshot. |
-| `GET` | `/api/sessions/:id/files?path=&snapshot=` | Redacted file content by path/snapshot, resolved to a blob OID. |
-| `GET` | `/api/sessions/:id/diff?from=&to=&path=` | Diff between snapshots. |
-| `GET` | `/api/sessions/:id/hunks` | Final-diff hunks with risk and evidence counts. |
-| `GET` | `/api/sessions/:id/hunks/:hid/evidence` | Hunk inspector payload. |
-| `POST` | `/api/sessions/:id/hunks/:hid/open` | Engagement: opened/dwell. |
-| `POST` | `/api/sessions/:id/ask` | Streaming Q&A (SSE over POST). |
-| `GET` | `/api/sessions/:id/checks` | Checks and attempts. |
-| `POST` | `/api/sessions/:id/checks/generate` | Generate/verify checks for selected hunks. |
-| `POST` | `/api/checks/:id/answer` | Submit confidence + answer; run sandbox. |
-| `GET` | `/api/sessions/:id/report` | Report JSON. |
-| `POST` | `/api/sessions/:id/report` | Regenerate report. |
+| `GET` | `/api/sessions/:id` | Session metadata, capture quality, diagnostics summary, check status, story watermark/staleness. |
+| `GET` | `/api/sessions/:id/story` | Story artifact (`story.json`): cards, verification labels, risk reasons, watermark. |
+| `GET` | `/api/sessions/:id/tape?after=<seq>` | Tape events, bounded pages (substrate for inline slices). |
+| `GET` | `/api/sessions/:id/snapshots` | Snapshot list (substrate). |
+| `GET` | `/api/sessions/:id/snapshots/:sid/tree` | File tree at a snapshot (substrate). |
+| `GET` | `/api/sessions/:id/files?path=&snapshot=` | Redacted file content by path/snapshot, resolved to a blob OID (substrate for "show the code"). |
+| `GET` | `/api/sessions/:id/diff?from=&to=&path=` | Diff between snapshots (substrate for inline slices). |
+| `GET` | `/api/sessions/:id/hunks` | Final-diff hunks with risk and evidence counts (substrate; cards are the review surface). |
+| `GET` | `/api/sessions/:id/hunks/:hid/evidence` | Hunk inspector payload (substrate for card detail). |
+| `POST` | `/api/sessions/:id/engagement` | Batched engagement events (`story_opened`, `card_seen`, `card_expanded`, `code_shown`, `ask_opened`). Replaces `POST .../hunks/:hid/open` and any localStorage design. |
+| `GET` | `/api/sessions/:id/ask` | Persisted ask thread (`ask_thread.json`). |
+| `POST` | `/api/sessions/:id/ask` | Streaming Q&A (SSE over POST); optional `card_id` context; answer appended to the thread. |
+| `GET` | `/api/sessions/:id/checks` | Checks v2 state (`checks_v2.json`): offered/in_progress/completed/skipped, resumable answers. No Brier/score fields. |
+| `POST` | `/api/sessions/:id/checks/generate` | Generate checks v2 for selected cards at check start. Model unavailable → `503 check_unavailable`, no fallback. |
+| `POST` | `/api/checks/:id/answer` | Submit locked confidence (`guessing`/`think_so`/`certain`) + answer; MCQ scored by key, free text rubric-graded. No Brier/score in the response. |
+| `GET` | `/api/sessions/:id/report` | Report JSON (legacy substrate; story page supersedes it for review). |
+| `POST` | `/api/sessions/:id/report` | Regenerate report (legacy). |
 | `GET` | `/api/events` | SSE live updates. |
 | `POST` | `/api/ingest/hook` | Local hook ingest; local mode only. |
 | `POST` | `/api/ingest/opencode` | Local OpenCode plugin ingest; local mode only. |
@@ -1503,6 +1482,8 @@ All routes are under `/api`. Local mode requires the session cookie except for `
 | `POST` | `/api/daemon/shutdown` | CLI-authenticated shutdown. |
 
 Demo mode rejects `/api/ingest/*`, `/api/daemon/*`, `/api/auth/link` and any non-allowlisted session. It also rejects mutations other than ask/answer.
+
+Removed: web routes `/sessions/:id/replay`, `/sessions/:id/checks`, `/sessions/:id/report` and `GET /api/sessions/:id/timeline`. The timeline scrubber page is gone; inline "show the code" slices use the file/diff/hunk-evidence substrate above.
 
 ### Authentication flow
 
@@ -1557,17 +1538,17 @@ Local security is not a claim of multi-tenant isolation. Echo is a single-user l
 
 ## 18. Hosted read-only demo
 
-The hosted demo exists so judges can replay, ask and try a check without installing anything. It is a delivery item, not a deployment afterthought.
+The hosted demo exists so judges can review the story, ask and try a check without installing anything. It is a delivery item, not a deployment afterthought.
 
 ### Build
 
 `echo-cli demo build --session <id> --out <dir>`:
 
-1. Export a redacted bundle: tape, shadow Git bundle, metadata, diagnostics, graph, report, pre-generated checks.
+1. Export a redacted bundle: tape, shadow Git bundle, metadata, diagnostics, graph, story (`story.json`), checks v2 (`checks_v2.json`), ask thread (`ask_thread.json`), pre-generated checks.
 2. Scan every text artifact with the redaction rules plus a demo-specific scan. Fail the build on a finding that is not an approved synthetic placeholder.
 3. Build a `demo.sqlite` containing only allowlisted project/session rows and the check metadata.
 4. Copy the built web assets.
-5. Run the demo smoke tests: load project, load session, render timeline, ask a cached question, answer a check, verify read-only rejection.
+5. Run the demo smoke tests: load project, load session, render the story page, ask a cached question, answer a check, verify read-only rejection.
 
 The output is an immutable directory or image layer. No live capture, no user data, no writable source tree.
 
@@ -1617,7 +1598,7 @@ If the hosted deployment is unavailable during judging, the public repo still co
 
 ---
 
-## 19. CLI and notifications
+## 19. CLI (notifications deferred to post-v1)
 
 ### Commands
 
@@ -1627,7 +1608,7 @@ If the hosted deployment is unavailable during judging, the public repo still co
 | `echo-cli daemon start\|stop\|status` | Manage the local daemon. |
 | `echo-cli enable [path]` / `disable [path]` | Opt a repository in/out of background capture. |
 | `echo-cli pause` / `resume` | Temporarily stop/start capture without uninstalling hooks. |
-| `echo-cli replay [session-id\|latest]` | Open the local review UI at a session. |
+| `echo-cli replay [session-id\|latest]` | Open the story page for a session (verb kept; any rename is a CLI-scope decision; no replay UI exists). |
 | `echo-cli open` | Open the project list. |
 | `echo-cli import <session-id\|path>` | Import an existing Muse session; `import_only` quality. |
 | `echo-cli hook muse <event>` | Internal hook entry point; reads stdin, redacts, spools/sends, exits 0. |
@@ -1643,15 +1624,11 @@ If the hosted deployment is unavailable during judging, the public repo still co
 
 Exit codes: `0` success, `1` user error, `2` environment/daemon error, `3` capture/redaction refusal. `--json` is available for scripts and `doctor`.
 
-### Notifications
+### Notifications (out of v1)
 
-- On `report.ready` (or `analysis.ready` if report generation is disabled), the daemon sends a desktop notification: project, session time, files changed, check count, capture warnings, and a “Review” action.
-- Linux: `notify-send` via node-notifier; macOS: Notification Center; fallback: no popup, log and CLI message.
-- Clicking opens the session replay URL. The URL uses a fresh one-time link.
-- `echo-cli record` also prints the URL when the child exits. This is the reliable path when desktop notifications are unavailable or suppressed.
-- Config: `notifications: "popup" | "terminal" | "off"`. Default `popup`; `terminal` prints only; `off` disables.
-- Do not notify for sessions with no captured changes unless `notifyEmpty` is on. Do not notify more than once per session.
-- The notification never contains code, secrets or file contents; it contains counts and the project name.
+- v1 sends no desktop notifications (spec: system notifications are out of v1). `story.ready` only updates the inbox row and the SSE stream for the open UI.
+- `echo-cli record` prints the review URL when the child exits. That print is the v1 completion signal.
+- The `notifier` package and the `notify` job type remain as a future mechanism; they are not wired in v1. The config key `notifications` is reserved for that mechanism and honored by nothing in v1.
 
 ---
 
@@ -1662,16 +1639,22 @@ Exit codes: `0` success, `1` user error, `2` environment/daemon error, `3` captu
 | Daemon not running | CLI starts it; hooks write redacted spool entries; UI unavailable until start. | `doctor`/CLI message; spool depth in status. |
 | Hooks not installed/firing | Native reader + filesystem watcher still capture; snapshots may be coarser. | `capture_quality: partial`; hook diagnostic. |
 | Native log schema drift | Unknown records preserved as `agent.unknown`; known records still mapped. | Banner: “unrecognized Muse records; capture may be incomplete.” |
-| Checkpoint trimming | Detect jump/shrink; emit `capture.gap`; reconcile with export if possible. | Gap markers on timeline; report count. |
+| Checkpoint trimming | Detect jump/shrink; emit `capture.gap`; reconcile with export if possible. | Gap markers on story cards; report count. |
 | Export fails/unavailable | Keep live tape; no raw export; record diagnostic. | `capture_quality: partial`; export diagnostic. |
 | Snapshot fails | Record diagnostic; keep previous snapshot; no fabricated state. | Missing snapshot marker; inspector says “not captured.” |
 | Redaction fails | Drop the event/file content; write content-free diagnostic; fail closed. | Redaction warning; event omitted. |
 | Model timeout/error | Retry once; then error; use cache if available. | “Model unavailable” not a fake answer. |
 | Structured output invalid | One repair attempt; then error/refusal. | Error with correlation ID. |
 | Citation validation fails | Drop invalid claims; refuse if none remain. | “Not on the tape” / partial answer badge. |
-| Sandbox unavailable | Disable checks; replay/Q&A still work. | “Checks disabled: no isolation backend.” |
+| Sandbox unavailable | Disable checks; story/ask still work. | “Checks unavailable: no isolation backend” inside the story page. |
+| Story model failure | Write the deterministic skeleton with a badge; validator still labels facts. | “Model unavailable — skeleton story” badge. |
+| Story validator drops a claim | One regeneration; then drop to a gap line with diagnostic. | Gap line: “what the tape could not show.” |
+| Check model unavailable | Check unavailable; no fallback questions. | `503 check_unavailable` → “check unavailable” in the story page. |
+| Stale story on resume | Regenerate from the new watermark; reset `check_status` to `not_checked`. | Staleness badge, then fresh story. |
+| Partial capture | Skeleton + blind-spot line; checks suppressed for unsupported targets. | “Intermediate states not captured” line; unsupported cards uncheckable. |
+| OpenCode partial capture | Same tape/story pipeline at `partial` quality; gaps labeled. | `capture_quality: partial` + gap lines. |
 | Sandbox timeout | Reference check rejected; user answer graded timeout. | Timeout reason and output. |
-| Disk full | Stop new writes, keep existing tape, notify. | Critical banner; `doctor` detail. |
+| Disk full | Stop new writes, keep existing tape, record a diagnostic. | Critical banner; `doctor` detail. |
 | Concurrent sessions | Serialize snapshots; mark overlapping evidence `uncertain`. | Concurrency banner; confidence labels. |
 | Clock skew | Order by source sequence within a stream; no timestamp causality. | “Order uncertain” label. |
 | Huge payload | Truncate with hash and diagnostic. | Truncated badge. |
@@ -1695,7 +1678,9 @@ These are design targets, not measured claims. The eval/report distinguishes tar
 | Baseline snapshot, 5k files | < 5 s | Manifest + hash only changed files; reuse blobs. |
 | Incremental snapshot | p95 < 300 ms for a typical edit | Debounce/coalesce; manifest reuse; per-project mutex. |
 | Finalization (no model/checks) | < 30 s | Quiescence wait bounded; export optional; indexing async. |
-| First UI paint, 10k events | < 1.5 s | Summary endpoint, virtualized timeline, lazy tape pages. |
+| Story generation at finalization | < 20 s per session (facts + 1 model call + validation) | Deterministic facts first; one repair max; skeleton fallback on timeout. |
+| Inbox list, 50 sessions | < 800 ms | Status/risk columns from SQLite + artifact headers; no full story load. |
+| First UI paint, story page | < 1.5 s | Story artifact endpoint, virtualized cards, lazy code slices. |
 | Diff/hunk render | < 500 ms for a 2k-line diff | Precomputed hunks; lazy file blobs; worker if needed. |
 | Q&A p95 | < 8 s | 12k-token bundle, prompt caching, streaming, cache hits. |
 | Check generation | < 15 s per check | Structured output; one repair; parallel up to 2. |
@@ -1713,10 +1698,10 @@ If a target is missed, report the measured number. Do not tune the demo by hidin
 
 | Layer | What it covers |
 | --- | --- |
-| Unit | Redaction rules/placeholders, tape envelope/merge, hunk IDs, attempt classification, risk scoring, citation validation, calibration, config parsing. |
-| Integration | Daemon + fixture repo + fake Muse logs/hooks; snapshot isolation; index rebuild; export reconciliation; concurrent sessions; redaction scan of all artifacts. |
-| Contract | Zod schemas for API, tape, model output and check schema; backwards-compatible tape reader. |
-| E2E (Playwright) | Project list → session replay → hunk inspector → ask (mocked/recorded model) → check → report; demo read-only policy. |
+| Unit | Redaction rules/placeholders, tape envelope/merge, hunk/card IDs, attempt classification, blast-radius risk + routine classification, story validator (claim/file/number checks, verification overwrite, risk rollup), checks v2 grading (MCQ key, rubric quotes), engagement tier derivation, check-status derivation, config parsing. |
+| Integration | Daemon + fixture repo + fake Muse logs/hooks; snapshot isolation; index rebuild; export reconciliation; concurrent sessions; redaction scan of all artifacts; story watermark/staleness + status reset; ask thread persistence. |
+| Contract | Zod schemas for API, tape, story artifact, model output and checks v2 schema (MCQ options/key/distractor provenance, free-text rubric); canonical `h_…` card IDs end to end; backwards-compatible tape reader. |
+| E2E (Playwright) | Projects → inbox → story page (cards, inline code, ask thread, check flow, picture) with mocked/recorded model; demo read-only policy. |
 | Security | Path traversal, Host/Origin/CSRF, token replay, XSS payloads in tape, secret scan, sandbox network/fs/timeout/memory tests. |
 | Manual spike | Real Muse session, real model call, real sandbox, real browser. |
 
@@ -1735,7 +1720,7 @@ A synthetic repo with a scripted sequence:
 9. a binary file and an ignored `.env`;
 10. a subagent session.
 
-The fixture has expected tape events, expected snapshot states and expected diagnostics. Tests assert what was captured and what was missed; they never turn an unobserved state into evidence.
+The fixture has expected tape events, expected snapshot states and expected diagnostics. Tests assert what was captured and what was missed; they never turn an unobserved state into evidence. Fixture coverage extends to: story validator cases (valid claim, bad file/number/name, failed-regeneration drop), checks v2 (MCQ scoring, rubric quote enforcement, confidence lock, resumable state, `check_unavailable`), engagement batches (tier derivation, canonical IDs) and status derivation (`not_checked`/`checked`/`skipped` + "no check needed" display).
 
 Fake Muse logs exercise the reader without requiring Muse on CI. A separate manual spike uses a real Muse session and records the observed schema in `docs/spikes/`.
 
@@ -1748,9 +1733,9 @@ Implement the spec §9 measures:
 | Capture integrity | Fixture actions/results/states vs tape; scan Echo artifacts for the synthetic secret. | Report coverage and missed states; zero raw secret. |
 | Citation support | 20 hand-labeled “why” answers across 3 tapes. | ≥ 80% supported. |
 | Refusal | 10 unanswerable questions. | ≥ 8 refusals. |
-| Check pass rate | Generated checks that clear the gate. | ≥ 80%. |
-| Time to first check | Tape loaded → first verified check. | < 90 s. |
-| Hunk selection | Top picks vs hand-labeled worry list on 3 tapes. | Report as measured. |
+| Check pass rate | Generated checks that clear the gate (v2: MCQ key + rubric validity). | ≥ 80%. |
+| Time to first check | Story ready → first check question generated. | < 90 s. |
+| Card selection | Top picks vs hand-labeled worry list on 3 tapes. | Report as measured. |
 | Attempt tree | Every dead end/landed node checked against the recorded sequence on 3 tapes. | No fabricated dead ends; report misses. |
 
 Outputs are JSON plus a Markdown summary with sample size, caveats and the exact commit/build used. The submission quotes only these results or the cited studies.
@@ -1771,7 +1756,7 @@ Outputs are JSON plus a Markdown summary with sample size, caveats and the exact
 
 No day-by-day schedule is restated here; the spec keeps the fixed event dates. The order below is the dependency order. Phases can overlap, but a phase’s exit criterion is the gate for claiming its feature.
 
-The minimum demo slice is Phase 0 (spikes), Phases 1–5 (record, capture, replay, Q&A, checks) and Phase 7 (hosted demo and submission). Phase 6 (project view and attempt tree) is optional and follows the cut line.
+The minimum demo slice is story-first: Phase 0 (spikes), Phase 1 (contracts/data), Phase 2 (story pipeline), Phase 3 (inbox + story web), Phase 4 (ask thread), Phase 5 (checks v2) and Phase 7 (hosted demo and submission). Phase 6 (project graph/overlay) is optional and follows the cut line. V1 capture claim: Muse + OpenCode adapters feed the same tape/story pipeline; other agents are future adapters.
 
 ### Phase 0 — Spikes (before UI)
 
@@ -1784,49 +1769,48 @@ The minimum demo slice is Phase 0 (spikes), Phases 1–5 (record, capture, repla
 - Self-test the sandbox backends (container, bwrap if available, WASM).
 - **Exit:** a written spike note with observed schemas and pass/fail on each item. If native capture is not viable, revisit the input decision explicitly per spec §10; do not silently fall back to PTY.
 
-### Phase 1 — Walking skeleton
+### Phase 1 — Contracts + data
 
-- Monorepo, config, daemon, SQLite migrations, tape writer/reader, CLI `record`, Muse reader, SessionStart/End, baseline/final snapshot.
-- Minimal web: project list, session list, raw timeline, file content at final snapshot.
-- **Exit:** one real Muse session is recorded and replayable end to end; the user repo is untouched.
+- Monorepo, config, daemon, SQLite migrations (5 base tables + `engagement_events` + `sessions.check_status`), tape writer/reader, CLI `record`, Muse reader, SessionStart/End, baseline/final snapshot, `@echo/contracts` owning card IDs, story/checks-v2/ask-thread artifact layout with watermark + generator stamps.
+- **Exit:** one real Muse session is recorded end to end; contracts enforce canonical card IDs; the user repo is untouched.
 
-### Phase 2 — Capture core
+### Phase 2 — Story pipeline
 
 - All hook mappings, pre/post/batch snapshots, filesystem watcher, redaction gate, spool, export reconciliation, diagnostics, capture quality.
-- Final diff, hunks, blame provenance, attempt classification, hunk evidence.
+- Final diff, hunks, blame provenance, attempt classification, hunk evidence, blast-radius risk + routine classification, deterministic fact extraction, story validator, skeleton fallback, watermark/staleness, redaction-gated artifact writes.
 - Fixture coverage: failed tool, reverted edit, shell write, interrupted tool, rapid edit/revert, synthetic secret.
-- **Exit:** capture integrity report; zero raw secret in Echo artifacts; gaps visible. **Capture gate:** do three “why” questions on a real tape. If the tape cannot support useful answers, describe the product as captured actions/results/file changes and shift weight to checks, per spec §10.
+- **Exit:** capture integrity report; zero raw secret in Echo artifacts; gaps visible; skeleton story renders without a model. **Capture gate:** do three “why” questions on a real tape. If the tape cannot support useful answers, describe the product as captured actions/results/file changes and shift weight to checks, per spec §10.
 
-### Phase 3 — Review UI
+### Phase 3 — Inbox + story web
 
-- Timeline scrub, file state, final diff, hunk inspector, engagement tracking, session header, diagnostics.
-- **Exit:** the three-minute demo path can be rehearsed without the ask/check panels.
+- Inbox (newest-first, summary, check status, high-risk flag, capture state), story page (cards, inline code slices, verification labels, risk reasons), server-side engagement events, session header, diagnostics, deletion of replay/timeline UI.
+- **Exit:** the three-minute demo path (inbox → story → show the code) rehearses without ask/checks.
 
-### Phase 4 — Evidence Q&A
+### Phase 4 — Ask thread
 
-- Retrieval, evidence bundle, model client, structured output, citation validation, refusal, cache, cost ledger.
+- Retrieval, evidence bundle with card context, model client, structured output, citation validation, refusal, thread persistence (`ask_thread.json`), cache, cost ledger.
 - **Exit:** 20 hand-labeled answers and 10 refusal questions; citation support and refusal targets measured.
 
-### Phase 5 — Checks
+### Phase 5 — Checks v2
 
-- Hunk selection, check generation, verification gate, sandbox runner, confidence-first answer flow, calibration, report.
-- **Exit:** ≥ 80% check pass rate on generated checks; one demo check runs end to end; wrong-and-certain is visible.
+- Risk × engagement selection, per-card single-question generation at check start (model unavailable → check unavailable), MCQ + rubric schema, confidence lock, MCQ-key / rubric-quote grading, 5-bucket picture, `checks_v2.json` state machine with resumable answers, sandbox runner for `blast_radius`. No waive, no Brier/score in web responses.
+- **Exit:** ≥ 80% check pass rate on generated checks; one demo check runs end to end; confident-but-wrong is visible.
 
-### Phase 6 — Project view and attempt tree
+### Phase 6 — Project graph and overlay (optional)
 
-- Import graph, overlay, attempt tree UI, flat-list fallback.
+- Import graph, overlay; attempt tree remains a session evidence source (section 12), flat-list fallback.
 - **Exit:** checked against 3 tapes; no fabricated dead ends.
 
 ### Phase 7 — Demo, hosted, report, polish
 
-- Bake the demo tape, hosted read-only deployment, rate limits/budget, report export, README, video, submission.
+- Bake the demo tape (story + checks v2 + ask thread), hosted read-only deployment, rate limits/budget, report export (legacy), README, video, submission.
 - **Exit:** hosted demo works without install; local fallback works; public repo and commit history are clean; three-minute video is cut.
 
 ### Cut line
 
-Follow spec §7, in order: screenshot stream/terminal playback, project graph/overlay, reverse-motion polish, spot-the-bug checks, citation click-to-scrub, mutation testing, second-agent readers. The attempt tree goes last among visualizations; if it runs long, use the flat list per file.
+Story-first build order: contracts/data → story pipeline → inbox/story web → ask thread → checks v2 → deletion of replay UI. Follow spec §7, in order, for the remainder: screenshot stream/terminal playback, project graph/overlay, reverse-motion polish, spot-the-bug checks (already cut per ADR 0010), citation click-to-scrub (superseded by inline slices), mutation testing, second-agent readers beyond Muse + OpenCode. The attempt tree goes last among visualizations; if it runs long, use the flat list per file.
 
-Do not start the project view before the demo path works. Do not start OpenCode before Muse capture, replay, Q&A and checks are stable.
+Do not start the inbox/story web before the story pipeline works. Do not start OpenCode beyond the shared pipeline before Muse capture, story, ask and checks are stable.
 
 ---
 
@@ -1883,9 +1867,9 @@ The spec is canonical for product intent. These are factual updates or implement
 | 2 | §5: Muse Code is “in beta for macOS and Linux” | Muse Code docs list macOS, Linux and Windows; a secondary source says it left beta Sep 1, 2026 | The architecture targets Linux/macOS for the recorder and keeps Windows out of scope. Correct the sentence to the installed build's actual status; do not rely on beta status. |
 | 3 | §5/§14: detailed hook payload reference | The cited detailed hook-events page failed to load during the Oct 27 check | Treat hook payload fields as provisional. The adapter accepts multiple shapes and preserves unknown fields. Spike with real hooks before claiming payload fidelity. |
 | 4 | §5: Muse Spark 1.3 released Sep 2, 2026; API version to confirm | Meta models docs list `muse-spark-1.3`; account access unverified | Primary model ID is `muse-spark-1.3`; verify the event account exposes it. Keep the provider swappable. |
-| 5 | §3 pipeline: `echo-cli replay <tape>` | The architecture uses session IDs for live tapes and bundle paths for exports | Support both: `replay <session-id>` (or `latest`) and `replay <bundle-path>`. |
+| 5 | §3 pipeline: `echo-cli replay <tape>` | The architecture addresses sessions by ID and bundles by path | Support both: `replay <session-id>` (or `latest`) and `replay <bundle-path>`; both open the story page (no replay UI exists). |
 | 6 | §3/§7: runs in the background, listens to sessions; §3 pipeline: `echo-cli record -- muse` | The reliable path is the wrapper; ambient capture needs hooks + project allowlist | Daemon-first background capture for enabled projects; `record` is the guaranteed path for the demo. The UI does not depend on which path started the session. |
-| 7 | §3: show a popup after a session, open a local webpage | Desktop notification APIs vary by OS; a native popup app is out of scope | Desktop notification with a click action; `echo-cli record` prints the URL on exit; `echo-cli open` is the fallback. No Electron app. |
+| 7 | §3: show a popup after a session, open a local webpage | Desktop notification APIs vary by OS; a native popup app is out of scope | No notification in v1 (spec: system notifications are out of v1); `echo-cli record` prints the URL on exit; `echo-cli open` is the fallback. No Electron app. |
 | 8 | §3/§7: OpenCode V2 as a documented second path | OpenCode V2 plugin API verified; live events are live-only | Optional adapter package, spool + reconciliation, `partial` quality, cut-line item 7. Not core. |
 | 9 | §7: project view and cross-session overlay are core | They are also cut-line item 2 and the least necessary for the three-minute demo | Include them after the demo path; bound the graph to JS/TS imports + touched overlay; use the cut line if time shrinks. |
 | 10 | §5: local-first, but model calls send source | The model call is a real network boundary | Disclose it in the UI, README and submission; redact before the call; offer `ECHO_MODEL=off`; Baseten open-weight path is optional. |
@@ -1907,13 +1891,17 @@ These are the architecture decisions that should become ADRs in `docs/adr/` when
 | D3 | Bare shadow Git repo per project | Copy repo per snapshot; SQLite blob store; libgit2 | Git provides content addressing, diffs, blame and bundles without touching the user's repo. | Git CLI dependency; snapshot manifest complexity; Git object deletion is not secure erase. |
 | D4 | Append-only JSONL tape + SQLite derived index | SQLite only; event store only | Tape is portable and crash-tolerant; SQLite is fast for queries and rebuildable. | Two stores to keep consistent; rebuild path required. |
 | D5 | Redaction gate before all Echo-owned persistence and model calls | Redact on export; redact in UI | The spec's trust claim depends on it; raw secrets in Git objects are hard to remove. | False positives; hook latency; some files metadata-only. |
-| D6 | Local web UI served by daemon; one-time token + cookie | Electron; unauthenticated localhost; cloud UI | Browser is enough; token + loopback + Origin checks block the common local attacks. | No native menus/tray; notification click behavior varies. |
+| D6 | Local web UI served by daemon; one-time token + cookie | Electron; unauthenticated localhost; cloud UI | Browser is enough; token + loopback + Origin checks block the common local attacks. | No native menus/tray; no notification in v1. |
 | D7 | Meta Model API primary (`muse-spark-1.3`); Baseten optional (`meta-models/muse-spark-open`) | Baseten only; local model only | Primary demo uses Meta tooling; open-weight path targets the bonus and data-locality option. | Two providers to validate; model-agnostic prompts and cache. |
 | D8 | OpenCode V2 adapter optional, experimental | Universal adapter; no second agent | The spec documents the path but keeps Muse core; a universal parser would dilute the evidence claims. | No parity claim; cut-line item 7. |
 | D9 | Sandbox ladder: container → bwrap → WASM; in-process never verified | In-process VM only; hosted-only checks | Honest isolation; local demo likely has Docker; hosted demo uses WASM. | Checks disabled if no strong backend; backend-specific verification. |
 | D10 | Hosted demo is the same app in a read-only profile with a baked tape | Separate demo app; video only | Reuses UI and contracts; judges get the real experience; small attack surface. | Deployment work; budget/rate limits; no arbitrary code. |
-| D11 | No universal terminal parser | PTY wrapper for any agent | Terminal text is not attributable evidence; the product’s trust story depends on structured records. | Muse-first; other agents need adapters. |
+| D11 | No universal terminal parser | PTY wrapper for any agent | Terminal text is not attributable evidence; the product’s trust story depends on structured records. | Muse + OpenCode feed the same tape/story pipeline; other agents are future adapters, not core. |
 | D12 | Project identity = remote URL if present, else canonical root | Folder path only; repo name | Moving a folder should not split a project; remotes are stable. | No-remote moves split; worktree grouping is later. |
+| D13 | Story-first session surface: inbox + story page; replay/checks/report routes removed | Timeline scrubber + separate checks/report pages | Review must read as a story with inline evidence, not a scrubber; check and ask live inside the story. | Backend evidence endpoints stay as substrate; web routes for replay/checks/report are deleted. |
+| D14 | Story artifact pipeline: deterministic facts → fact-referenced model story → server validator → skeleton fallback, watermark-stamped | Model free-form summary trusted as-is | Numbers/files/names must be fact-checked; verification and risk are server-computed, not model-asserted. | `packages/story` owns facts/validator/skeleton; regeneration + status reset on staleness. |
+| D15 | SQLite for list-queryable state, versioned JSON artifacts for payloads | All review state in SQLite | Status lists need queries; generated payloads need inspectable versioned files with watermarks. | `sessions.check_status`, `engagement_events` in DB; `story.json`, `checks_v2.json`, `ask_thread.json` on disk. |
+| D16 | Checks v2: MCQ + rubric, generated at check start, per-card entry, confidence lock, 5-bucket picture; no waive, no Brier in web responses | Legacy check gate + calibration + waive | Checks must test ownership per card with resumable state and no score leakage. | Sandbox kept for `blast_radius` ground truth; Brier internal-only if kept at all. |
 
 ADR files to write when the repo starts: `0001-daemon-first.md`, `0002-native-capture.md`, `0003-shadow-git.md`, `0004-tape-and-index.md`, `0005-redaction-gate.md`, `0006-local-auth.md`, `0007-model-providers.md`, `0008-sandbox-ladder.md`, `0009-hosted-demo.md`.
 
@@ -1957,7 +1945,10 @@ Each spike writes a short note in `docs/spikes/` with the build/version, command
 - **Vector database / generic RAG.** Structured evidence + FTS5 in the core.
 - **Mutation testing.** Stretch; “reference passes twice” is the core gate.
 - **Cross-session memory, spaced repetition, learner model, PR badge, team views.** After Nov 4 per spec §12.
-- **More agent readers (Claude Code, Codex, Qoder).** Documented paths only; no support claim until inspected.
+- **Timeline scrubber replay page.** Removed; inline "show the code" slices (before/after + session slice) are the evidence surface.
+- **Waive.** Removed everywhere; explicit `skipped` state replaces it.
+- **Brier/score in web responses.** Never in web-consumed API; internal eval only if kept at all.
+- **More agent readers beyond Muse + OpenCode (Claude Code, Codex, Qoder).** Future adapters only; V1 is Muse + OpenCode into the same tape/story pipeline.
 
 ---
 

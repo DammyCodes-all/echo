@@ -1,10 +1,10 @@
 # Echo: Product Spec
 
-Replay what your coding agent did and why. Then prove you understood it before you approve.
+One minute after opening a session, say what shipped, where it deviates from what you asked, and what could bite you.
 
 Built for the Meta Global AI Developer Hackathon 2026 (Oct 26 to Nov 4). Solo entry, Indie Developer track, Build for Your World theme.
 
-Status: draft v3, updated Oct 26, 2026. Echo is a working name. This merges two earlier specs: Agent Tape (the recording and replay half) and Owned (the proof half). RepoReel is dropped. Two sets of changes are folded in here: the native-first capture path (revised after checking first-party Muse Code documentation) and the rubric, rules and deadline from the Participant Guide. Native-first capture has not been tested on a real session yet. The "how" is still rough in several places, so section 11 lists open implementation decisions and their draft defaults.
+Status: draft v4, updated Oct 28, 2026. Story-first redesign. The forensic replay UI (timeline / file-state / alphabetical diff / hunks) is deleted for now; a session/evidence viewer may return later. This spec replaces all replay/check/report-page language in earlier drafts. Where old text conflicts with the decisions below, the decisions below win — no compatibility hedges.
 
 ---
 
@@ -12,7 +12,7 @@ Status: draft v3, updated Oct 26, 2026. Echo is a working name. This merges two 
 
 Developers now ship code written by agents they can't fully verify or reproduce alone. You come back after lunch and the agent has touched 40 files. Reading all of it would take longer than writing it, so you approve. Generation stopped being the bottleneck a while ago. Trust is.
 
-Two things are missing at that moment. A diff shows what changed, but nothing shows why, what the agent tried first, or what it quietly gave up on. And nothing checks whether you understood any of it, which matters because people who lean on AI tend to feel they learned things they didn't.
+Two things are missing at that moment. A diff shows what changed, but nothing shows what shipped versus what you asked, in plain terms, in a minute. And nothing checks whether you actually understood the risky parts, which matters because people who lean on AI tend to feel they learned things they didn't.
 
 I know both from my own work. I build by driving coding agents most days, and I approve diffs I haven't fully read. So does every developer I know.
 
@@ -32,19 +32,32 @@ The evidence on understanding:
 
 None of this measures Echo directly. METR studied experienced developers in familiar repositories with early-2025 tools. Perry is a 2023 lab study. Cisco is a 2006 single-company case study, and Bacchelli is 2013 and Microsoft-specific. The learning results come from students and juniors, and the PNAS study is about math. The submission should say all of this plainly.
 
-Existing tools cover pieces. Agent observability tools (LangSmith, Langfuse, Grafana agent tracing) trace API calls for teams. Atrophy runs generic drills, and coding agents now ship Study Mode and explanatory modes. The Oct 26 documentation check also confirms that Muse Code already supplies session logs and an audit/export workflow; Claude Code, OpenCode and Codex expose related capture paths. Third-party tools already read Muse Code's session history too: SpecStory saves Muse sessions as Markdown, and ranwhat audits what coding agents ran. Recording actions is not Echo's novelty. As of the product searches behind the earlier specs (Oct 25), I found nothing combining evidence-backed questions about one diff with execution-verified understanding checks. That is not an exhaustive or current market claim.
+Existing tools cover pieces. Agent observability tools (LangSmith, Langfuse, Grafana agent tracing) trace API calls for teams. Atrophy runs generic drills, and coding agents now ship Study Mode and explanatory modes. The Oct 26 documentation check also confirms that Muse Code already supplies session logs and an audit/export workflow; Claude Code, OpenCode and Codex expose related capture paths. Third-party tools already read Muse Code's session history too: SpecStory saves Muse sessions as Markdown, and ranwhat audits what coding agents ran. Recording actions is not Echo's novelty. As of the product searches behind the earlier specs (Oct 25), I found nothing combining a post-session comprehension story for one diff with evidence-backed questions about it. That is not an exhaustive or current market claim.
 
 ## 2. Who it is for, and who pays
 
-The first users are solo developers, students and juniors who drive CLI coding agents daily (Muse Code, Claude Code, Qoder). They feel this already and need no convincing. I'm the first user, so the first sessions to record are mine.
+The reader is a developer reviewing their OWN session, same day preferred, and it must still work cold days later. This is not an approval gate and not team review in v1. No proof for others, no shared grades, no manager view.
 
-Later buyers are engineering teams and regulated shops that must audit agent-written changes ("who approved this line, and on what basis?" is already a compliance question), and universities and bootcamps that need to know whether AI-assisted coursework teaches anything. Team views would be opt-in aggregates. The individual sees their own data first.
+The first users are solo developers, students and juniors who drive CLI coding agents daily (Muse Code, OpenCode). They feel this already and need no convincing. I'm the first user, so the first sessions to record are mine.
+
+Later buyers are engineering teams and regulated shops that must audit agent-written changes ("who approved this line, and on what basis?" is already a compliance question), and universities and bootcamps that need to know whether AI-assisted coursework teaches anything. Team views would be opt-in aggregates. The individual sees their own data first. None of that is v1.
 
 ## 3. Core idea
 
-Echo records a coding-agent session, lets you replay it and question any change with answers tied to evidence on the tape, then checks that you understood the risky changes by running code instead of trusting your own sense of it.
+Echo turns a finished coding-agent session into a short comprehension story, then checks calibration on the risky parts — never as a gate or a grade.
 
-It is one loop in two halves. The tape half explains what the agent did. The proof half checks what you took in. Each covers a gap in the other. A tape alone leaves you nodding along to a convincing explanation. Checks alone have nothing real to ask about.
+It is one loop in two halves. The story half says what shipped and what could bite. The check half shows the developer where their confidence doesn't match reality. The story without the check leaves nodding along; the check without the story has nothing real to ask about.
+
+### Core promise
+
+One minute after opening a session, the developer can state three things: what shipped, where it deviates from what they asked, and what could bite them.
+
+### What it is not
+
+- Not forensic replay. No timeline scrubbing, no file-state-at-a-moment, no alphabetical diff, no hunk list. That UI is deleted for now.
+- Not an approval gate. Nothing blocks merging, shipping, or closing the session.
+- Not team review. No shared reports, no export, no proof for others in v1.
+- Not a tutor. It explains only this session, only from its tape.
 
 ### Evidence, not intent
 
@@ -52,86 +65,137 @@ An action history is not a guaranteed record of reasoning. Echo distinguishes th
 
 Muse Code documents an optional `show_reasoning` setting that puts reasoning text into the transcript, off by default. Echo does not depend on it. If readable explanation or reasoning text is actually captured, Echo can quote it as **agent-stated**, not as a complete or faithful account of private reasoning. Whether that text survives export in a usable form still needs a real-session test. Opaque or encrypted reasoning payloads are not usable explanation evidence and are excluded from Echo's tape.
 
+Non-observed content is labeled **agent-stated** or **uncertain** everywhere it appears — in the story and on the cards. Observed content is unmarked. Verification and risk are never model-asserted (see the trust model below).
+
 ### Capture/input path
 
-Echo records the normal interactive Muse Code session. It does not need to replace Muse's interface or run tasks through a headless SDK. The primary input is Muse's structured activity record, not text scraped from the terminal.
+Echo records the normal interactive agent session. It does not need to replace the agent's interface or run tasks through a headless SDK. The primary input is the agent's native structured activity record, not text scraped from the terminal.
+
+Ingestion is automatic. There is no import button and no manual step. An in-progress session shows as still-recording; the story generates at finalization.
+
+Honest support status for v1 (no agnosticism claims yet):
+
+- **Muse Code:** reader verified on real saved logs, not on a live run. Live-run capture, checkpoint trimming behaviour, and recovery still need testing before promising complete history.
+- **OpenCode:** capture exists but is partial (live event stream has no replay of missed events and no automatic reconnection; recording needs its own recovery path).
+- Agent-agnostic readers come later. V1 claims Muse Code + OpenCode only.
 
 There are three complementary inputs:
 
-1. **Native session records: what was requested and what came back.** Muse Code documents an event log containing model calls, tool calls and results, and approval decisions, plus a structured trajectory export. Echo reads those records for attributable conversation and action evidence. It preserves source sequence numbers, session and tool IDs, build/schema metadata, and reported gaps or unknown outcomes. Parent/child identifiers stay attached when present; the spike must establish which child logs are included.
+1. **Native session records: what was requested and what came back.** Muse Code documents an event log containing model calls, tool calls and results, and approval decisions, plus a structured trajectory export. Echo reads those records for attributable conversation and action evidence. It preserves source sequence numbers, session and tool IDs, build/schema metadata, and reported gaps or unknown outcomes. Parent/child identifiers stay attached when present.
 2. **Lifecycle hooks: when to capture file state.** Muse Code exposes hooks such as `PreToolUse`, `PostToolUse`, `PostToolUseFailure`, `PostToolBatch`, `SessionStart` and `SessionEnd` for ordinary interactive use. Echo uses them to trigger before/after snapshots around relevant tools or committed batches. Hooks observe the run rather than block actions or rewrite tool inputs/results. They are not a complete transcript: payload limits and preview-only fields mean they must be combined with native records.
-3. **Independent file versions: what actually changed.** Capture a baseline, action-aware snapshots, filesystem changes outside the obvious edit-tool path, and a final reconciliation. Store sanitized versions in a shadow git repo without changing my repo's Git history or index. A recorded tool request is not proof that its intended edit landed; a failed tool may have written part of a file, and a shell command may change many files.
+3. **Independent file versions: what actually changed.** Capture a baseline, action-aware snapshots, filesystem changes outside the obvious edit-tool path, and a final reconciliation. Store sanitized versions in a shadow git repo without changing the developer's Git history or index. A recorded tool request is not proof that its intended edit landed; a failed tool may have written part of a file, and a shell command may change many files.
 
-Muse's documented default log path is `~/.local/share/muse/sessions/YYYY/MM/DD/<session-id>/session.jsonl`, with child logs under `subagent/<child-id>/`. Each line has an envelope containing `sequence`, `recorded_at`, `record_type`, `durability`, `payload_type` and `payload`. This gives the spike a concrete source to inspect; the reader still has to resolve the actual session, configured storage and build rather than assume that path or schema never changes. Three third-party tools (ranwhat, SpecStory, session-migrate) read Muse sessions from that same location, which corroborates the path and the JSONL format. The envelope fields, hooks and settings described here still rest on the Oct 26 documentation check and need a real-session test.
+Muse's documented default log path is `~/.local/share/muse/sessions/YYYY/MM/DD/<session-id>/session.jsonl`, with child logs under `subagent/<child-id>/`. Each line has an envelope containing `sequence`, `recorded_at`, `record_type`, `durability`, `payload_type` and `payload`. The envelope fields, hooks and settings described here still rest on the Oct 26 documentation check plus later real-log reads, not a live run.
 
-The Muse reader converts these inputs into Echo's common tape format: JSONL events plus snapshot references and capture diagnostics. Link records and snapshots through supported identifiers where possible. A nearby timestamp alone is not proof that one event caused another, and concurrent streams do not acquire a reliable global order just by sorting their clocks.
+The agent reader converts these inputs into Echo's common tape format: JSONL events plus snapshot references and capture diagnostics. Link records and snapshots through supported identifiers where possible. A nearby timestamp alone is not proof that one event caused another, and concurrent streams do not acquire a reliable global order just by sorting their clocks.
 
-Ingest during the session where the installed version permits, then reconcile with trajectory export. Do not rely only on a late export: Muse's changelog describes trimming covered records at checkpoints in long sessions. The live-reader and recovery behaviour need testing before promising complete history.
-
-Terminal recording through a PTY is optional visual playback, labeled as rendered output rather than the authoritative action record. A terminal-only tape would be a degraded mode, not silently equivalent to native capture; building that fallback is not core. Native records and file snapshots also do not guarantee every intermediate state. A rapid edit-and-revert inside one shell command can escape snapshots, and background writes can have uncertain attribution. Replay shows captured states and known gaps, not an invented continuous history.
+Terminal recording through a PTY is not part of the product. Native records and file snapshots also do not guarantee every intermediate state. A rapid edit-and-revert inside one shell command can escape snapshots, and background writes can have uncertain attribution. The story shows what was captured and names known gaps; it never invents a continuous history.
 
 **Redaction covers Echo's storage, not every file on the machine.** Scrub inputs locally before writing Echo's tape, snapshot Git objects/index, caches or spool files, and again before model requests. Do not write a raw export as an intermediate Echo artifact. Muse's own native logs can already contain raw secrets; its `--redacted` export cleans the exported copy after native logging, not the original log. Disclose that separate storage surface and show a masked redaction preview. A stronger mode that suppresses native logging needs a separate capture/privacy test and is not assumed here.
 
-### Other agents
-
-These are documented extension paths, not implemented compatibility or equivalent capture guarantees. Muse Code remains the only core reader.
-
-| Agent | Available input path | Important limit |
-| --- | --- | --- |
-| Claude Code | Local transcripts contain messages, tool calls and results; hooks can drive live capture; programmatic runs offer structured output | The local transcript entry format is internal and can change between releases. Programmatic output is not passive capture of an unrelated interactive session |
-| OpenCode V2 | Session history, before/after tool hooks, and a live event stream | Live event subscriptions do not replay missed events or reconnect automatically; recording needs its own recovery/reconciliation path |
-| Codex | Saved session rollout files and `codex exec --json` output covering messages, commands, file changes and exposed reasoning items | The JSON stream is an automated-run interface, not a guaranteed way to attach to an arbitrary interactive session |
-| Qoder | No capture path verified in this documentation check | Do not claim support until its records or supported extension interface have been inspected |
-
-Each future agent needs its own reader into the same Echo tape. Available reasoning text depends on the agent, model and settings; none of these paths is a promise of complete private reasoning or complete filesystem history.
-
 ### Projects and sessions
 
-Each repository is a project with its own workspace. Echo identifies a project by its repo root (and its Git remote, if there is one) and stores every recorded session for that repo under it. The replay UI opens on a project list, then that project's sessions. Tapes never mix between projects.
+Each repository is a project with its own workspace. Echo identifies a project by its repo root (and its Git remote, if there is one) and stores every recorded session for that repo under it. Tapes never mix between projects.
 
-### Project view and visualizations
+There is exactly one story per session, even for multi-topic sessions.
 
-The project view is built from stored tapes, not from model memory (cross-session memory is a stretch goal). It shows how the files in the project connect (an import graph for JavaScript and TypeScript) and overlays what the agent changed across sessions: which files it touched, how often, and in which session. Its job is to show where agent work sits in the codebase. It does not try to teach the codebase.
+### Landing: the triage inbox
 
-There are three visualizations. The activity timeline is interactive and covers one session. The file dependency map covers the project. The attempt tree covers one session and separates dead ends from the path that landed code. A node counts as a dead end only if the recorded sequence or agent-stated text supports it, such as an edit that was later reverted or replaced. Uncertain links are labeled as uncertain, which follows the same "evidence, not intent" rule as the answers.
+The landing page is the most recently active project, shown as a triage inbox. Strict newest-first ordering. Each row carries a one-line plain summary, a status, and a high-risk flag or count.
 
-### Pipeline
+Status semantics:
 
-1. Record. `echo-cli record -- muse` starts the normal interactive agent with Echo's Muse reader and capture hooks active (binary name is a placeholder, see section 11). Recording does not require a custom agent interface or PTY parsing.
-2. Capture. Ingest native session records, observe tool lifecycle events, and capture independent file versions. Preserve source identifiers, ordering and diagnostics, then reconcile with the exported trajectory and final working tree. Terminal playback is optional.
-3. Redact. Scrub secrets before any Echo-owned storage, including shadow-repo snapshots, and before any model call. Show a masked preview and disclose that Muse's own logs are separate and may remain raw.
-4. Replay. `echo-cli replay <tape>` serves a local web UI with an activity timeline, the latest captured file state at a selected moment, and the final diff. Missing states and reported capture gaps are visible.
-5. Inspect. Click any hunk and Echo lists captured actions and file versions that can be linked to it, including captured attempts the agent later reverted. Requested edits, observed effects and uncertain mappings are distinguished.
-6. Ask. Ask why a change happened or what was tried first. Retrieval pulls the relevant tape segments, Muse Spark answers using only those, with citations, or refuses.
-7. Select. Echo ranks hunks by risk and by how little I engaged with them, and picks a few (draft: 3 to 5).
-8. Check. For each, an ownership question — consequence, decision, tradeoff, blast_radius, or teach_back, easiest first (ADR 0010). Puzzle questions (predict-the-output, spot-the-bug) are cut: a model answers those unsupervised, so they prove no ownership. I pick my confidence first (guessing, think so, certain), then answer. Every answer grades against a rubric with quoted evidence; for blast_radius the sandbox first establishes what actually breaks, and the model judges whether my explanation matches. I see the reference behaviour plus a calibration reading.
-9. Summarize. A report of what I reviewed, what I proved, and what I waived.
+- **Not checked** — never finished a check. Abandoning a check mid-way leaves Not checked; resuming picks up where it left off.
+- **Checked** — finished a check, regardless of outcome. There is no pass/fail.
+- **Skipped** — explicitly skipped, by the Skip control at the offer or mid-check. The display label is "Skipped", never "unchecked".
 
-## 4. What makes it different
+Checked and Skipped both clear the inbox. No-change sessions (research or answers only, nothing consequential shipped) get an adapted story with no check needed, and clear when opened. If a session resumes after finalization, the story regenerates and check status resets to Not checked.
+
+## 4. The session home: a five-section story
+
+The session home is the story. Closed form reads in about a minute, in this fixed order:
+
+1. **Short version.** What you asked, what shipped, how much is verified. Plain sentences, no scores.
+2. **Ask vs result.** What you asked versus what happened, measured against ALL prompts in the session, grouped by prompt cluster. The model's grouping is convenience, not authority. Extras the agent did that were never asked for, and asks that never landed, are labeled **uncertain**.
+3. **What changed.** Behaviour cards (below). This is the heart of the story.
+4. **Detours.** Only abandoned attempts that touched files and were then reverted, failed with side effects, or took 2+ attempts at the same target. Everything else folds to one line. The full dead-end tree is expandable inline.
+5. **Loose ends.** Agent assumptions, TODOs and unfinished work, paths nothing tested. Tape blind spots appear as a separate "Echo couldn't see" line — never merged into the loose ends.
+
+### Change cards
+
+The model extracts and groups behaviour changes from the tape, including consequential non-file actions (migrations run, pushes, deletes). Each card is one behaviour, not one diff hunk.
+
+- **Top 7 by risk; the rest fold** under "N more changes". Only purely mechanical changes (formatting, imports, generated files, lockfiles, internal renames with no API effect) fold into one routine line.
+- **Order toggle:** risk order or session order.
+- **Risk = blast radius × chance the developer's mental model is wrong.** Auth, payments, stored data, destructive actions, secrets, and production behaviour raise blast radius; unverified changes boost risk. A card's risk is its highest-risk constituent. Every card states its rank reasons in plain words — never a bare score.
+
+Closed card shows: behaviour headline, verification badge, one why-line, one rank-reason line.
+
+Open card shows: before vs now in plain terms; why (marked **agent-stated** where applicable) with a link to the session moment shown INLINE in the card as a session slice; what checked it; what it touches; the developer's own history — prior sessions touching the same code plus the past check picture on that area.
+
+Bottom actions on every card: "Ask why about this", "Check me on this", "Show the code" (inline before/after diff).
+
+No developer editing of grouping in v1.
+
+### Verification badges
+
+Four levels: **observed** / **partly observed** / **agent-stated** / **nothing**. "Verified" counts observed only — agent claims never count. Card badges are strict: the weakest level covering the key behaviour. The Short version's "how much is verified" rolls up from the same deterministic computation.
+
+### Story trust model
+
+The model writes narrative, summary, and grouping freely, BUT a deterministic fact-check layer validates claims (numbers, files, names, verification, risk) against tape facts. Verification and risk are computed deterministically, never model-asserted. A failing claim gets one regeneration; if it still fails it is dropped and replaced by an "Echo couldn't verify this" gap line. Gaps are data, never fabricated.
+
+### Engagement (Echo-side only)
+
+Engagement exists only to target the check and to compute never-looked. It is never shown as a grade.
+
+- **unseen** — card never in view.
+- **seen** — closed card in viewport ~1s.
+- **engaged** — expanded, Show the code, or Ask why.
+
+Only engaged counts as handled. These signals only nudge check ranking.
+
+## 5. Ask why
+
+One saved thread per session, in a side panel. Opening Ask why from a card attaches that card as context; follow-ups and cross-card questions stay in the same thread. Answers are evidence-grounded with citations to tape moments. When the tape cannot support an answer, it refuses: "not on the tape."
+
+## 6. The understanding check
+
+The check is calibration only. It is never a gate, never a grade, never proof for others. No retakes, no contesting grades in v1. "Waive" is abolished; the only explicit out is Skip.
+
+- **Offered inline** at the end of the story, once What changed has been reached. Full prompt only if the session has ≥1 high-blast change; otherwise a quiet chip. Never modal.
+- **Generation:** questions are generated at check start from risk + engagement. 3–5 questions or fewer, never padded to fill a count. If the model is unavailable, the check is unavailable and status is untouched.
+- **Selection:** the riskiest changes whether touched or not; unseen/seen high-risk boosted; 1–2 engaged cards as spot checks. Per-card "Check me on this" asks 1 question now; it feeds the session set but alone never changes status.
+- **Format chosen per target:** MCQ (key-scored) for consequence/decision; free text (rubric-scored against evidence) for why/teach-back. At least 1 free-text question whenever a high-risk change is in the set.
+- **Flow per question:** question shown → confidence locked first (Guessing / Think so / Certain) → options/answer reveal → answer → evidence reveal of what actually happened.
+- **End: a picture, not a grade.** Every change card maps to one of: solid (right + confident) / right-but-unsure / confident-but-wrong / wrong-and-knew-it / never-looked. No numeric score is displayed. Gaps in the picture link back to the card, the evidence, and Ask why. Done returns to the inbox.
+- **Skip semantics:** explicit Skip (at the offer or mid-check) = Skipped status. Closing or abandoning without Skip leaves Not checked and resumes where left. A per-question "I don't know" counts as an answer, not a skip.
+
+## 7. What makes it different
 
 - The refusal is the trust story. A tool that says "not on the tape" is more believable than a chatbot bolted onto a log viewer.
-- It keeps what a final diff can't show: captured attempts the agent made and reverted. It can show that an approach was abandoned when the recorded sequence or agent-stated text supports that, not merely because an edit disappeared.
-- Execution decides what's true in the proof half. The model writes the question, and the sandbox establishes the answer. A wrong-and-certain answer is treated as the key event instead of being averaged away.
-- It targets what I skipped. The replay UI knows which hunks I opened, so the checks go where I didn't look.
-- Muse Code is the subject of the product, not just a tool it calls. Recording a Muse Code session and replaying it in front of Meta engineers is the pitch.
+- It keeps what a final diff can't show: captured attempts the agent made and reverted, folded into Detours rather than a forensic tree.
+- Verification is computed, not asserted. The model never stamps its own claims verified; the deterministic layer and the observed-only rule do that job.
+- It targets what was skipped. Engagement signals (unseen/seen/engaged) push the check toward the risky cards the developer never opened.
+- Muse Code is the subject of the product, not just a tool it calls. Recording a Muse Code session and comprehending it in a minute in front of Meta engineers is the pitch.
 
-A log is raw material, and Muse Code already provides one. Echo adds file-linked history, evidence-backed questions and refusals, review tracking, and execution-verified checks for one developer questioning one diff. That is the answer to "isn't this just Muse Code's action log?"
+A log is raw material, and agent CLIs already provide one. Echo adds a one-minute story, evidence-backed answers with refusals, and calibration checks on the risky changes for one developer questioning one session. That is the answer to "isn't this just the agent's action log?"
 
-## 5. Meta tooling used (rubric: 25%)
+## 8. Meta tooling used (rubric: 25%)
 
-Muse Code is the recorded agent in the primary demo tapes. It is a terminal agent in beta for macOS and Linux, which fits my machine. Its native session records and interactive lifecycle hooks are also Echo's primary capture inputs. Meta's audit/export cookbook confirms the documented route; installation, access and capture fidelity on my machine remain untested.
+Muse Code is the recorded agent in the primary demo tapes. It is a terminal agent in beta for macOS and Linux, which fits my machine. Its native session records and interactive lifecycle hooks are also Echo's primary capture inputs. Meta's audit/export cookbook confirms the documented route; installation, access and capture fidelity on my machine remain partially tested (real logs read; live run not yet).
 
-Muse Spark is the engine: evidence-grounded answers with citations, hunk analysis, and check generation. Muse Spark 1.3 came out on Sept 2, 2026. I need to confirm which version the API exposes to this event and how reliable its structured output is.
+Muse Spark is the engine: story drafting, behaviour grouping, evidence-grounded answers with citations, and check generation. Muse Spark 1.3 came out on Sept 2, 2026. I need to confirm which version the API exposes to this event and how reliable its structured output is. The deterministic fact-check layer around it (verification/risk computation, claim validation with one-regeneration-then-gap-line) is Echo's own work and does not depend on model self-judgment.
 
-This is a two-model story, and on paper it is the thinner side of the tooling axis. The bet is depth over breadth: Muse Code sits inside the product as its subject, and every claim that matters is either cited to the tape or verified by execution. If a third integration fits without feeling bolted on, I'll add it. I won't force one.
+This is a two-model story, and on paper it is the thinner side of the tooling axis. The bet is depth over breadth: Muse Code sits inside the product as its subject, and every claim that matters is either cited to the tape or computed from it. If a third integration fits without feeling bolted on, I'll add it. I won't force one.
 
-The Participant Guide lists more than I had assumed: the Muse Spark series, Muse Wonder, Muse Image, Muse Voice Transcribe and SAM 3.1 through the Meta Model API, the open-weight Muse Glimmer and Muse Spark Open, and Muse Code. The Tooling criterion asks whether I went beyond a basic integration and surfaced capabilities the Meta team didn't expect. One thing would help Echo here: a separate explanation path on Muse Spark Open, served through Baseten (model id `meta-models/muse-spark-open-1026`), would make Echo eligible for the $10,000 open-weights bonus and could keep the tape off Meta's hosted API. That is an open decision in section 11.
+The Participant Guide lists more than I had assumed: the Muse Spark series, Muse Wonder, Muse Image, Muse Voice Transcribe and SAM 3.1 through the Meta Model API, the open-weight Muse Glimmer and Muse Spark Open, and Muse Code. The Tooling criterion asks whether I went beyond a basic integration and surfaced capabilities the Meta team didn't expect. One thing would help Echo here: a separate explanation path on Muse Spark Open, served through Baseten (model id `meta-models/muse-spark-open-1026`), would make Echo eligible for the $10,000 open-weights bonus and could keep the tape off Meta's hosted API. That is an open decision in section 12.
 
 Credits: each participant gets $150 in Meta Model API credits, claimed individually by Nov 4, 9 PM ET, and a credit card must be on the account to make calls. Modal ($100, first 1,000 requests), Baseten ($100, reviewed) and Fireworks ($25, shortlisted teams) credits are separate and need their own requests.
 
-Two privacy points I'll state in the submission. Echo is local-first, but local stops at the model call: the retrieved tape segments, which contain source code, go to Meta's API. A review of Muse Spark 1.3 cautions against using it for confidential client code. Echo redacts its own stored evidence, but Muse's native logs may already hold raw source and secrets; redacting an export does not sanitize those originals. The demo uses only my own repos and a synthetic secret for the redaction example.
+Two privacy points I'll state in the submission. Echo is local-first, but local stops at the model call: the retrieved tape segments, which contain source code, go to Meta's API. A review of Muse Spark 1.3 cautions against using it for confidential client code. Echo redacts its own stored evidence, but native agent logs may already hold raw source and secrets; redacting an export does not sanitize those originals. The demo uses only my own repos and a synthetic secret for the redaction example.
 
-## 6. Rubric and event rules
+## 9. Rubric and event rules
 
 This section comes from the Participant Guide. The 30/25/25/20 weights in my earlier specs were wrong. The real rubric is equal weights.
 
@@ -139,10 +203,10 @@ This section comes from the Participant Guide. The 30/25/25/20 weights in my ear
 
 Stage 1 is pass/fail: the project reasonably fits a problem statement and reasonably uses the Meta Model API or Meta's open-weight models. Stage 2 scores four equally weighted criteria from 0 to 10 (25% each). The top 5 projects per track go to a live final round, where judges watch the demo videos and rank them on the same rubric. Judging runs Nov 5 to 8, and the closing ceremony is Nov 9. The Indie Developer track pays $400,000 in total, with $150,000 for first place.
 
-- Impact. The real-world potential: who benefits, how much it matters, whether people could actually use it, and whether it fits a problem statement. Every developer using coding agents approves code they can't fully explain, and agent-written code is becoming the default. Echo fits Build for Your World. The continuation path is in section 12.
-- Use of Meta AI tooling. How creatively I used Meta's tooling, whether I went beyond a basic integration, and whether I surfaced capabilities the Meta team didn't expect. Muse Code is the product's subject and Muse Spark is its engine. This is the axis to push hardest (see section 5).
-- Technical depth and execution. Whether the engineering is sound and shows real craft: native event correlation, action-aware snapshots in a shadow repo, capture-gap handling, grounded generation with refusal, execution-verified checks, calibration. Native journaling is Muse's capability. Echo's work is joining that evidence to file history and the review and proof loop.
-- Demo. Whether it is a working, impressive demo that holds up live, and whether the video is genuinely cool to watch. Judges use the video, the code and the live product. The plan is three minutes on screen: record, replay, ask, get a cited answer, miss a check while certain, then watch it refuse.
+- Impact. The real-world potential: who benefits, how much it matters, whether people could actually use it, and whether it fits a problem statement. Every developer using coding agents approves code they can't fully explain, and agent-written code is becoming the default. Echo fits Build for Your World. The continuation path is in section 13.
+- Use of Meta AI tooling. How creatively I used Meta's tooling, whether I went beyond a basic integration, and whether I surfaced capabilities the Meta team didn't expect. Muse Code is the product's subject and Muse Spark is its engine. This is the axis to push hardest (see section 8).
+- Technical depth and execution. Whether the engineering is sound and shows real craft: native event correlation, action-aware snapshots in a shadow repo, capture-gap handling, grounded generation with refusal, deterministic verification/risk with a fact-check layer, calibration checks. Native journaling is Muse's capability. Echo's work is joining that evidence to the one-minute story and the calibration loop.
+- Demo. Whether it is a working, impressive demo that holds up live, and whether the video is genuinely cool to watch. Judges use the video, the code and the live product. The plan is three minutes on screen: open the inbox, read the story, ask with a cited answer, miss a check while certain, then watch it refuse.
 
 ### Event rules that shape the build
 
@@ -152,7 +216,7 @@ Stage 1 is pass/fail: the project reasonably fits a problem statement and reason
 - Repositories must be public.
 - No code, data or assets I don't have rights to, and nothing that violates legal, ethical or platform policies.
 - The submission needs an accessible public repo, an accessible three-minute demo video, and everyone who worked on it listed. Solo entrants submit once. It is due Nov 4 at 9 PM ET (Nov 5, 3 AM Lagos), and late submissions aren't considered.
-- The anti-project list includes basic RAG applications and simple "AI for Education" chatbots. Echo has to read as a recorder, a replayer and an execution-verified checker, not as a retrieval chatbot or a quiz bot.
+- The anti-project list includes basic RAG applications and simple "AI for Education" chatbots. Echo has to read as a recorder, a storyteller and a calibration checker, not as a retrieval chatbot or a quiz bot.
 
 ### Bonus prizes worth designing for
 
@@ -162,171 +226,173 @@ Stage 1 is pass/fail: the project reasonably fits a problem statement and reason
 
 Best Agentic Use-Case ($5,000) and Best Creative Build ($5,000, for Muse Image or Muse Wonder) don't fit Echo well.
 
-## 7. Scope
+## 10. Scope
 
-In (core path), the nine things I'm building:
+In (core path), the things I'm building:
 
-1. Projects and sessions. A workspace per repository, each keeping its own history of recorded agent sessions.
-2. Session understanding. A Muse-native reader and lifecycle hooks feed a common tape format with shadow-repo file snapshots. The replay UI has a step-by-step timeline, a diff, and a hunk inspector that shows captured attempts the agent later reverted, with known gaps visible.
-3. Project-level learning. A project view built from stored tapes: how files connect, and what the agent changed across sessions.
-4. Visualizations. The interactive timeline, the file dependency map, and the attempt tree that separates dead ends from landed code.
-5. Evidence-based "why" with refusal. One Q&A path with retrieval, Muse Spark, citations, and a "not on the tape" refusal.
-6. Execution checks. Echo picks 3 to 5 changes and asks ownership questions — consequence, decision, tradeoff, blast_radius, teach_back, easiest first — each graded against a rubric with quoted evidence. For blast_radius the sandbox establishes what actually breaks; the model judges the explanation. Puzzle questions are cut (ADR 0010): in this age a model answers them unsupervised, so they are not worth asking.
-7. Confidence calibration. I pick guessing, think so, or certain before answering. Catching a wrong-and-certain answer is the main job of the check half.
-8. Targeting what I skipped. The replay UI records which hunks I opened, and the checks go to the risky ones I didn't.
-9. Local secret redaction. Secrets are scrubbed before Echo stores anything and before any model request, with a masked preview and a disclosure about native-agent storage.
+1. Projects and sessions. A workspace per repository, each keeping its own history of recorded agent sessions. Automatic ingestion; no import step.
+2. Session triage inbox. Most-recently-active project, strict newest-first, one-line summaries, Not checked / Checked / Skipped semantics, no-change handling, regenerate-and-reset on post-finalization resume.
+3. The five-section story. Short version, Ask vs result (all prompts, extras/omissions uncertain), What changed (behaviour cards), Detours (strict inclusion rule + inline tree), Loose ends with a separate "Echo couldn't see" line. One story per session.
+4. Change cards. Model grouping of behaviour changes incl. consequential non-file actions; top 7 by deterministic risk with plain-words rank reasons; risk/session-order toggle; strict observed-only verification badges; inline session slices; card history display; Ask why / Check me / Show code actions.
+5. Deterministic trust layer. Fact-check validation of model claims with one-regeneration-then-gap-line; verification and risk computed, never model-asserted; agent-stated/uncertain labeling.
+6. Evidence-based "why" with refusal. One saved thread per session in a side panel, card context attachment, citations, "not on the tape" refusal.
+7. Calibration check. Inline offer (full prompt vs quiet chip), 3–5 questions max from risk + engagement, MCQ vs free-text per target with at least 1 free-text when high-risk is in the set, confidence-first flow with evidence reveal, picture-not-grade ending (solid / right-but-unsure / confident-but-wrong / wrong-and-knew-it / never-looked), Skip semantics, no retakes.
+8. Engagement tracking. Unseen / seen / engaged for check targeting and never-looked only.
+9. Local secret redaction. Secrets scrubbed before Echo stores anything and before any model request, with a masked preview and a disclosure about native-agent storage.
 
 Delivery items:
 
-- Demo tapes from Muse Code.
-- A hosted read-only demo with a baked tape, so judges can replay, ask and try a check live without installing anything.
+- Demo tapes from Muse Code (real logs) and OpenCode (partial capture, stated as such).
+- A hosted read-only demo with a baked tape, so judges can read a story, open cards, ask, and try a check live without installing anything.
 - A public repo with a clear commit history from Oct 27, a three-minute demo video, and a README that states what was built during the event.
 
 Cut line (drop in this order if time shrinks):
 
-1. Screenshot stream and optional terminal playback. Structured activity records plus file snapshots carry the demo.
-2. The file dependency map and the cross-session overlay on it. Keep the project and session lists and the per-session views.
-3. Reverse-motion polish in the replay UI. Keep scrub and diff.
-4. Puzzle checks. Predict-the-output and spot-the-bug are cut entirely (ADR 0010) — models answer them unsupervised, so they prove no ownership. No warm-up round.
-5. Citation click-to-scrub. Keep inline citations as text.
-6. Mutation testing in the check gate. Keep "the reference answer passes twice."
-7. Second-agent fallback tapes/readers. Keep Muse Code only; documented paths for other agents are not core implementations.
+1. Screenshot stream and optional terminal playback. Already out — structured activity records plus file snapshots carry the demo.
+2. Session/evidence viewer beyond the inline slices and diffs. The inline card slices and Show-the-code diffs stay; a full viewer returns later.
+3. Cross-session history display on cards. Keep current-session story and checks.
+4. "N more changes" unfolding polish. Keep top-7 cards and the routine line.
+5. Citation click-to-scroll beyond inline slices. Keep inline citations as text with card slices.
+6. Second-agent hardening (OpenCode recovery/reconciliation). Keep Muse Code as the primary tape; state OpenCode limits honestly.
+7. Open-weight explanation path. Keep the Meta API path first.
 
-If the attempt tree runs long, a flat list of attempts per file is the fallback. It is the demo's best visual, so it goes last among the visualizations.
+Stretch (only after the core path works end to end) — none of this is v1:
 
-Stretch (only after the core path works end to end):
-
-- Spaced repetition: missed concepts come back after 1, 3, 7 and 14 days.
-- The learner model that tracks calibration and retention over time.
+- Cross-session gap carryover and targeting.
+- System notifications.
+- Export, sharing, and task creation.
+- Retakes and grade contesting.
+- Grouping edits by the developer.
+- Spaced repetition (1, 3, 7, 14 days) and the learner model.
 - The research question Owned raised: can an AI workflow beat no AI on retention?
-- Rewrite-from-spec checks.
 - A badge on pull requests showing a change was reviewed and understood.
 - Team views, as opt-in aggregates.
-- Cross-session memory: Echo remembers what it has seen in earlier sessions of a project, such as files the agent keeps rewriting or approaches it keeps abandoning, and uses that in later answers and checks.
-- More agent-specific readers into the common tape, starting from the documented paths above rather than a universal terminal parser.
+- More agent-specific readers into the common tape.
 
 Not in scope: AI-use detection, a general tutor or chat product, an IDE plugin, multi-agent comparison, cloud sync, login, Windows support, installer packaging.
 
-## 8. Demo path (exactly three minutes, fully on screen)
+Out of v1 (explicit): replay UI, forensic timeline/file-state/hunk views, check/report pages, numeric scores, cross-session gap carryover/targeting (card history display stays), system notifications, export/sharing/task creation, grouping edits, retakes.
+
+## 11. Demo path (exactly three minutes, fully on screen)
 
 The video is one of the main things judges use, alongside the code and the live product. It must show only what I built during the event, and make that obvious.
 
 1. 0:00 to 0:20. The problem in one breath, with one line on screen: developers took 19% longer with AI and believed they were 20% faster. A caption says Echo was built Oct 27 to Nov 4, and that Muse Code is Meta's agent, not mine.
-2. 0:20 to 0:50. A real interactive Muse Code session runs against a real repo with native capture and file snapshots on, time-compressed. The redaction preview shows a stripped synthetic API key, without implying that Muse's original logs were sanitized.
-3. 0:50 to 1:30. Open the project, pick the session, and scrub the timeline. The attempt tree shows where the agent hit a dead end and what it landed. Click a suspicious hunk (say, deleted error handling) and the cited answer jumps to the moment. Ask what it tried before, and the abandoned approach appears.
-4. 1:30 to 2:15. Echo picks that hunk for a check. I answer "pretty sure," get it wrong, the sandbox runs it, and the calibration meter flags the overconfidence.
+2. 0:20 to 0:45. A real interactive agent session runs against a real repo with native capture and file snapshots on, time-compressed. The redaction preview shows a stripped synthetic API key, without implying that the agent's original logs were sanitized. In-progress shows as still-recording.
+3. 0:45 to 1:30. Open the inbox, pick the newest session, read the story in order: short version, ask vs result, the top behaviour cards with verification badges and rank reasons. Open one card: before vs now, inline session slice, what it touches, history. Show the code inline.
+4. 1:30 to 2:15. The inline check at the end of the story. Answer with confidence locked first, get one wrong while certain, watch the evidence reveal. End on the picture (solid / right-but-unsure / confident-but-wrong / wrong-and-knew-it / never-looked) — no score.
 5. 2:15 to 2:40. Ask something the tape can't answer. It refuses.
-6. 2:40 to 3:00. The report, the repo link, and the line: Echo explains only what it can point to, and checks only what it can run.
+6. 2:40 to 3:00. Done returns to the inbox; the repo link; and the line: Echo explains only what it can point to, and checks only calibration.
 
 Rules for the video:
 
-- Say what is new. Name the parts I built (Muse reader and capture, replay, evidence Q&A, check engine) and show the repo and its commit history from Oct 27. Muse Code's own logging is Meta's, and the caption should say so.
+- Say what is new. Name the parts I built (readers and capture, story + deterministic trust layer, cards, evidence Q&A, calibration check) and show the repo and its commit history from Oct 27. The agent's own logging is Meta's, and the caption should say so.
 - Don't present anything from before the event as new. The repo the agent works on is a vehicle, not part of Echo. If any of its code existed before Oct 27, say so on screen. A repo made for the demo is safer.
 - The hosted demo carries the same tape, so judges who try it see what the video shows.
 - Stay at three minutes.
 
 I need a real session where the agent reverts an attempt and makes a questionable change. Staged demos look staged, so I'll start looking for that repo and task now.
 
-## 9. Evaluation (targets, not claims)
+## 12. Evaluation (targets, not claims)
 
 | Measure | How | Target |
 | --- | --- | --- |
 | Capture integrity | Compare known fixture actions, tool outcomes and file versions with the tape; inspect Echo-owned artifacts for a synthetic secret | Report capture coverage and missed states; no fabricated records or raw fixture secret in Echo storage |
+| Story faithfulness | Hand-check story claims (numbers, files, names, verification, risk) against tape facts across 3 tapes | No model-asserted verification/risk; every failure caught by the fact-check layer or reported |
 | Citation support | Hand-label 20 "why" answers across 3 tapes as supported or not by their cited moments | 80% or better |
 | Refusal | 10 questions the tape can't answer | Refuses at least 8 |
-| Check pass rate | Fraction of generated checks that clear the gate | 80% or better |
-| Time to first check | Tape loaded to first verified check | Under 90 seconds |
-| Hunk selection | On 3 tapes, do the top picks match the changes I'd worry about? | Report as measured |
-| Attempt tree | On 3 tapes, check every dead end and landed node against the recorded sequence | No fabricated dead ends; report any missed |
+| Check quality | Fraction of generated checks that are answerable from evidence with a clean rubric | 80% or better |
+| Time to comprehension | Session opened to story readable | Under 60 seconds for the baked tape |
+| Card selection | On 3 tapes, do the top-7 risk picks match the changes I'd worry about? | Report as measured |
+| Detours precision | On 3 tapes, check every listed detour against the recorded sequence | No fabricated detours; report any missed |
 
 Before the Q&A gate, test a controlled fixture with a file read, a successful edit, a failed tool, an edit reverted in a later action, a shell-driven file change, and an interrupted tool whose outcome may be unknown. Also test a rapid edit-and-revert inside one command to measure the snapshot limit, and a synthetic secret to check Echo's tape, snapshots, caches and spool files. Capture tests establish what was observed or missed; they do not turn an unobserved intermediate state into evidence. This fixture is an instrumentation test, not a substitute for the real demo session.
 
 There is no user pilot in the core plan. If I get three to five developers to run it on their own sessions before Nov 4, I'll report that with the sample size and limits. If not, the numbers above come from my own tapes and I'll say so.
 
-## 10. Build plan
+## 13. Build plan
 
-The day-by-day schedule lives outside this spec and is maintained separately. The fixed dates (building period, deadline, judging) are in section 6.
+The day-by-day schedule lives outside this spec and is maintained separately. The fixed dates (building period, deadline, judging) are in section 9.
 
 Two decision rules from this spec apply to whatever schedule gets used.
 
-The first is the capture gate. Once the Muse reader and file snapshots work on a real session, ask whether the tape can support useful answers. If it can't support useful explanations, Echo doesn't get scrapped. The tape half is described honestly as "captured actions, results and file changes," and more weight moves to the check half. If the installed Muse build cannot support native capture, revisit that input decision explicitly; a terminal-only fallback does not silently meet the same contract.
+The first is the capture gate. Once the Muse reader and file snapshots work on a real session, ask whether the tape can support a useful story. If it can't support useful explanations, Echo doesn't get scrapped. The story half is described honestly as "captured actions, results and file changes," and more weight moves to the calibration half. If the installed agent build cannot support native capture, revisit that input decision explicitly; a terminal-only fallback does not silently meet the same contract.
 
-The second is the cut line in section 7. When time shrinks, drop things in that order.
+The second is the cut line in section 10. When time shrinks, drop things in that order.
 
-## 11. Decisions still open
+## 14. Decisions still open
 
-Native-first capture of normal interactive Muse Code is the direction. These implementation defaults are still subject to the real-session spike, not claims that the recorder already works.
+Native-first capture of normal interactive sessions is the direction. These implementation defaults are still subject to the real-session spike, not claims that the recorder already works.
 
 | Decision | Draft default | How it gets settled |
 | --- | --- | --- |
-| Native-record ingestion | Muse-specific live reader plus hooks, with trajectory export for reconciliation; pin the source build/schema and retain diagnostics | Hand inspection of a throwaway session, then the first recorder build: verify readable records, child-log coverage, checkpoint behaviour and recovery |
+| Native-record ingestion | Agent-specific live readers plus hooks, with trajectory export for reconciliation; pin the source build/schema and retain diagnostics | Hand inspection of a throwaway session, then the first recorder build: verify readable records, child-log coverage, checkpoint behaviour and recovery |
 | File-capture timing | Baseline, snapshots around relevant tools/batches, filesystem watching and final reconciliation; no lossless transient-state claim | Capture fixture, including shell writes and rapid edit/revert |
-| Hunk-history mapping | Link native actions and observed file versions through supported IDs and file evidence; distinguish requested edits from effects and uncertain matches | Inspector tested on real edits and reverted attempts |
+| Behaviour grouping | Model proposes behaviour cards from tape facts; deterministic layer validates files/names/counts; no dev editing in v1 | Story review on 3 tapes |
+| Verification computation | Deterministic observed / partly observed / agent-stated / nothing from tape evidence; weakest-level covering key behaviour wins | Story review on 3 tapes |
+| Risk computation | Deterministic blast radius × mental-model-wrong chance; unverified boosts; plain-words rank reasons on every card | Hand-check top-7 picks on 3 tapes |
 | Where "why" comes from | Quote readable agent-stated text when present; otherwise describe observed evidence without inventing intent. Do not require reasoning capture | Capture gate: three "why" questions on a real tape; inspect optional reasoning text separately |
 | Redaction/privacy mode | Redact before all Echo storage and requests; disclose raw native-agent logs. Do not assume `--redacted` export prevents native persistence | Synthetic-secret fixture and inspection of documented native-storage behaviour |
-| Optional terminal capture | Visual playback only, not the action authority; a terminal-only fallback is degraded and not core | Add only if the native-first path works and time permits |
-| Which hunks get a check | Score from size, error-handling or security-pattern changes, repeated rewrites by the agent, and never opened in replay. Top 3 to 5 | Hand-check on 3 tapes |
-| How checks are generated | Muse Spark proposes a snippet-level question and a reference answer from the hunk, then the code runs to confirm it | When the check engine is built |
-| Sandbox | Throwaway process or container, no network, hard timeout, snippet scope instead of the whole repo. Build the simple fallback runner first | When the check engine is built |
+| Story generation trigger | Finalization generates the story; in-progress shows still-recording; post-finalization resume regenerates and resets check status | When finalization wiring is built |
+| Story skeleton without model | Deterministic skeleton story when the model is unavailable | When the story path is built |
+| Check generation | Questions generated at check start from risk + engagement; MCQ key-scored for consequence/decision, free-text rubric-scored against evidence for why/teach-back | When the check path is built |
 | Language scope | JavaScript and TypeScript only | Matches my stack and the demo repo |
-| What counts as skipped | A hunk never opened in replay. Dwell time is a later refinement | When the replay UI is built |
+| Engagement thresholds | Seen = closed card in viewport ~1s; engaged = expand / Show code / Ask why | When the story UI is built |
 | Project identity | Repo root path plus the Git remote if there is one, so moving a folder doesn't split a project | When the project and session list is built |
-| Attempt tree | One node per captured action or batch, linked by file and sequence. A node is a dead end only if it was later reverted or replaced and is not in the final tree. Uncertain links are labeled | When the attempt tree is built, checked against the recorded sequence on 3 tapes |
-| Dependency map | Static import graph for JavaScript and TypeScript only, built from the final tree and the per-session snapshots. No model-written summaries | When the project view is built |
-| Hosted demo | Read-only page with one or two baked tapes. The server calls the model with a spending cap and a rate limit | When a baked tape is ready |
+| Hosted demo | Read-only page with one or two baked tapes and a spending cap + rate limit | When a baked tape is ready |
 | Open-weight path | Try Muse Spark Open through Baseten for the explanation path next to the Meta API. Keep it only if answer quality holds | After the first working Q&A path, by comparing answer quality |
-| CLI binary name | Not `echo`: the shell builtin shadows any binary with that name | Before the first commit |
-| Second agent | Muse Code only. Future agent-specific readers translate into the common tape; no universal capture guarantee and no other agent's reader in core | Cut-line item 7; add readers only after the core loop works |
+| CLI binary name | `echo-cli`: the shell builtin shadows any binary named `echo` | Settled |
+| Second agent | Muse Code primary (real logs read, live run untested); OpenCode partial (no replay/reconnect, needs recovery path). No universal capture guarantee | Cut-line item 6; harden only after the core loop works |
 | Product name | Echo. Domains and handles are unchecked, and the bare name is crowded (Amazon Echo, a popular Go web framework) | Any time |
 
-## 12. After Nov 4
+## 15. After Nov 4
 
+- Session/evidence viewer returning (inline slices stay; the fuller viewer is a later decision).
 - Spaced repetition and the learner model, so Echo tracks whether understanding holds over days.
 - A longer retention study with a proper control, which is the question Owned set out to answer.
-- A badge on pull requests that says a change has a tape and was checked by the person who approved it.
+- Cross-session gap carryover and targeting.
+- System notifications; export, sharing, and task creation.
+- A badge on pull requests that says a change was comprehended by the person who approved it.
 - Opt-in team views and the audit angle for regulated shops.
-- More languages and agent-specific readers for Claude Code, OpenCode and Codex; investigate Qoder's capture path before claiming support.
+- More languages and hardened agent-specific readers for Claude Code, OpenCode and Codex; investigate Qoder's capture path before claiming support.
 
-## 13. Risks
+## 16. Risks
 
 - The tape may hold actions without a readable explanation. Mitigation: never require private reasoning; label every answer as agent-stated or observed, refuse unsupported intent claims, and use the capture gate to decide how the product is described.
-- Native records or hook payloads may be incomplete, too large, or changed by a release. Mitigation: pin the tested Muse build, preserve source/diagnostic metadata, reconcile inputs and show known gaps rather than silently fabricating a complete session.
+- Native records or hook payloads may be incomplete, too large, or changed by a release. Mitigation: pin the tested agent build, preserve source/diagnostic metadata, reconcile inputs and show known gaps rather than silently fabricating a complete session.
 - File capture may miss rapid edit/revert sequences or misattribute concurrent/background writes. Mitigation: combine action-aware snapshots with independent filesystem capture, keep uncertain associations labeled, and report the measured limits instead of promising every intermediate state.
-- Recorder hooks execute outside Muse's tool sandbox. Mitigation: review the hook commands, keep their filesystem scope narrow, and observe rather than modify or approve agent actions.
-- Echo gets read as a log viewer. Mitigation: the refusal, the reverted attempts, and the checks are the answer. The demo shows all three.
-- Checks don't measure understanding, or generated questions are ambiguous. Mitigation: execution-verified answers, hand checks, and a stated limit in the submission.
-- The sandbox eats days. Mitigation: snippet scope, the simple runner first, and the cut line.
-- Muse Code is in beta and behaves unpredictably, or Meta API access, rate limits or structured output fail from Nigeria. Mitigation: test on day one, keep prompts model-agnostic, cache calls by content hash.
-- People turn the checks off because they add friction. Mitigation: check only a few risky hunks per session, never everything.
+- Recorder hooks execute outside the agent's tool sandbox. Mitigation: review the hook commands, keep their filesystem scope narrow, and observe rather than modify or approve agent actions.
+- Echo gets read as a log viewer. Mitigation: the one-minute story, the refusal, the detours, and the calibration picture are the answer. The demo shows all four.
+- Story or cards assert what the tape doesn't support. Mitigation: deterministic fact-check layer with one-regeneration-then-gap-line; verification/risk computed, never model-asserted.
+- Checks don't measure understanding, or generated questions are ambiguous. Mitigation: hand checks, evidence reveals, and a stated limit in the submission. The check claims calibration only.
+- People skip the checks because they add friction. Mitigation: check only the risky changes (3–5 max), quiet chip when nothing is high-blast, Skipped status without shame.
 - Secrets leak into Echo artifacts or remain in native-agent logs. Mitigation: redact before all Echo-owned persistence, including snapshot Git objects/index and intermediate files, and before model calls; test with a synthetic secret, show a masked preview, disclose the native-log limit, and use only my own repos for demos.
-- Time runs short. Mitigation: the cut-line order in section 7.
-- Claims outrun evidence. Mitigation: every number in the submission comes from section 9 or a cited study, with its sample size and limits.
-- Echo is read as a basic RAG app or a quiz bot, both on the anti-project list. Mitigation: the pitch and the demo lead with capture, replay, reverted attempts and execution-verified checks.
+- Claims outrun evidence. Mitigation: every number in the submission comes from section 12 or a cited study, with its sample size and limits.
+- Echo is read as a basic RAG app or a quiz bot, both on the anti-project list. Mitigation: the pitch and the demo lead with automatic capture, the minute-long story, detours, and calibration checks.
 - The demo or repo blurs what was built during the event, which risks disqualification. Mitigation: a fresh repo on Oct 27, an on-screen statement of what is new and what is Meta's, and a demo repo clearly separate from Echo.
 - No working card or credits for the Meta API. Mitigation: sort a dollar card before the first API call, request partner credits, cache model calls, and keep the model layer swappable.
 - The live-product check fails because Echo only runs locally. Mitigation: the hosted read-only demo.
-- Project-level learning and the visualizations add work to a plan with little slack. Mitigation: bound the project view to an import graph plus an overlay of agent-touched files, and follow the cut-line order.
+- Time runs short. Mitigation: the cut-line order in section 10.
 
-## 14. Assumptions and things I haven't verified
+## 17. Assumptions and things I haven't verified
 
-The Oct 26 first-party documentation check confirms Muse Code's native session log, structured trajectory export, interactive lifecycle hooks, optional transcript reasoning setting, and programmatic JSON/SDK paths. It also confirms related paths for Claude Code, OpenCode V2 and Codex. These are documented capabilities, not tested installations or evidence that any capture path is lossless. Qoder was not verified.
+The Oct 26 first-party documentation check confirms Muse Code's native session log, structured trajectory export, interactive lifecycle hooks, optional transcript reasoning setting, and programmatic JSON/SDK paths. It also confirms related paths for Claude Code, OpenCode V2 and Codex. These are documented capabilities, not tested installations or evidence that any capture path is lossless. Qoder was not verified. Later real-log reads confirmed the Muse log shape; a live run is still untested. OpenCode capture is partial as noted above.
 
 Still unverified:
 
 - The Participant Guide covers the rules, rubric and deadline. I haven't read any longer Official Rules or terms behind it.
 - Whether work on Oct 26, including hand inspection of Muse Code's logs, counts toward the building period.
 - Whether the Meta Model API works from Nigeria, its rate limits and structured-output reliability, and whether a Nigerian-issued card works for billing. The credit link isn't published yet.
-- The installed Muse build's log/export schemas, live ingestion and recovery behaviour, child-log coverage, and what remains after checkpointing or compaction.
+- The installed Muse build's live ingestion and recovery behaviour, child-log coverage, and what remains after checkpointing or compaction.
 - Which full messages and tool results are available beyond hook previews or skipped payloads, and whether optional reasoning text is readable in the captured/exported records.
 - How reliably hooks and file capture preserve useful intermediate versions, including shell writes, failures, interruptions and concurrent/background changes.
-- Whether a stronger privacy mode using `--no-session-log` can preserve enough evidence, and what other native diagnostic or temporary storage may remain. The documented flag forfeits retained-session features; this is not the default.
-- Whether optional PTY playback is worth adding; it is no longer on the core capture path.
+- Whether a stronger privacy mode can preserve enough evidence, and what other native diagnostic or temporary storage may remain.
 - Which Muse Spark version the event API exposes, and how long a session fits in its context.
 - Whether Muse Spark Open on Baseten is good enough for the explanation path.
 - The Trio developer study: I read secondary coverage only.
-- The hunk-risk scoring: a guess until checked against hand labels.
+- The risk computation: a guess until checked against hand labels.
 - Whether Echo is free as a name, domain and handle.
-- That no equivalent full review/proof loop exists. This rests on product searches from Oct 25; native agent logging and audit/export tools are already known to exist.
+- That no equivalent story-plus-calibration loop exists. This rests on product searches from Oct 25; native agent logging and audit/export tools are already known to exist.
 
 ## Sources
 
