@@ -543,7 +543,14 @@ export function recordEngagementEvents(
   return withTransaction(db, () => {
     let inserted = 0;
     for (const event of events) {
-      const result = insert.run(event.id, sessionId, event.cardId, event.kind, event.occurredAt, now);
+      const result = insert.run(
+        event.id,
+        sessionId,
+        event.cardId,
+        event.kind,
+        event.occurredAt,
+        now,
+      );
       inserted += Number(result.changes);
     }
     return inserted;
