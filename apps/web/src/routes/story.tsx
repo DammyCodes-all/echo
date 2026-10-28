@@ -1,20 +1,31 @@
 import type {
   AskEvidence,
   ChangeCard,
+  ChecksV2Response,
   Detour,
   LooseEnd,
   ReviewHunk,
   SessionStory,
   StoryClaim,
 } from "@echo/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import { useParams } from "react-router";
+import { useNavigate, useParams } from "react-router";
 import { api } from "../api";
 import { AskThreadPanel } from "../components/ask-thread-panel";
+import { CheckOffer } from "../components/check-offer";
+import { CheckPicture } from "../components/check-picture";
+import { CheckRunner } from "../components/check-runner";
 import { ScaffoldPage } from "../components/scaffold-page";
 import { ClaimItem, type HistoryEntry, StoryCard } from "../components/story-card";
 import { useEngagement } from "../hooks/use-engagement";
+
+const CHECK_UNAVAILABLE = "Check unavailable (model off). Your session status is untouched.";
+
+function checkMessage(error: unknown): string {
+  const raw = error instanceof Error ? error.message : "Check failed.";
+  return /unavailable/i.test(raw) ? CHECK_UNAVAILABLE : raw;
+}
 
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith("404");
@@ -115,6 +126,8 @@ function DetourItem({ detour }: { detour: Detour }) {
 
 export function StoryPage() {
   const { sessionId = "" } = useParams();
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { track } = useEngagement(sessionId);
 
   useEffect(() => {
@@ -139,6 +152,23 @@ export function StoryPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [askOpen, setAskOpen] = useState(false);
   const [askCard, setAskCard] = useState<{ id: string; headline: string } | null>(null);
+  const [checkRunnerOpen, setCheckRunnerOpen] = useState(false);
+  const [checkFocusId, setCheckFocusId] = useState<string | null>(null);
+  const [checkFinished, setCheckFinished] = useState(false);
+  const [checkBusy, setCheckBusy] = useState(false);
+  const [checkError, setCheckError] = useState<string | null>(null);
+
+  const storyForGate = storyQuery.data as unknown as SessionStory | undefined;
+  const checksQuery = useQuery({
+    queryKey: ["checks-v2", sessionId],
+    queryFn: () => api.checksV2State(sessionId),
+    // No cards means no check needed: skip the state fetch entirely.
+    enabled: (storyForGate?.cards.length ?? 0) > 0,
+  });
+  const sessionQuery = useQuery({
+    queryKey: ["session", sessionId],
+    queryFn: () => api.session(sessionId),
+  });
 
   const story = storyQuery.data as unknown as SessionStory | undefined;
 
@@ -204,6 +234,74 @@ export function StoryPage() {
     track("ask_opened", asked.id);
     setAskCard(asked);
     setAskOpen(true);
+  };
+
+  const openCard = (cardId: string) => {
+    setExpandedId(cardId);
+    requestAnimationFrame(() => {
+      document
+        .getElementById(`card-${cardId}`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+  };
+
+  const handleStartCheck = async () => {
+    if (checkBusy) return;
+    setCheckBusy(true);
+    setCheckError(null);
+    try {
+      const next = await api.generateChecksV2(sessionId);
+      queryClient.setQueryData(["checks-v2", sessionId], next);
+      setCheckFocusId(null);
+      setCheckRunnerOpen(true);
+    } catch (unknown) {
+      setCheckError(checkMessage(unknown));
+    } finally {
+      setCheckBusy(false);
+    }
+  };
+
+  const handleCheckMe = async (asked: { id: string; headline: string }) => {
+    if (checkBusy) return;
+    setCheckBusy(true);
+    setCheckError(null);
+    try {
+      const next: ChecksV2Response = await api.checkMe(sessionId, asked.id);
+      queryClient.setQueryData(["checks-v2", sessionId], next);
+      setCheckFocusId(next.questions.find((question) => question.cardId === asked.id)?.id ?? null);
+      setCheckRunnerOpen(true);
+    } catch (unknown) {
+      setCheckError(checkMessage(unknown));
+    } finally {
+      setCheckBusy(false);
+    }
+  };
+
+  const handleSkipCheck = async () => {
+    if (checkBusy) return;
+    setCheckBusy(true);
+    setCheckError(null);
+    try {
+      await api.skipChecksV2(sessionId);
+      queryClient.setQueryData(["checks-v2", sessionId], (old: ChecksV2Response | undefined) =>
+        old === undefined ? old : { ...old, status: "skipped" as const },
+      );
+      setCheckRunnerOpen(false);
+    } catch (unknown) {
+      setCheckError(checkMessage(unknown));
+    } finally {
+      setCheckBusy(false);
+    }
+  };
+
+  const handleRunnerDone = () => {
+    setCheckRunnerOpen(false);
+    setCheckFinished(true);
+  };
+
+  const handleBackToInbox = () => {
+    const projectId = sessionQuery.data?.projectId;
+    navigate(projectId ? `/projects/${projectId}` : "/projects");
   };
 
   const handleCitationClick = (citation: AskEvidence, messageCardId?: string | null) => {
@@ -300,6 +398,7 @@ export function StoryPage() {
                   onToggle={() => setExpandedId(expandedId === card.id ? null : card.id)}
                   onTrack={track}
                   onAsk={handleAsk}
+                  onCheck={handleCheckMe}
                 />
               ))}
               {hiddenCount > 0 && !showAll ? (
@@ -381,6 +480,73 @@ export function StoryPage() {
             </div>
           </section>
         ) : null}
+
+        {story.cards.length === 0 ? (
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold tracking-tight">Understanding check</h2>
+            <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
+              No check needed for this session.
+            </div>
+          </section>
+        ) : (
+          <section className="space-y-3">
+            <h2 className="text-xl font-semibold tracking-tight">Understanding check</h2>
+            {checkError !== null ? <p className="text-sm text-dusk-fail">{checkError}</p> : null}
+            {checksQuery.isPending ? (
+              <p className="text-sm text-dusk-muted">Loading check…</p>
+            ) : checksQuery.isError ? (
+              <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
+                <p>Could not load the check.</p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void checksQuery.refetch();
+                  }}
+                  className="mt-4 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : checksQuery.data === undefined ? null : checkRunnerOpen ? (
+              <CheckRunner
+                sessionId={sessionId}
+                state={checksQuery.data}
+                focusQuestionId={checkFocusId}
+                onUpdate={(next) => queryClient.setQueryData(["checks-v2", sessionId], next)}
+                onSkip={() => void handleSkipCheck()}
+                onDone={handleRunnerDone}
+              />
+            ) : checksQuery.data.status === "skipped" ? (
+              <div className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5">
+                <p className="text-sm text-dusk-muted">Skipped — no pressure.</p>
+                <button
+                  type="button"
+                  onClick={handleBackToInbox}
+                  className="rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white"
+                >
+                  Done — back to inbox
+                </button>
+              </div>
+            ) : checksQuery.data.status === "completed" || checkFinished ? (
+              <CheckPicture
+                cards={story.cards}
+                picture={checksQuery.data.picture}
+                onOpenCard={openCard}
+                onDone={handleBackToInbox}
+              />
+            ) : (
+              <CheckOffer
+                hasHighRisk={story.cards.some((card) => card.highRisk)}
+                questionCount={
+                  checksQuery.data.questions.length > 0 ? checksQuery.data.questions.length : null
+                }
+                onStart={() => void handleStartCheck()}
+                onSkip={() => void handleSkipCheck()}
+                starting={checkBusy}
+              />
+            )}
+          </section>
+        )}
       </div>
       {askOpen ? (
         <AskThreadPanel
