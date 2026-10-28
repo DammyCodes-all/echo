@@ -62,8 +62,8 @@ export function normalizeDraftShape(value: unknown): unknown {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
   const draft = value as Record<string, unknown>;
   const normalized: Record<string, unknown> = { ...draft };
-  normalized["tapeWatermark"] = { eventCount: 0, sha256: "server-stamped" };
-  normalized["generator"] = {
+  normalized.tapeWatermark = { eventCount: 0, sha256: "server-stamped" };
+  normalized.generator = {
     kind: "model",
     model: "server-stamped",
     promptVersion: "server-stamped",
@@ -79,24 +79,23 @@ export function normalizeDraftShape(value: unknown): unknown {
   const normalizeMoment = (value: unknown): void => {
     if (value === null || typeof value !== "object" || Array.isArray(value)) return;
     const copy = value as Record<string, unknown>;
-    if (copy["toolCallId"] === "") copy["toolCallId"] = null;
-    if (copy["ts"] === "") copy["ts"] = null;
-    if (typeof copy["label"] !== "string" || !CLAIM_LABELS.includes(copy["label"])) {
-      copy["label"] = "uncertain";
+    if (copy.toolCallId === "") copy.toolCallId = null;
+    if (copy.ts === "") copy.ts = null;
+    if (typeof copy.label !== "string" || !CLAIM_LABELS.includes(copy.label)) {
+      copy.label = "uncertain";
     }
   };
-  const moment = normalized["moment"];
+  const moment = normalized.moment;
   if (moment !== null && typeof moment === "object" && !Array.isArray(moment)) {
     const copy = { ...(moment as Record<string, unknown>) };
     normalizeMoment(copy);
-    if (copy["previousPicture"] !== null && copy["previousPicture"] !== undefined) {
-      if (!PICTURE_BUCKETS.includes(String(copy["previousPicture"])))
-        copy["previousPicture"] = null;
+    if (copy.previousPicture !== null && copy.previousPicture !== undefined) {
+      if (!PICTURE_BUCKETS.includes(String(copy.previousPicture))) copy.previousPicture = null;
     }
-    normalized["moment"] = copy;
+    normalized.moment = copy;
   }
-  if (Array.isArray(normalized["cards"])) {
-    normalized["cards"] = (normalized["cards"] as unknown[]).map((entry) => {
+  if (Array.isArray(normalized.cards)) {
+    normalized.cards = (normalized.cards as unknown[]).map((entry) => {
       if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return entry;
       const card = { ...(entry as Record<string, unknown>) };
       for (const field of ["why", "before", "now"]) {
@@ -105,15 +104,14 @@ export function normalizeDraftShape(value: unknown): unknown {
           card[field] = claims !== null && typeof claims === "object" ? [claims] : [];
         }
       }
-      normalizeMoment(card["moment"]);
-      const history = card["history"];
+      normalizeMoment(card.moment);
+      const history = card.history;
       if (history !== null && typeof history === "object" && !Array.isArray(history)) {
         const copy = { ...(history as Record<string, unknown>) };
-        if (copy["previousPicture"] !== null && copy["previousPicture"] !== undefined) {
-          if (!PICTURE_BUCKETS.includes(String(copy["previousPicture"])))
-            copy["previousPicture"] = null;
+        if (copy.previousPicture !== null && copy.previousPicture !== undefined) {
+          if (!PICTURE_BUCKETS.includes(String(copy.previousPicture))) copy.previousPicture = null;
         }
-        card["history"] = copy;
+        card.history = copy;
       }
       return card;
     });
@@ -251,18 +249,64 @@ function enrichStory(facts: FactSet, story: SessionStory): SessionStory {
     }
   }
   if (!facts.facts.some((fact) => fact.kind === "run")) {
-    for (const hunk of hunks) {
+    // One end per card, not per hunk: a multi-hunk (folded) card shares a
+    // single end so wide sessions don't emit a line per hunk. Hunks with no
+    // card keep the old per-hunk orphan ends. Mechanical hunks (formatting,
+    // lockfiles) expect no test run, so they are skipped here entirely —
+    // the routine summary already names them.
+    const hunksById = new Map(hunks.map((hunk) => [hunk.hunkId, hunk]));
+    const covered = new Set<string>();
+    for (const card of story.cards) {
+      const constituents = card.constituentHunkIds.flatMap((id) => {
+        const hunk = hunksById.get(id);
+        return hunk && hunk.mechanical.class === null ? [hunk] : [];
+      });
+      if (constituents.length === 0) continue;
+      for (const hunk of constituents) covered.add(hunk.hunkId);
+      if (constituents.length === 1) {
+        const hunk = constituents[0] as HunkFact;
+        looseEnds.push({
+          id: uniqueId(looseTaken, `le-untested-${hunk.hunkId}`),
+          kind: "untested",
+          claims: [
+            {
+              text: `no observed test run covers ${hunk.path}`,
+              label: "uncertain",
+              factIds: [hunk.id],
+            },
+          ],
+          cardId: card.id,
+        });
+      } else {
+        looseEnds.push({
+          id: uniqueId(looseTaken, `le-untested-${card.id}`),
+          kind: "untested",
+          claims: [
+            {
+              text: "no observed test run covers these changes",
+              label: "uncertain",
+              factIds: constituents.map((hunk) => hunk.id),
+            },
+          ],
+          cardId: card.id,
+        });
+      }
+    }
+    const orphans = hunks.filter(
+      (hunk) => hunk.mechanical.class === null && !covered.has(hunk.hunkId),
+    );
+    if (orphans.length > 0) {
       looseEnds.push({
-        id: uniqueId(looseTaken, `le-untested-${hunk.hunkId}`),
+        id: uniqueId(looseTaken, "le-untested-uncovered"),
         kind: "untested",
         claims: [
           {
-            text: `no observed test run covers ${hunk.path}`,
+            text: "no observed test run covers these changes",
             label: "uncertain",
-            factIds: [hunk.id],
+            factIds: orphans.slice(0, 1).map((hunk) => hunk.id),
           },
         ],
-        cardId: cardByHunkId.get(hunk.hunkId) ?? null,
+        cardId: null,
       });
     }
   }
@@ -549,9 +593,16 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
 
     // Read-through cache: a matching watermark means the artifact is current.
     // The review (Git diffs) is only built when regeneration is needed.
+    // A skeleton generator older than the current builder also regenerates,
+    // so fallback improvements reach already-cached stories.
     const existing = getArtifactRef(db, sessionId, "story");
+    const existingGenerator = existing?.generator;
+    const skeletonSuperseded =
+      existingGenerator?.startsWith("skeleton-") === true &&
+      existingGenerator !== SKELETON_PROMPT_VERSION;
     if (
       existing &&
+      !skeletonSuperseded &&
       existing.tapeWatermark.eventCount === watermark.eventCount &&
       existing.tapeWatermark.sha256 === watermark.sha256 &&
       existsSync(existing.path)
