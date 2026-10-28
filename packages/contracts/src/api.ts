@@ -200,6 +200,7 @@ export const AskRequestSchema = z.object({
   question: z.string().min(1).max(2000),
   filePath: z.string().min(1).max(1024).nullable().default(null),
   symbols: z.array(z.string().min(1).max(256)).max(16).default([]),
+  cardId: z.string().min(1).max(128).nullable().default(null),
 });
 export type AskRequest = z.infer<typeof AskRequestSchema>;
 
@@ -625,6 +626,25 @@ export const AskThreadSchema = z.object({
   messages: z.array(AskThreadMessageSchema),
 });
 export type AskThread = z.infer<typeof AskThreadSchema>;
+
+// Card history (Phase 3 slice A): touch-overlap entries across same-project
+// sessions. previousPicture is ALWAYS null on this slice (checks v2 lands
+// Phase 5); the field stays so the shape is forward-compatible.
+export const HistoryEntrySchema = z.object({
+  sessionId: z.string().min(1),
+  summary: z.string().nullable(),
+  endedAt: z.string().nullable(),
+  sharedFiles: z.array(z.string()),
+  matchNote: z.string().min(1),
+  previousPicture: PictureBucketSchema.nullable(),
+});
+export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
+
+export const SessionHistoryResponseSchema = z.object({
+  sessionId: z.string().min(1),
+  entries: z.array(HistoryEntrySchema),
+});
+export type SessionHistoryResponse = z.infer<typeof SessionHistoryResponseSchema>;
 
 export const ArtifactKindSchema = z.enum(["story", "checks_v2", "ask_thread"]);
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;

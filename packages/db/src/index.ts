@@ -1,8 +1,8 @@
 export { type EchoDb, openEchoDb, withTransaction } from "./database";
 export { MIGRATIONS, type Migration } from "./migrations";
 export {
-  appendEvents,
   type ArtifactRefRow,
+  appendEvents,
   type BuildVersionSummary,
   deriveEngagementTiers,
   type EngagementEventInput,
@@ -37,12 +37,12 @@ export {
   type SessionBuildPin,
   type SessionRow,
   type SessionSummary,
-  setSessionCheckStatus,
-  setSessionStoryState,
   type SnapshotFileRow,
   type SnapshotInsert,
   type SnapshotRow,
   type StoredEvent,
+  setSessionCheckStatus,
+  setSessionStoryState,
   upsertArtifactRef,
   upsertProject,
   upsertReaderCheckpoint,

@@ -270,7 +270,10 @@ export function buildEvidenceBundle(
   const scored: Array<{ item: EvidenceItem; score: number; seq: number; relevant: boolean }> = [];
   const documents = events.map((event) => {
     const summary = payloadText(event.kind, event.payload);
-    const filePath = queryFile ?? eventFilePath(event.kind, event.payload, summary);
+    // Scope is a ranking boost (fileMatched), never a relabel: stamping every
+    // doc with the query file makes fileMatched true tape-wide, which admits
+    // unrelated events and breaks pre-model refusal for scoped questions.
+    const filePath = eventFilePath(event.kind, event.payload, summary);
     return { summary, filePath, text: `${summary} ${filePath ?? ""}` };
   });
   const terms = expandTerms(questionTokens);

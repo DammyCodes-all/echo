@@ -77,6 +77,24 @@ describe("evidence bundle", () => {
     expect(shouldRefuseBeforeModel(bundle)).toBe("not_on_tape");
     expect(refusalAnswer("not_on_tape").refusal).toBe(true);
   });
+
+  it("refuses a file-scoped question with no term or file overlap", () => {
+    // Regression: the scope used to relabel every doc with the query file,
+    // making fileMatched true tape-wide so scoped gibberish never refused —
+    // even for a file nothing on the tape touches.
+    const scoped = buildEvidenceBundle(tape.events, {
+      question: "xyzzy plugh blorpt",
+      filePath: "src/does-not-exist.ts",
+    });
+    expect(scoped.items).toHaveLength(0);
+    expect(shouldRefuseBeforeModel(scoped)).toBe("not_on_tape");
+    // But the scope still admits a genuinely related event via overlap.
+    const related = buildEvidenceBundle(tape.events, {
+      question: "What was written to src/app.ts and why did it change back?",
+      filePath: "src/app.ts",
+    });
+    expect(related.items.length).toBeGreaterThan(0);
+  });
 });
 
 describe("citation validation", () => {
