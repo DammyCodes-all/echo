@@ -171,6 +171,9 @@ describe("createMuseIngest", () => {
     const checkpoint = getReaderCheckpoint(db, "ses_muse_9", "");
     expect(checkpoint?.offset).toBeGreaterThan(0);
     expect(checkpoint?.lastSequence).toBe(3);
+    // Build pin recorded on ingest (muse binary presence varies by machine,
+    // so only the adapter side is asserted here).
+    expect(getSessionBuildPin(db, "ses_muse_9")).toMatchObject({ adapterVersion: "0.1.0" });
     // A new instance on the same DB reads zero new bytes and ingests nothing.
     const restarted = createMuseIngest({ dataDir, db, log, sessionsDir, projects: [projectRoot] });
     expect((await restarted.runOnce()).eventsAdded).toBe(0);
