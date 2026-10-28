@@ -1,28 +1,53 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+  rmSync,
+  statSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import {
+  ADAPTER_VERSION,
   buildTapeEvent,
   emptyLinks,
   finalizeMuseSession,
+  freshLaneCursor,
   parseSpoolFile,
   runRedactedExport,
   spoolEntryKey,
   spoolRoot,
+  tailChunk,
 } from "@echo/capture-muse";
 import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
+  type ReaderCheckpoint,
+  getReaderCheckpoint,
   getSession,
   getSessionEventIds,
+  getSessionSummary,
   hasEventKind,
   insertStampedEvents,
   maxTapeSeq,
+  pruneReaderCheckpoints,
   upsertProject,
+  upsertReaderCheckpoint,
   upsertSession,
 } from "@echo/db";
+import { findRepositoryRoot } from "@echo/snapshots";
 import { TapeWriter } from "@echo/tape";
+import {
+  ensureBaselineSnapshot,
+  type HookTrigger,
+  handleHookTriggerSnapshots,
+  maybeFinalSnapshot,
+} from "./muse-snapshots";
 
 export interface MuseIngestLogger {
   info: (obj: unknown, message?: string) => void;
@@ -163,6 +188,195 @@ function extractWorkspaceRoot(content: string): string | null {
   return null;
 }
 
+// Positional read of new bytes only: the daemon tails large logs instead of
+// re-reading them. Races with a concurrent writer are safe: growth between
+// stat and read surfaces next poll, shrinkage yields a short buffer.
+function readSince(path: string, position: number, end: number): Buffer {
+  if (end <= position) return Buffer.alloc(0);
+  const fd = openSync(path, "r");
+  try {
+    const out = Buffer.alloc(end - position);
+    let read = 0;
+    while (read < out.length) {
+      const n = readSync(fd, out, read, out.length - read, position + read);
+      if (n === 0) break;
+      read += n;
+    }
+    return out.subarray(0, read);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function laneCursorFrom(checkpoint: ReaderCheckpoint | null): ReturnType<typeof freshLaneCursor> {
+  if (!checkpoint) return freshLaneCursor();
+  return {
+    lastSequence: checkpoint.lastSequence,
+    lastEventTs: checkpoint.lastEventTs,
+    trailingMarkerAfter: checkpoint.lastMarkerAfter,
+    markerCount: checkpoint.markerCount,
+    sessionStarted: checkpoint.sessionStarted,
+  };
+}
+
+type LanePollResult =
+  | { status: "skipped" }
+  | { status: "failed" }
+  | {
+      status: "ok";
+      events: TapeEvent[];
+      diagnostics: string[];
+      quality: CaptureQuality;
+      referenced: Map<string, number>;
+      grew: boolean;
+    };
+
+// Tail one log file (parent lane '' or one child lane) from its DB checkpoint.
+// Pure parsing lives in tailChunk; this owns stat/read/checkpoint/reset. Gaps
+// for rotation, truncation and in-place rewrites are emitted here with stable
+// recordKeys so retries dedupe. Returns "skipped" for missing/oversized logs
+// and "failed" when the checkpoint must not advance (retry next poll).
+function tailLaneFile(args: {
+  db: EchoDb;
+  log: MuseIngestLogger;
+  sessionId: string;
+  projectId: string;
+  lane: string;
+  file: string;
+  startedFallback: boolean;
+  observedAt: Date;
+  observedIso: string;
+}): LanePollResult {
+  let size: number;
+  let ino: number;
+  try {
+    const stat = statSync(args.file);
+    size = stat.size;
+    ino = stat.ino;
+  } catch {
+    return { status: "skipped" };
+  }
+  if (size > MAX_LOG_BYTES) return { status: "skipped" };
+  const previous = getReaderCheckpoint(args.db, args.sessionId, args.lane);
+  let resetReason: "source_replaced" | "source_truncated" | null = null;
+  if (previous && previous.inode !== null && previous.inode !== ino) {
+    resetReason = "source_replaced";
+  } else if (previous && size < previous.offset) {
+    resetReason = "source_truncated";
+  }
+  const baseOffset = resetReason ? 0 : (previous?.offset ?? 0);
+  let chunk: Buffer;
+  try {
+    chunk = readSince(args.file, baseOffset, size);
+  } catch (error) {
+    args.log.error({ err: String(error), session_file: args.file }, "muse log unreadable");
+    return { status: "failed" };
+  }
+  const cursor = laneCursorFrom(resetReason ? null : previous);
+  cursor.sessionStarted = cursor.sessionStarted || args.startedFallback;
+  if (chunk.length === 0 && !resetReason) {
+    return {
+      status: "ok",
+      events: [],
+      diagnostics: [],
+      quality: "full",
+      referenced: new Map(),
+      grew: false,
+    };
+  }
+  const run = (bytes: Buffer, base: number, fresh: boolean): ReturnType<typeof tailChunk> =>
+    tailChunk({
+      sessionId: args.sessionId,
+      projectId: args.projectId,
+      build: null,
+      lane: args.lane,
+      chunk: bytes.toString("utf8"),
+      baseOffset: base,
+      observedAt: args.observedAt,
+      cursor: fresh ? { ...laneCursorFrom(null), sessionStarted: cursor.sessionStarted } : cursor,
+    });
+  let tailed: ReturnType<typeof tailChunk>;
+  try {
+    tailed = run(chunk, baseOffset, resetReason !== null);
+  } catch (error) {
+    args.log.error({ err: String(error), session_id: args.sessionId }, "muse tail failed");
+    return { status: "failed" };
+  }
+  let sequenceReset = false;
+  let newOffset = baseOffset + 0;
+  if (tailed.nonMonotonic && !resetReason && previous) {
+    // Same inode, size not shrunk, yet sequences went backwards: the file was
+    // rewritten in place. Re-read from the beginning with a fresh cursor and
+    // dedupe by event id; only the reset gap is new.
+    try {
+      const fullSize = statSync(args.file).size;
+      if (fullSize > MAX_LOG_BYTES) return { status: "skipped" };
+      tailed = run(readSince(args.file, 0, fullSize), 0, true);
+      sequenceReset = true;
+      newOffset = tailed.consumedBytes;
+    } catch (error) {
+      args.log.error({ err: String(error), session_id: args.sessionId }, "muse reset failed");
+      return { status: "failed" };
+    }
+  } else {
+    newOffset = baseOffset + tailed.consumedBytes;
+  }
+  const events = [...tailed.events];
+  const diagnostics = [...tailed.diagnostics];
+  const gapKinds: string[] = [];
+  if (resetReason) gapKinds.push(resetReason);
+  if (sequenceReset) gapKinds.push("sequence_reset");
+  for (const code of gapKinds) {
+    const { event } = buildTapeEvent({
+      kind: "capture.gap",
+      payload: { code, lane: args.lane === "" ? null : args.lane },
+      payloadType: null,
+      recordType: "gap",
+      sequence: null,
+      ts: args.observedIso,
+      recordKey: `muse:${args.sessionId}:gap:${code}`,
+      links: emptyLinks(),
+      diagnostics: [code],
+      sessionId: args.sessionId,
+      projectId: args.projectId,
+      build: null,
+      observedAt: args.observedIso,
+      tapeSeq: events.length,
+      schema: null,
+      origin: "live",
+    });
+    events.unshift(event);
+    diagnostics.push(code);
+  }
+  upsertReaderCheckpoint(args.db, {
+    sessionId: args.sessionId,
+    lane: args.lane,
+    sourcePath: args.file,
+    inode: ino,
+    offset: newOffset,
+    lastSequence: tailed.next.lastSequence,
+    lastEventTs: tailed.next.lastEventTs,
+    lastMarkerAfter: tailed.next.trailingMarkerAfter,
+    markerCount: tailed.next.markerCount,
+    sessionStarted: tailed.next.sessionStarted,
+    schemaVersion: tailed.schemaVersion ?? previous?.schemaVersion ?? null,
+    adapterVersion: ADAPTER_VERSION,
+    build: null,
+    status: "active",
+    error: null,
+    lastReadAt: args.observedIso,
+  });
+  return {
+    status: "ok",
+    events,
+    diagnostics,
+    quality:
+      gapKinds.length > 0 || tailed.quality !== "full" ? ("partial" as const) : ("full" as const),
+    referenced: tailed.referencedChildIds,
+    grew: chunk.length > 0 || resetReason !== null || sequenceReset,
+  };
+}
+
 export function createMuseIngest(options: MuseIngestOptions) {
   const { dataDir, db, log, projects } = options;
   const sessionsDir = options.sessionsDir ?? resolveMuseSessionsDir();
@@ -172,13 +386,10 @@ export function createMuseIngest(options: MuseIngestOptions) {
   // Set once per boot when the muse binary is missing: export_unavailable is
   // environmental, not per-session, so retrying every poll only spams the log.
   let exportBroken = false;
-  // Size+mtime of files already fully processed. A poll skips re-reading,
-  // re-parsing and re-hashing unchanged logs; the tape already holds their
-  // events. Set only on success so failures retry next poll.
-  const seen = new Map<string, { size: number; mtimeMs: number }>();
   // Consecutive unchanged polls per log. Reaching QUIESCENT_POLLS means the
-  // session went quiet; reset to 0 whenever the file changes or processing
-  // fails so only stably-quiet sessions reconcile.
+  // session went quiet; reset to 0 whenever new parent bytes are processed or
+  // processing fails so only stably-quiet sessions reconcile. In-memory only:
+  // restarts re-establish quiescence within two polls.
   const stable = new Map<string, number>();
 
   function emptyResult(): MuseIngestResult {
@@ -216,13 +427,16 @@ export function createMuseIngest(options: MuseIngestOptions) {
   // minimal row first and the scan's upsert enriches it afterwards — never the
   // reverse. Files are deleted only after a successful insert; a crash between
   // the two replays into the same deterministic event ids and dedupes.
-  function drainSpool(result: MuseIngestResult, observedIso: string): void {
+  // Returns the newly ingested hook events so the caller can take trigger
+  // snapshots (baseline / tool.pre / tool.post / batch.post) after the drain.
+  function drainSpool(result: MuseIngestResult, observedIso: string): HookTrigger[] {
+    const drained: HookTrigger[] = [];
     const root = spoolRoot(dataDir);
     let dirs: string[];
     try {
       dirs = readdirSync(root).sort();
     } catch {
-      return; // no spool yet
+      return drained; // no spool yet
     }
     let processed = 0;
     for (const dirName of dirs) {
@@ -236,7 +450,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
         continue;
       }
       for (const file of files) {
-        if (processed >= MAX_SPOOL_PER_POLL) return;
+        if (processed >= MAX_SPOOL_PER_POLL) return drained;
         const abs = join(dir, file);
         const entry = parseSpoolFile(abs);
         if (!entry) {
@@ -282,12 +496,24 @@ export function createMuseIngest(options: MuseIngestOptions) {
             schema: "hook/v1",
             origin: "live",
           });
-          if (!getSession(db, sessionId)) {
+          const isNewSession = !getSession(db, sessionId);
+          if (isNewSession) {
             mkdirSync(dirname(tapePath), { recursive: true });
             upsertProject(db, {
               id: projectId,
               root: resolve(projectRoot),
               name: basename(projectRoot),
+            });
+            // Hook-only bootstrap quality comes from the same function as
+            // every other quality value: no native log was seen, so the
+            // hookOnly floor (degraded) applies. Ingest persists, never decides.
+            const bootstrap = finalizeMuseSession({
+              sessionId,
+              projectId,
+              build: null,
+              liveContent: "",
+              hookOnly: true,
+              observedAt: new Date(observedIso),
             });
             upsertSession(db, {
               id: sessionId,
@@ -298,7 +524,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
               title: null,
               startedAt: entry.receivedAt,
               tapePath,
-              captureQuality: "degraded",
+              captureQuality: bootstrap.quality,
             });
           }
           if (getSessionEventIds(db, sessionId).has(event.event_id)) {
@@ -311,6 +537,15 @@ export function createMuseIngest(options: MuseIngestOptions) {
           }
           result.eventsAdded += persistFresh(sessionId, tapePath, [event]);
           result.drained += 1;
+          drained.push({
+            sessionId,
+            projectId,
+            root: resolve(projectRoot),
+            kind: event.kind,
+            toolName: entry.toolName,
+            eventId: event.event_id,
+            isNewSession,
+          });
           try {
             rmSync(abs);
           } catch (error) {
@@ -322,14 +557,34 @@ export function createMuseIngest(options: MuseIngestOptions) {
         }
       }
     }
+    return drained;
+  }
+
+  // Snapshot triggers for newly drained hook events: baseline once per
+  // first-seen session plus tool.pre/post and batch.post per hook event.
+  // Hook triggers share one per-poll snapshot budget (baselines and finals
+  // are exempt); beyond it, misses are recorded as budget gaps, never thrown.
+  async function snapshotDrainedHooks(
+    drained: HookTrigger[],
+    result: MuseIngestResult,
+    observedIso: string,
+  ): Promise<void> {
+    const batch = await handleHookTriggerSnapshots({ dataDir, db, log }, drained, observedIso);
+    result.eventsAdded += batch.eventsAdded;
   }
 
   // Export reconciliation for one quiescent session per poll, at most.
-  // Runs after the scan so the live tape is current. Skips sessions that were
-  // never ingested (no project attribution), have no events, or already carry
-  // a capture.reconciled marker. Failures keep the live tape and retry later,
-  // except a missing binary which is flagged once per boot.
-  function exportOnce(result: MuseIngestResult, observedIso: string, found: Set<string>): void {
+  // Runs after the scan so the live tape is current. Before exporting, a
+  // quiescent session carrying session.ended gets its final snapshot; the
+  // export follows. Skips sessions that were never ingested (no project
+  // attribution), have no events, or already carry a capture.reconciled
+  // marker. Failures keep the live tape and retry later, except a missing
+  // binary which is flagged once per boot.
+  async function exportOnce(
+    result: MuseIngestResult,
+    observedIso: string,
+    found: Set<string>,
+  ): Promise<void> {
     if (exportBroken) return;
     const museBin = options.museBin ?? "muse";
     for (const sessionFile of [...found].sort()) {
@@ -351,6 +606,30 @@ export function createMuseIngest(options: MuseIngestOptions) {
       } catch (error) {
         log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
         continue;
+      }
+      // Final snapshot after SessionEnd + quiescence, before the export flow.
+      // maybeFinalSnapshot is a no-op without session.ended or with an
+      // existing final snapshot, so re-polls stay idempotent.
+      try {
+        const row = getSession(db, sessionId);
+        if (row && hasEventKind(db, sessionId, "session.ended")) {
+          const matched = projects.find(
+            (candidate) => projectIdForDirectory(resolve(candidate)) === row.projectId,
+          );
+          const workspaceRoot = extractWorkspaceRoot(content);
+          const snapRoot =
+            (workspaceRoot ? findRepositoryRoot(workspaceRoot) : null) ??
+            (matched ? resolve(matched) : null);
+          if (snapRoot) {
+            const final = await maybeFinalSnapshot(
+              { dataDir, db, log },
+              { sessionId, projectId: row.projectId, root: snapRoot, observedAt: observedIso },
+            );
+            result.eventsAdded += final.eventsAdded;
+          }
+        }
+      } catch (error) {
+        log.error({ err: String(error), session_id: sessionId }, "muse final snapshot failed");
       }
       const run = runRedactedExport(sessionId, museBin);
       if (!run.ok) {
@@ -402,6 +681,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
           payload: {
             added: finalized.reconciled?.added ?? 0,
             merged: finalized.reconciled?.merged ?? 0,
+            conflicts: finalized.reconciled?.conflicts ?? 0,
             export_schema_version: finalized.reconciled?.schemaVersion ?? null,
           },
           payloadType: "export",
@@ -451,7 +731,8 @@ export function createMuseIngest(options: MuseIngestOptions) {
     const result = emptyResult();
     if (projects.length === 0) return result;
     const observedAt = new Date().toISOString();
-    drainSpool(result, observedAt);
+    const drained = drainSpool(result, observedAt);
+    await snapshotDrainedHooks(drained, result, observedAt);
     if (!existsSync(sessionsDir)) return result;
     const found = new Set(walkSessionLogs(sessionsDir));
     for (const key of seen.keys()) {
@@ -532,6 +813,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
       }
       const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
       mkdirSync(dirname(tapePath), { recursive: true });
+      const isNewSession = !getSession(db, sessionId);
       upsertProject(db, { id: projectId, root: resolve(root), name: basename(root) });
       upsertSession(db, {
         id: sessionId,
@@ -550,10 +832,24 @@ export function createMuseIngest(options: MuseIngestOptions) {
         result.eventsAdded += persistFresh(sessionId, tapePath, fresh);
         result.capturedSessions += 1;
       }
+      // First-seen session via the native log (the wrapper or SessionStart hook
+      // may have missed it): exactly one baseline via latestSnapshot dedupe.
+      if (isNewSession) {
+        try {
+          const snapRoot = findRepositoryRoot(workspaceRoot) ?? resolve(root);
+          const baseline = await ensureBaselineSnapshot(
+            { dataDir, db, log },
+            { sessionId, projectId, root: snapRoot, observedAt },
+          );
+          result.eventsAdded += baseline.eventsAdded;
+        } catch (error) {
+          log.error({ err: String(error), session_id: sessionId }, "muse baseline failed");
+        }
+      }
       seen.set(sessionFile, fingerprint);
       stable.set(sessionFile, 0);
     }
-    exportOnce(result, observedAt, found);
+    await exportOnce(result, observedAt, found);
     return result;
   }
 
