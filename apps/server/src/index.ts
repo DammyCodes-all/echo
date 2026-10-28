@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import {
   getSession,
+  getSessionSummary,
   getSnapshotByCommit,
   listProjects,
   listSessions,
@@ -57,6 +58,16 @@ app.get("/api/projects", async () => listProjects(db));
 app.get<{ Params: { id: string } }>("/api/projects/:id/sessions", async (request) =>
   listSessions(db, request.params.id),
 );
+
+app.get<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
+  const summary = getSessionSummary(db, request.params.id);
+  if (!summary) {
+    return reply.code(404).send({
+      error: { code: "not_found", message: "unknown session" },
+    });
+  }
+  return summary;
+});
 
 app.get<{ Params: { id: string }; Querystring: { after?: string; limit?: string } }>(
   "/api/sessions/:id/events",
