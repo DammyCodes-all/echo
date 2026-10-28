@@ -1,5 +1,13 @@
 import { TapeEnvelopeSchema, type TapeEvent, type TapeEventKind } from "@echo/contracts";
 
+export {
+  expectedFactsFor,
+  type FoldedDeadEnd,
+  type SeededContradiction,
+  type SessionExpectedFacts,
+} from "./expected";
+export * from "./sessions";
+
 export interface FixtureSession {
   projectId: string;
   sessionId: string;
@@ -9,7 +17,8 @@ export interface FixtureSession {
 /** Obviously fake key shaped like a real one so the redaction gate catches it. */
 export const FIXTURE_SYNTHETIC_SECRET = "sk-fixture-synthetic-secret-0001";
 
-const BASE_TS = Date.parse("2026-10-28T12:00:00.000Z");
+/** Deterministic epoch for synthetic fixtures: one second per sequence. */
+export const BASE_TS = Date.parse("2026-10-28T12:00:00.000Z");
 
 interface FixtureEventInput {
   kind: TapeEventKind;
