@@ -102,4 +102,44 @@ describe("model client", () => {
       }),
     ).rejects.toMatchObject({ code: "model_error", status: 401 });
   });
+
+  it("sends reasoning_effort from config and lets the call override it", async () => {
+    const withEffort: ModelConfig = { ...config, reasoningEffort: "low" };
+    const fetchImpl = vi.fn(async () => jsonResponse(completion("hello")));
+    await chatCompletions(withEffort, [{ role: "user", content: "hi" }], {
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    const [, options] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(options.body))).toMatchObject({ reasoning_effort: "low" });
+
+    const override = vi.fn(async () => jsonResponse(completion("hello")));
+    await chatCompletions(withEffort, [{ role: "user", content: "hi" }], {
+      fetchImpl: override as typeof fetch,
+      reasoningEffort: "medium",
+    });
+    const [, overrideOptions] = override.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(overrideOptions.body))).toMatchObject({ reasoning_effort: "medium" });
+  });
+
+  it("omits reasoning_effort when unset and rejects unknown levels", async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse(completion("hello")));
+    await chatCompletions(config, [{ role: "user", content: "hi" }], {
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    const [, options] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect("reasoning_effort" in JSON.parse(String(options.body))).toBe(false);
+
+    expect(() =>
+      modelConfigFromEnv({ META_API_KEY: "k", META_REASONING_EFFORT: "none" }),
+    ).toThrowError(ModelError);
+    expect(
+      modelConfigFromEnv({ META_API_KEY: "k", META_REASONING_EFFORT: "low" }).reasoningEffort,
+    ).toBe("low");
+    await expect(
+      chatCompletions(config, [{ role: "user", content: "hi" }], {
+        fetchImpl: fetchImpl as typeof fetch,
+        reasoningEffort: "bogus",
+      }),
+    ).rejects.toThrowError(ModelError);
+  });
 });

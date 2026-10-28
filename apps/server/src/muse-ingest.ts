@@ -30,7 +30,6 @@ import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
-  getArtifactRef,
   getReaderCheckpoint,
   getSession,
   getSessionBuildPin,
@@ -43,7 +42,6 @@ import {
   maxTapeSeq,
   pruneReaderCheckpoints,
   type ReaderCheckpoint,
-  setSessionCheckStatus,
   upsertProject,
   upsertReaderCheckpoint,
   upsertSession,
@@ -58,7 +56,6 @@ import {
 } from "@echo/snapshots";
 import { TapeWriter } from "@echo/tape";
 import { maybeFinalSnapshot } from "./muse-snapshots";
-import type { StoryGenerator } from "./story-generate";
 import { makeSnapshotEvent, makeSnapshotEventId } from "./tape-events";
 
 export interface MuseIngestLogger {
@@ -73,8 +70,11 @@ export interface MuseIngestOptions {
   sessionsDir?: string;
   projects: string[];
   museBin?: string;
-  /** Story generator, composed by the daemon. Absent in tests and tooling. */
-  story?: StoryGenerator;
+  /**
+   * Fire-and-forget hook when a session export reconciles (finalized).
+   * Must never throw or block: the caller owns async errors.
+   */
+  onSessionQuiescent?: (sessionId: string) => void;
 }
 
 export interface MuseIngestResult {
@@ -379,6 +379,8 @@ export function createMuseIngest(options: MuseIngestOptions) {
   const sessionsDir = options.sessionsDir ?? resolveMuseSessionsDir();
   let timer: NodeJS.Timeout | null = null;
   let running = false;
+  let stopped = false;
+  let inflight: Promise<MuseIngestResult> | null = null;
   let lastUnattributed = 0;
   // Set once per boot when the muse binary is missing: export_unavailable is
   // environmental, not per-session, so retrying every poll only spams the log.
@@ -666,56 +668,6 @@ export function createMuseIngest(options: MuseIngestOptions) {
     }
   }
 
-  // Story generation for one session. Best-effort: failures are logged
-  // and retried on later polls, never fatal to ingest.
-  async function runStoryGeneration(
-    result: MuseIngestResult,
-    sessionId: string,
-    resetCheckStatus: boolean,
-  ): Promise<void> {
-    const generator = options.story;
-    if (!generator) return;
-    try {
-      const outcome = await generator.generateStory(sessionId);
-      if (outcome.status === "generated" || outcome.status === "degraded") {
-        result.storiesGenerated += 1;
-        if (resetCheckStatus) setSessionCheckStatus(db, sessionId, "not_checked");
-      }
-      if (outcome.status === "failed" || outcome.status === "not_found") {
-        log.error(
-          { session_id: sessionId, diagnostics: outcome.diagnostics },
-          "story generation failed",
-        );
-      } else if (outcome.diagnostics.length > 0) {
-        log.info(
-          { session_id: sessionId, diagnostics: outcome.diagnostics },
-          "story generated with diagnostics",
-        );
-      }
-    } catch (error) {
-      log.error({ err: String(error), session_id: sessionId }, "story generation failed");
-    }
-  }
-
-  // The single story-generation path: first generation (backfill after
-  // reconcile) and staleness regen, one session per poll at most. Only
-  // reconciled, quiescent sessions qualify, so active sessions never pay
-  // for per-poll regeneration and a failed attempt retries next poll.
-  async function storyOnce(result: MuseIngestResult, found: Set<string>): Promise<void> {
-    if (!options.story) return;
-    for (const sessionFile of [...found].sort()) {
-      const sessionId = basename(dirname(sessionFile));
-      if ((stable.get(sessionFile) ?? 0) < QUIESCENT_POLLS) continue;
-      if (!hasEventKind(db, sessionId, "capture.reconciled")) continue;
-      const ref = getArtifactRef(db, sessionId, "story");
-      if (ref && maxTapeSeq(db, sessionId) === ref.tapeWatermark.eventCount) continue;
-      // checks_v2.json does not exist yet, so every regen resets the check
-      // status; first generations have no prior check set to invalidate.
-      await runStoryGeneration(result, sessionId, ref !== null);
-      return;
-    }
-  }
-
   // Export reconciliation for one quiescent session per poll, at most.
   // Runs after the scan so the live tape is current. Before exporting, a
   // quiescent session carrying session.ended gets its final snapshot; the
@@ -893,6 +845,13 @@ export function createMuseIngest(options: MuseIngestOptions) {
             }
           }
           result.reconciled += 1;
+          if (options.onSessionQuiescent) {
+            try {
+              options.onSessionQuiescent(sessionId);
+            } catch (error) {
+              log.error({ err: String(error), session_id: sessionId }, "story hook failed");
+            }
+          }
         }
       } catch (error) {
         log.error({ err: String(error), session_id: sessionId }, "muse export reconcile failed");
@@ -1180,17 +1139,19 @@ export function createMuseIngest(options: MuseIngestOptions) {
       stable.set(sessionFile, laneFailed || parentGrew ? 0 : (stable.get(sessionFile) ?? 0) + 1);
     }
     await exportOnce(result, observedAt, found);
-    await storyOnce(result, found);
     return result;
   }
 
   async function runOnce(): Promise<MuseIngestResult> {
-    if (running) return emptyResult();
+    if (running || stopped) return emptyResult();
     running = true;
+    const current = scan();
+    inflight = current;
     try {
-      return await scan();
+      return await current;
     } finally {
       running = false;
+      if (inflight === current) inflight = null;
     }
   }
 
@@ -1219,9 +1180,22 @@ export function createMuseIngest(options: MuseIngestOptions) {
     }, pollMs);
   }
 
-  function stop(): void {
+  async function stop(): Promise<void> {
     if (timer) clearInterval(timer);
     timer = null;
+    stopped = true;
+    // Drain the in-flight poll before the caller closes the db: scan touches
+    // it throughout (latestSnapshot, inserts, checkpoints), so closing
+    // underneath it logs "database is not open". Poll errors stay owned by
+    // the poll caller.
+    const current = inflight;
+    if (current) {
+      try {
+        await current;
+      } catch {
+        // Ignored here; the runOnce caller already observes the failure.
+      }
+    }
   }
 
   return { runOnce, start, stop, sessionsDir };

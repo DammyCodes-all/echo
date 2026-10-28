@@ -1,6 +1,7 @@
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import type { TapeEvent } from "@echo/contracts";
 import { describe, expect, it } from "vitest";
 import {
@@ -22,6 +23,7 @@ import {
   listReaderCheckpoints,
   listSessions,
   listSnapshotFiles,
+  MIGRATIONS,
   openEchoDb,
   pruneReaderCheckpoints,
   readAllEvents,
@@ -79,7 +81,7 @@ function openTestDb() {
   return openEchoDb(join(dir, "echo.sqlite"));
 }
 
-function seed(db: ReturnType<typeof openTestDb>): void {
+function seed(db: ReturnType<typeof openTestDb>, captureQuality = "import_only"): void {
   upsertProject(db, {
     id: "prj_1",
     root: "/repo",
@@ -95,7 +97,7 @@ function seed(db: ReturnType<typeof openTestDb>): void {
     title: "spike",
     startedAt: "2026-10-27T09:00:00.000Z",
     tapePath: "/data/tape.jsonl",
-    captureQuality: "import_only",
+    captureQuality,
   });
 }
 
@@ -118,6 +120,51 @@ describe("openEchoDb migrations", () => {
     const row = db.prepare("PRAGMA busy_timeout").get() as { timeout: number };
     expect(row.timeout).toBeGreaterThan(0);
     db.close();
+  });
+
+  it("heals databases migrated when remote_url was version 3", () => {
+    // Merge c6b7479 renumbered v3 (remote_url -> reader_checkpoints, remote_url
+    // -> v4). A database migrated on the old branch records v3 with the
+    // remote_url column present and no reader_checkpoints table; opening it
+    // must backfill checkpoints and record v4+ instead of duplicate-column.
+    const dir = mkdtempSync(join(tmpdir(), "echo-db-legacy-"));
+    const path = join(dir, "echo.sqlite");
+    const legacy = new DatabaseSync(path);
+    legacy.exec(
+      "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+    );
+    legacy.exec(MIGRATIONS[0]?.sql as string);
+    legacy.exec(MIGRATIONS[1]?.sql as string);
+    legacy.exec(
+      "ALTER TABLE projects ADD COLUMN remote_url TEXT; CREATE UNIQUE INDEX idx_projects_remote_url ON projects(remote_url) WHERE remote_url IS NOT NULL;",
+    );
+    const now = new Date().toISOString();
+    legacy
+      .prepare("INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?), (2, ?), (3, ?)")
+      .run(now, now, now);
+    legacy.close();
+
+    const db = openEchoDb(path);
+    const rows = db.prepare("SELECT version FROM schema_migrations").all() as Array<{
+      version: number;
+    }>;
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6]);
+    const checkpoints = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reader_checkpoints'",
+      )
+      .get() as { name?: string } | null;
+    expect(checkpoints?.name).toBe("reader_checkpoints");
+    const projectColumns = db
+      .prepare("SELECT name FROM pragma_table_info('projects')")
+      .all() as Array<{
+      name: string;
+    }>;
+    expect(projectColumns.map((column) => column.name)).toContain("remote_url");
+    db.close();
+
+    const reopened = openEchoDb(path);
+    reopened.close();
   });
 });
 
@@ -428,16 +475,17 @@ describe("repositories", () => {
   it("defaults check status and capture state on new sessions", () => {
     const db = openTestDb();
     seed(db);
+    // No story artifact yet → still-recording (Q47), even with import_only quality.
     const summary = getSessionSummary(db, "ses_1");
     expect(summary).toMatchObject({
       checkStatus: "not_checked",
       summary: null,
       highRiskCount: 0,
-      captureState: "import_only",
+      captureState: "recording",
     });
     expect(listSessions(db, "prj_1")[0]).toMatchObject({
       checkStatus: "not_checked",
-      captureState: "import_only",
+      captureState: "recording",
     });
     db.close();
   });
@@ -525,6 +573,39 @@ describe("repositories", () => {
       generator: "storyteller-0.2",
     });
     expect(getArtifactRef(db, "ses_1", "checks_v2")).toBeNull();
+    db.close();
+  });
+
+  it("derives inbox capture state from the story artifact watermark", () => {
+    const db = openTestDb();
+    seed(db, "full");
+    appendEvents(db, "ses_1", [makeEvent(0), makeEvent(1)]);
+
+    // (1) Fresh session with no story artifact → still-recording.
+    expect(getSessionSummary(db, "ses_1")).toMatchObject({ eventCount: 2 });
+    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("recording");
+
+    // (2) Story artifact watermarked at the current tape → quality-derived state.
+    upsertArtifactRef(db, {
+      sessionId: "ses_1",
+      kind: "story",
+      path: "/data/story_v1.md",
+      tapeWatermark: { eventCount: 2, sha256: "aaa" },
+      generator: "storyteller-0.1",
+      generatedAt: "2026-10-28T10:00:00.000Z",
+    });
+    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("ready");
+    expect(listSessions(db, "prj_1")[0]?.captureState).toBe("ready");
+
+    // (3) Tape grows past the watermark without a story refresh → recording again.
+    appendEvents(db, "ses_1", [makeEvent(2)]);
+    expect(getSessionSummary(db, "ses_1")).toMatchObject({ eventCount: 3 });
+    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("recording");
+
+    // (4) listSessions reflects the same stale-watermark state for the row.
+    const rows = listSessions(db, "prj_1");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: "ses_1", eventCount: 3, captureState: "recording" });
     db.close();
   });
 });

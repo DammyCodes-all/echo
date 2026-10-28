@@ -9,6 +9,9 @@ export interface ModelConfig {
   model: string;
   /** Reasoning tokens consume the output budget, so default generously. */
   maxTokens: number;
+  /** Reasoning effort cap, sent as top-level `reasoning_effort`. Unset means
+   *  the model decides. Muse Spark rejects "none". */
+  reasoningEffort?: string;
 }
 
 export type ModelErrorCode =
@@ -28,17 +31,37 @@ export class ModelError extends Error {
   }
 }
 
+/** Accepted `reasoning_effort` levels (Meta Model API, chat completions).
+ *  "none" disables reasoning, which Muse Spark rejects — excluded here so a
+ *  misconfiguration fails fast locally instead of as an API 400. "max" is a
+ *  standard-tier level the API gates per model; passing it through lets the
+ *  API decide rather than the client. */
+export const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
+
+function assertReasoningEffort(value: string): asserts value is ReasoningEffort {
+  if (!(REASONING_EFFORTS as readonly string[]).includes(value)) {
+    throw new ModelError(
+      "model_error",
+      `invalid reasoning effort ${JSON.stringify(value)} (want one of ${REASONING_EFFORTS.join("|")})`,
+    );
+  }
+}
+
 export function modelConfigFromEnv(env: NodeJS.ProcessEnv): ModelConfig {
   const apiKey = env.META_API_KEY ?? "";
   if (apiKey.length === 0) {
     throw new ModelError("missing_api_key", "META_API_KEY is not set");
   }
   const maxTokens = Number.parseInt(env.META_MAX_TOKENS ?? "", 10);
+  const reasoningEffort = env.META_REASONING_EFFORT ?? "";
+  if (reasoningEffort !== "") assertReasoningEffort(reasoningEffort);
   return {
     baseUrl: env.META_BASE_URL ?? "https://api.meta.ai/v1",
     apiKey,
     model: env.META_MODEL_ID ?? "muse-spark-1.3-contributor",
     maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : 2048,
+    ...(reasoningEffort === "" ? {} : { reasoningEffort }),
   };
 }
 
@@ -59,6 +82,8 @@ type FetchImpl = typeof fetch;
 interface ChatCompletionsOptions {
   fetchImpl?: FetchImpl;
   signal?: AbortSignal;
+  /** Per-call reasoning cap; beats ModelConfig.reasoningEffort when set. */
+  reasoningEffort?: string;
 }
 
 /** Minimal Meta (OpenAI-compatible) chat-completions call. No retries: the
@@ -69,6 +94,8 @@ export async function chatCompletions(
   options: ChatCompletionsOptions = {},
 ): Promise<ChatCompletionResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
+  const effort = options.reasoningEffort ?? config.reasoningEffort;
+  if (effort !== undefined) assertReasoningEffort(effort);
   let response: Response;
   try {
     response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
@@ -80,6 +107,7 @@ export async function chatCompletions(
       body: JSON.stringify({
         model: config.model,
         max_tokens: config.maxTokens,
+        ...(effort === undefined ? {} : { reasoning_effort: effort }),
         messages,
       }),
       signal: options.signal,

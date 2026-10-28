@@ -7,14 +7,14 @@ export const MIGRATIONS: Migration[] = [
   {
     version: 1,
     sql: `
-CREATE TABLE projects (
+CREATE TABLE IF NOT EXISTS projects (
   id TEXT PRIMARY KEY,
   canonical_root TEXT NOT NULL UNIQUE,
   name TEXT,
   created_at TEXT NOT NULL
 );
 
-CREATE TABLE sessions (
+CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   project_id TEXT NOT NULL REFERENCES projects(id),
   agent TEXT NOT NULL,
@@ -30,7 +30,7 @@ CREATE TABLE sessions (
   updated_at TEXT NOT NULL
 );
 
-CREATE TABLE events (
+CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id),
   tape_seq INTEGER NOT NULL,
@@ -50,9 +50,9 @@ CREATE TABLE events (
     version: 2,
     sql: `
 ALTER TABLE events ADD COLUMN record_key TEXT;
-CREATE INDEX idx_events_record ON events (session_id, record_key, tape_seq);
+CREATE INDEX IF NOT EXISTS idx_events_record ON events (session_id, record_key, tape_seq);
 
-CREATE TABLE snapshots (
+CREATE TABLE IF NOT EXISTS snapshots (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id),
   commit_oid TEXT NOT NULL,
@@ -66,7 +66,7 @@ CREATE TABLE snapshots (
   diagnostics_json TEXT NOT NULL DEFAULT '[]'
 );
 
-CREATE TABLE snapshot_files (
+CREATE TABLE IF NOT EXISTS snapshot_files (
   snapshot_id TEXT NOT NULL REFERENCES snapshots(id),
   path TEXT NOT NULL,
   mode TEXT,
@@ -82,7 +82,7 @@ CREATE TABLE snapshot_files (
   {
     version: 3,
     sql: `
-CREATE TABLE reader_checkpoints (
+CREATE TABLE IF NOT EXISTS reader_checkpoints (
   session_id TEXT NOT NULL,
   lane TEXT NOT NULL DEFAULT '',
   source_path TEXT NOT NULL,
@@ -107,13 +107,13 @@ CREATE TABLE reader_checkpoints (
     version: 4,
     sql: `
 ALTER TABLE projects ADD COLUMN remote_url TEXT;
-CREATE UNIQUE INDEX idx_projects_remote_url ON projects(remote_url) WHERE remote_url IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_projects_remote_url ON projects(remote_url) WHERE remote_url IS NOT NULL;
 `,
   },
   {
     version: 5,
     sql: `
-CREATE TABLE session_build_pins (
+CREATE TABLE IF NOT EXISTS session_build_pins (
   session_id TEXT PRIMARY KEY REFERENCES sessions(id),
   muse_version TEXT,
   adapter_version TEXT,
@@ -128,7 +128,7 @@ CREATE TABLE session_build_pins (
 ALTER TABLE sessions ADD COLUMN check_status TEXT NOT NULL DEFAULT 'not_checked';
 ALTER TABLE sessions ADD COLUMN story_summary TEXT;
 ALTER TABLE sessions ADD COLUMN high_risk_count INTEGER NOT NULL DEFAULT 0;
-CREATE TABLE engagement_events (
+CREATE TABLE IF NOT EXISTS engagement_events (
   id TEXT PRIMARY KEY,
   session_id TEXT NOT NULL REFERENCES sessions(id),
   card_id TEXT,
@@ -136,8 +136,8 @@ CREATE TABLE engagement_events (
   occurred_at TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
-CREATE INDEX idx_engagement_session_card ON engagement_events (session_id, card_id);
-CREATE TABLE session_artifacts (
+CREATE INDEX IF NOT EXISTS idx_engagement_session_card ON engagement_events (session_id, card_id);
+CREATE TABLE IF NOT EXISTS session_artifacts (
   session_id TEXT NOT NULL REFERENCES sessions(id),
   kind TEXT NOT NULL,
   path TEXT NOT NULL,

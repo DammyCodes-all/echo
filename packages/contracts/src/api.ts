@@ -84,7 +84,10 @@ export const StoredEventSchema = z.object({
   observed_at: z.string().min(1),
   tool_call_id: z.string().nullable(),
   payload: z.unknown(),
-  redaction: z.object({ version: z.string(), findings: z.number().int().nonnegative() }),
+  redaction: z.object({
+    version: z.string(),
+    findings: z.number().int().nonnegative(),
+  }),
 });
 export type StoredEvent = z.infer<typeof StoredEventSchema>;
 
@@ -208,6 +211,7 @@ export const AskRequestSchema = z.object({
   question: z.string().min(1).max(2000),
   filePath: z.string().min(1).max(1024).nullable().default(null),
   symbols: z.array(z.string().min(1).max(256)).max(16).default([]),
+  cardId: z.string().min(1).max(128).nullable().default(null),
 });
 export type AskRequest = z.infer<typeof AskRequestSchema>;
 
@@ -255,42 +259,8 @@ export const CheckKindSchema = z.enum([
 ]);
 export type CheckKind = z.infer<typeof CheckKindSchema>;
 
-export const GenerateChecksRequestSchema = z.object({
-  limit: z.number().int().min(1).max(5).default(3),
-  opened: z.array(z.string().min(1)).max(1000).default([]),
-  waived: z.array(z.string().min(1)).max(1000).default([]),
-});
-export type GenerateChecksRequest = z.infer<typeof GenerateChecksRequestSchema>;
-
-export const StoredCheckSchema = z.object({
-  id: z.string().min(1),
-  sessionId: z.string().min(1),
-  hunkId: HunkIdSchema,
-  path: z.string().min(1),
-  kind: CheckKindSchema,
-  question: z.string().min(1),
-  evidencePaths: z.array(z.string()),
-  rubric: z.array(z.string()),
-  demonstration: z.object({ code: z.string(), observedStdout: z.string() }).nullable(),
-  createdAt: z.string().min(1),
-});
-export type StoredCheck = z.infer<typeof StoredCheckSchema>;
-
-export const GenerateChecksResponseSchema = z.object({
-  checks: z.array(StoredCheckSchema),
-  dropped: z.array(z.object({ hunkId: HunkIdSchema, reason: z.string() })),
-  sandboxAvailable: z.boolean(),
-});
-export type GenerateChecksResponse = z.infer<typeof GenerateChecksResponseSchema>;
-
 export const AnswerConfidenceSchema = z.enum(["guessing", "think_so", "certain"]);
 export type AnswerConfidence = z.infer<typeof AnswerConfidenceSchema>;
-
-export const AnswerCheckRequestSchema = z.object({
-  confidence: AnswerConfidenceSchema,
-  answer: z.string().min(1).max(8000),
-});
-export type AnswerCheckRequest = z.infer<typeof AnswerCheckRequestSchema>;
 
 export const RubricHitSchema = z.object({
   point: z.string().min(1),
@@ -299,61 +269,6 @@ export const RubricHitSchema = z.object({
   why: z.string().nullable(),
 });
 export type RubricHit = z.infer<typeof RubricHitSchema>;
-
-export const CheckAttemptSchema = z.object({
-  id: z.string().min(1),
-  checkId: z.string().min(1),
-  confidence: AnswerConfidenceSchema,
-  confidenceP: z.number().min(0).max(1),
-  answer: z.string(),
-  correct: z.boolean(),
-  reason: z.string().nullable(),
-  hits: z.array(RubricHitSchema),
-  brier: z.number().min(0).max(1),
-  overconfident: z.boolean(),
-  underconfident: z.boolean(),
-  createdAt: z.string().min(1),
-});
-export type CheckAttempt = z.infer<typeof CheckAttemptSchema>;
-
-export const AnswerCheckResponseSchema = z.object({
-  attempt: CheckAttemptSchema,
-  reference: z.object({
-    rubric: z.array(z.string()),
-    hits: z.array(RubricHitSchema),
-  }),
-});
-export type AnswerCheckResponse = z.infer<typeof AnswerCheckResponseSchema>;
-
-export const SessionChecksResponseSchema = z.object({
-  checks: z.array(StoredCheckSchema),
-  attempts: z.record(z.string(), z.array(CheckAttemptSchema)),
-  waived: z.array(z.string()),
-});
-export type SessionChecksResponse = z.infer<typeof SessionChecksResponseSchema>;
-
-export const SessionReportSchema = z.object({
-  sessionId: z.string().min(1),
-  generatedAt: z.string().min(1),
-  hunksTotal: z.number().int().nonnegative(),
-  checksTotal: z.number().int().nonnegative(),
-  answered: z.number().int().nonnegative(),
-  correct: z.number().int().nonnegative(),
-  waived: z.array(z.string()),
-  calibration: z.object({
-    meanBrier: z.number().nullable(),
-    overconfidenceCount: z.number().int().nonnegative(),
-    perConfidence: z.array(
-      z.object({
-        confidence: AnswerConfidenceSchema,
-        answered: z.number().int().nonnegative(),
-        correct: z.number().int().nonnegative(),
-      }),
-    ),
-  }),
-  gaps: z.array(z.string()),
-});
-export type SessionReport = z.infer<typeof SessionReportSchema>;
 
 // --- Story-first surface (ADR 0011) and calibration checks v2 (ADR 0012) ---
 
@@ -535,12 +450,14 @@ export const StoredCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend
   options: z.array(z.object({ id: z.string().min(1), text: z.string().min(1) })).min(2),
   correctOptionId: z.string().min(1),
   distractorSources: z.array(z.string()),
+  explanation: z.string().min(1),
 });
 export type StoredCheckMcqQuestion = z.infer<typeof StoredCheckMcqQuestionSchema>;
 
 export const StoredCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.extend({
   format: z.literal("free_text"),
   rubric: z.array(z.string().min(1)).min(1),
+  explanation: z.string().min(1),
 });
 export type StoredCheckFreeTextQuestion = z.infer<typeof StoredCheckFreeTextQuestionSchema>;
 
@@ -635,9 +552,51 @@ export const AskThreadSchema = z.object({
 });
 export type AskThread = z.infer<typeof AskThreadSchema>;
 
+// Card history (Phase 3 slice A): touch-overlap entries across same-project
+// sessions. previousPicture is ALWAYS null on this slice (checks v2 lands
+// Phase 5); the field stays so the shape is forward-compatible.
+export const HistoryEntrySchema = z.object({
+  sessionId: z.string().min(1),
+  summary: z.string().nullable(),
+  endedAt: z.string().nullable(),
+  sharedFiles: z.array(z.string()),
+  matchNote: z.string().min(1),
+  previousPicture: PictureBucketSchema.nullable(),
+});
+export type HistoryEntry = z.infer<typeof HistoryEntrySchema>;
+
+export const SessionHistoryResponseSchema = z.object({
+  sessionId: z.string().min(1),
+  entries: z.array(HistoryEntrySchema),
+});
+export type SessionHistoryResponse = z.infer<typeof SessionHistoryResponseSchema>;
+
 export const ArtifactKindSchema = z.enum(["story", "checks_v2", "ask_thread"]);
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
 
+// --- Checks v2 request/response shapes (additive; stored vs public already above) ---
+
+export const CheckMeRequestSchema = z.object({
+  cardId: z.string().min(1),
+});
+export type CheckMeRequest = z.infer<typeof CheckMeRequestSchema>;
+
+export const CheckV2AnswerRequestSchema = z.object({
+  confidence: AnswerConfidenceSchema,
+  questionId: z.string().min(1),
+  selectedOptionId: z.string().min(1).nullable().default(null),
+  answerText: z.string().max(8000).nullable().default(null),
+});
+export type CheckV2AnswerRequest = z.infer<typeof CheckV2AnswerRequestSchema>;
+
+export const CheckV2AnswerResponseSchema = z.object({
+  attempt: CheckAttemptV2Schema,
+  reveal: z.object({
+    summary: z.string().min(1),
+    evidence: z.array(AskEvidenceSchema),
+  }),
+});
+export type CheckV2AnswerResponse = z.infer<typeof CheckV2AnswerResponseSchema>;
 // File layout for generated artifacts under the session dir (ARCHITECTURE §6).
 export const ARTIFACT_FILE_NAMES: Record<ArtifactKind, string> = {
   story: "story.json",

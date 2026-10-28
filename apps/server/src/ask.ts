@@ -1,12 +1,20 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import {
   type AskRequest,
   type AskResponse,
+  type AskThread,
+  AskThreadSchema,
+  type ChangeCard,
+  type SessionStory,
+  SessionStorySchema,
   type TapeEvent,
   TapeEventKindSchema,
 } from "@echo/contracts";
-import { type EchoDb, getSession, readAllEvents, type StoredEvent } from "@echo/db";
+import { type EchoDb, getArtifactRef, getSession, readAllEvents, type StoredEvent } from "@echo/db";
 import { type ModelConfig, ModelError, modelConfigFromEnv, requestJson } from "@echo/model";
+import { redactJson } from "@echo/redaction";
 import {
   buildEvidenceBundle,
   parseAnswer,
@@ -19,10 +27,22 @@ export interface AskOutcome {
   body: AskResponse | { error: { code: string; message: string } };
 }
 
+export interface ThreadOutcome {
+  status: number;
+  body: AskThread | { error: { code: string; message: string } };
+}
+
+export interface AskLogger {
+  info: (obj: unknown, message?: string) => void;
+  error: (obj: unknown, message?: string) => void;
+}
+
 interface AskServiceOptions {
   /** Injected for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
   env?: NodeJS.ProcessEnv;
+  /** Content-free diagnostics only; defaults to a silent noop (tests). */
+  log?: AskLogger;
 }
 
 const SYSTEM_PROMPT = [
@@ -119,12 +139,18 @@ function parseModelAnswer(value: unknown): StructuredAnswer {
 /**
  * Server-side Q&A: deterministic retrieval over the session tape, one
  * structured model call, server-side citation validation. Refusals
- * (nothing relevant on the tape) never reach the model.
+ * (nothing relevant on the tape) never reach the model. Answered, partial
+ * and refused outcomes persist to a per-session thread artifact; model
+ * transport failures and redaction failures never persist.
  */
-export function createAskService(db: EchoDb, options: AskServiceOptions = {}) {
+export function createAskService(db: EchoDb, dataDir: string, options: AskServiceOptions = {}) {
   const cache = new Map<string, AskResponse>();
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const log: AskLogger = options.log ?? {
+    info: () => {},
+    error: () => {},
+  };
 
   function modelOff(): boolean {
     return env.ECHO_MODEL === "off";
@@ -132,6 +158,150 @@ export function createAskService(db: EchoDb, options: AskServiceOptions = {}) {
 
   function resolveConfig(): ModelConfig {
     return modelConfigFromEnv(env);
+  }
+
+  function threadArtifactPath(projectId: string, sessionId: string): string {
+    return join(
+      dataDir,
+      "projects",
+      projectId,
+      "sessions",
+      sessionId,
+      "artifacts",
+      "ask_thread.json",
+    );
+  }
+
+  function storyArtifactPath(projectId: string, sessionId: string): string {
+    return join(dataDir, "projects", projectId, "sessions", sessionId, "artifacts", "story.json");
+  }
+
+  function loadThread(projectId: string, sessionId: string): AskThread {
+    const empty = (): AskThread => ({
+      schemaVersion: 1,
+      sessionId,
+      updatedAt: new Date().toISOString(),
+      messages: [],
+    });
+    const path = threadArtifactPath(projectId, sessionId);
+    if (!existsSync(path)) return empty();
+    try {
+      const parsed = AskThreadSchema.safeParse(JSON.parse(readFileSync(path, "utf8")) as unknown);
+      // A corrupt artifact resets to an empty thread instead of 500ing: one
+      // bad write must not brick the whole Ask Why history, and gaps are
+      // data — the missing turns simply stay missing.
+      if (!parsed.success) return empty();
+      return parsed.data;
+    } catch {
+      return empty();
+    }
+  }
+
+  /** Redacts then writes; false means nothing was persisted (fail closed). */
+  function persistThread(projectId: string, thread: AskThread): boolean {
+    let scanned: unknown;
+    try {
+      scanned = redactJson(thread).value;
+    } catch (error) {
+      // Content-free diagnostic: never log the payload that failed.
+      log.error(
+        { session_id: thread.sessionId, err: String(error) },
+        "ask thread redaction failed",
+      );
+      return false;
+    }
+    const parsed = AskThreadSchema.safeParse(scanned);
+    if (!parsed.success) {
+      log.error({ session_id: thread.sessionId }, "ask thread redaction failed schema check");
+      return false;
+    }
+    const path = threadArtifactPath(projectId, thread.sessionId);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(parsed.data, null, 2)}\n`);
+    return true;
+  }
+
+  function loadStory(sessionId: string, projectId: string): SessionStory | null {
+    // Prefer the artifact-ref path (restart-safe); fall back to the
+    // conventional layout both the story service and tests write to.
+    const ref = getArtifactRef(db, sessionId, "story");
+    const candidates =
+      ref && typeof ref.path === "string" && ref.path.length > 0
+        ? [ref.path, storyArtifactPath(projectId, sessionId)]
+        : [storyArtifactPath(projectId, sessionId)];
+    const seen = new Set<string>();
+    for (const path of candidates) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      if (!existsSync(path)) continue;
+      try {
+        const parsed = SessionStorySchema.safeParse(
+          JSON.parse(readFileSync(path, "utf8")) as unknown,
+        );
+        if (parsed.success) return parsed.data;
+      } catch {
+        // Unusable story counts as no story; the caller reports unknown card.
+      }
+    }
+    return null;
+  }
+
+  function resolveScope(
+    input: AskRequest,
+    card: ChangeCard | null,
+  ): { filePath?: string; symbols: string[] } {
+    // constituentHunkIds identify the card but are not retrieval input: the
+    // bundle builder only scopes on filePath/symbols, so only touches[] enters.
+    if (input.filePath) return { filePath: input.filePath, symbols: input.symbols };
+    if (!card) return { symbols: input.symbols };
+    if (card.touches.length === 1 && typeof card.touches[0] === "string") {
+      return { filePath: card.touches[0], symbols: input.symbols };
+    }
+    // Multi-file (or touch-less) card: the builder has no multi-file scope,
+    // so every touched path joins the symbol terms instead (same token match).
+    return { symbols: [...input.symbols, ...card.touches] };
+  }
+
+  /** Appends one user + one assistant message; false = redaction failed, nothing written. */
+  function appendTurn(
+    projectId: string,
+    sessionId: string,
+    input: AskRequest,
+    cardId: string | null,
+    response: AskResponse,
+  ): boolean {
+    const thread = loadThread(projectId, sessionId);
+    const now = new Date().toISOString();
+    const base = `${sessionId}:${thread.messages.length}:${randomUUID()}`;
+    const userId = `msg_${createHash("sha256").update(`user:${base}`).digest("hex").slice(0, 12)}`;
+    const assistantId = `msg_${createHash("sha256").update(`assistant:${base}`).digest("hex").slice(0, 12)}`;
+    thread.messages.push(
+      { id: userId, role: "user", text: input.question, cardId, response: null, createdAt: now },
+      {
+        id: assistantId,
+        role: "assistant",
+        // Refusals carry an empty answer; the message text still needs a
+        // non-empty body so the thread artifact stays schema-valid.
+        text:
+          response.answer.length > 0
+            ? response.answer
+            : `Refused (${response.refusalReason ?? "not_on_tape"})`,
+        cardId,
+        response,
+        createdAt: now,
+      },
+    );
+    thread.updatedAt = now;
+    return persistThread(projectId, thread);
+  }
+
+  function redactionFailed(): AskOutcome {
+    return {
+      status: 500,
+      body: {
+        error: { code: "redaction_failed", message: "ask thread failed the redaction gate" },
+      },
+    };
   }
 
   async function answer(sessionId: string, input: AskRequest): Promise<AskOutcome> {
@@ -142,16 +312,30 @@ export function createAskService(db: EchoDb, options: AskServiceOptions = {}) {
         body: { error: { code: "not_found", message: "unknown session" } },
       };
     }
+    const cardId = input.cardId ?? null;
+    let card: ChangeCard | null = null;
+    if (cardId !== null) {
+      const story = loadStory(sessionId, session.projectId);
+      const found = story?.cards.find((entry) => entry.id === cardId) ?? null;
+      if (!found) {
+        return {
+          status: 400,
+          body: { error: { code: "invalid_request", message: "unknown card" } },
+        };
+      }
+      card = found;
+    }
     const stored = readAllEvents(db, sessionId);
     const events: TapeEvent[] = [];
     for (const event of stored) {
       const tape = storedToTape(session.id, session.projectId, event);
       if (tape) events.push(tape);
     }
+    const scope = resolveScope(input, card);
     const bundle = buildEvidenceBundle(events, {
       question: input.question,
-      ...(input.filePath ? { filePath: input.filePath } : {}),
-      symbols: input.symbols,
+      ...(scope.filePath ? { filePath: scope.filePath } : {}),
+      symbols: scope.symbols,
     });
     if (bundle.items.length === 0) {
       const refused: AskResponse = {
@@ -165,6 +349,11 @@ export function createAskService(db: EchoDb, options: AskServiceOptions = {}) {
         evidence: [],
         cached: false,
       };
+      // Pre-model refusal is deterministic from the tape, so it persists like
+      // any other 200 outcome. Only model calls fail closed without persisting.
+      if (!appendTurn(session.projectId, sessionId, input, cardId, refused)) {
+        return redactionFailed();
+      }
       return { status: 200, body: refused };
     }
 
@@ -174,7 +363,14 @@ export function createAskService(db: EchoDb, options: AskServiceOptions = {}) {
       )
       .digest("hex");
     const hit = cache.get(cacheKey);
-    if (hit) return { status: 200, body: { ...hit, cached: true } };
+    if (hit) {
+      const body = { ...hit, cached: true };
+      // Cache hits still append to the thread: same response, new message ids.
+      if (!appendTurn(session.projectId, sessionId, input, cardId, body)) {
+        return redactionFailed();
+      }
+      return { status: 200, body };
+    }
     if (modelOff()) {
       return {
         status: 503,
@@ -237,9 +433,25 @@ export function createAskService(db: EchoDb, options: AskServiceOptions = {}) {
             evidence: bundle.items,
             cached: false,
           };
+    // The turn only counts once the thread artifact is durably updated: a
+    // redaction failure drops the answer (500) instead of persisting it.
+    if (!appendTurn(session.projectId, sessionId, input, cardId, response)) {
+      return redactionFailed();
+    }
     cache.set(cacheKey, response);
     return { status: 200, body: response };
   }
 
-  return { answer };
+  async function thread(sessionId: string): Promise<ThreadOutcome> {
+    const session = getSession(db, sessionId);
+    if (!session) {
+      return {
+        status: 404,
+        body: { error: { code: "not_found", message: "unknown session" } },
+      };
+    }
+    return { status: 200, body: loadThread(session.projectId, sessionId) };
+  }
+
+  return { answer, thread };
 }

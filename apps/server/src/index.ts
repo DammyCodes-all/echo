@@ -2,9 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import {
-  AnswerCheckRequestSchema,
   AskRequestSchema,
-  GenerateChecksRequestSchema,
+  CheckMeRequestSchema,
+  CheckV2AnswerRequestSchema,
 } from "@echo/contracts";
 import {
   getSession,
@@ -19,14 +19,16 @@ import {
 } from "@echo/db";
 import Fastify from "fastify";
 import { createAskService } from "./ask";
-import { createChecksService } from "./checks";
+import { createChecksV2Service } from "./checks-v2";
+import { createEngagementService } from "./engagement";
 import { loadLocalEnv } from "./env";
+import { createHistoryService } from "./history";
 import { createIngest } from "./ingest";
 import { createMuseIngest } from "./muse-ingest";
 import { createMuseWatcher } from "./muse-watch";
 import { buildSessionReview } from "./review-index";
 import { readSnapshotFile } from "./snapshot-view";
-import { createStoryService } from "./story-generate";
+import { createStoryService } from "./story";
 
 const VERSION = "0.1.0";
 const DEFAULT_PORT = 4783;
@@ -49,18 +51,34 @@ const paths = resolveEchoPaths();
 mkdirSync(paths.dataDir, { recursive: true });
 const db = openEchoDb(join(paths.dataDir, "echo.sqlite"));
 const app = Fastify({ logger: true });
-const ingest = createIngest({ dataDir: paths.dataDir, db, log: app.log });
+const story = createStoryService({ db, dataDir: paths.dataDir, log: app.log });
+// Fire-and-forget finalize hook: never awaited (model latency would stall
+// polling) and never throws into ingest (errors are logged here).
+const storyHook = (sessionId: string): void => {
+  void story
+    .maybeGenerateStory(sessionId, { reason: "finalize" })
+    .catch((error) =>
+      app.log.error({ err: String(error), session_id: sessionId }, "story finalize failed"),
+    );
+};
+const ingest = createIngest({
+  dataDir: paths.dataDir,
+  db,
+  log: app.log,
+  onSessionQuiescent: storyHook,
+});
 const config = loadEchoConfig();
-const story = createStoryService(db, { dataDir: paths.dataDir });
 const museIngest = createMuseIngest({
   dataDir: paths.dataDir,
   db,
   log: app.log,
   projects: config.projects,
-  story,
+  onSessionQuiescent: storyHook,
 });
-const ask = createAskService(db);
-const checks = createChecksService(db, paths.dataDir);
+const ask = createAskService(db, paths.dataDir, { log: app.log });
+const checksV2 = createChecksV2Service({ db, dataDir: paths.dataDir, log: app.log });
+const engagement = createEngagementService(db);
+const history = createHistoryService(db, paths.dataDir);
 
 app.get("/api/health", async () => ({
   status: "ok",
@@ -135,39 +153,89 @@ app.post<{ Params: { id: string } }>("/api/sessions/:id/ask", async (request, re
   return reply.code(outcome.status).send(outcome.body);
 });
 
-app.get<{ Params: { id: string } }>("/api/sessions/:id/checks", async (request, reply) => {
-  const outcome = await checks.sessionChecks(request.params.id);
+app.get<{ Params: { id: string } }>("/api/sessions/:id/ask/thread", async (request, reply) => {
+  const outcome = await ask.thread(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
 });
 
 app.post<{ Params: { id: string } }>(
-  "/api/sessions/:id/checks/generate",
+  "/api/sessions/:id/checks-v2/generate",
   async (request, reply) => {
-    const parsed = GenerateChecksRequestSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: { code: "invalid_request", message: "limit 1..5 with opened/waived hunk lists" },
-      });
-    }
-    const outcome = await checks.generate(request.params.id, parsed.data);
+    const outcome = await checksV2.generate(request.params.id);
     return reply.code(outcome.status).send(outcome.body);
   },
 );
 
-app.post<{ Params: { id: string } }>("/api/checks/:id/answer", async (request, reply) => {
-  const parsed = AnswerCheckRequestSchema.safeParse(request.body);
-  if (!parsed.success) {
-    return reply.code(400).send({
-      error: { code: "invalid_request", message: "confidence plus a non-empty answer" },
-    });
-  }
-  const outcome = await checks.answer(request.params.id, parsed.data);
+app.get<{ Params: { id: string } }>("/api/sessions/:id/checks-v2", async (request, reply) => {
+  const outcome = checksV2.state(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
 });
 
-app.get<{ Params: { id: string } }>("/api/sessions/:id/report", async (request, reply) => {
-  const outcome = await checks.report(request.params.id);
+app.post<{ Params: { id: string } }>(
+  "/api/sessions/:id/checks-v2/check-me",
+  async (request, reply) => {
+    const parsed = CheckMeRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "cardId is required" },
+      });
+    }
+    const outcome = await checksV2.checkMe(request.params.id, parsed.data.cardId);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.post<{ Params: { id: string } }>(
+  "/api/sessions/:id/checks-v2/answer",
+  async (request, reply) => {
+    const parsed = CheckV2AnswerRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "questionId and confidence are required" },
+      });
+    }
+    const outcome = await checksV2.answer(request.params.id, parsed.data);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.post<{ Params: { id: string } }>("/api/sessions/:id/checks-v2/skip", async (request, reply) => {
+  const outcome = checksV2.skip(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
+});
+
+app.post<{ Params: { id: string } }>("/api/sessions/:id/engagement", async (request, reply) => {
+  const outcome = engagement.record(request.params.id, request.body);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.get<{ Params: { id: string }; Querystring: { cardIds?: string } }>(
+  "/api/sessions/:id/engagement",
+  async (request, reply) => {
+    const raw = request.query.cardIds;
+    const cardIds =
+      raw === undefined || raw === "" ? undefined : raw.split(",").map((part) => part.trim());
+    const outcome = engagement.state(request.params.id, cardIds);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.get<{ Params: { id: string } }>("/api/sessions/:id/history", async (request, reply) => {
+  const outcome = history.forSession(request.params.id);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.get<{ Params: { id: string } }>("/api/sessions/:id/story", async (request, reply) => {
+  // Read-through cache: generates on missing/stale, serves the artifact when
+  // the tape watermark still matches.
+  const outcome = await story.maybeGenerateStory(request.params.id, { reason: "read-through" });
+  if (outcome.outcome === "unknown_session" || !outcome.story) {
+    const code = outcome.outcome === "unknown_session" ? 404 : 500;
+    const errorCode = outcome.outcome === "unknown_session" ? "not_found" : "redaction_failed";
+    const message = outcome.outcome === "unknown_session" ? "unknown session" : "story unavailable";
+    return reply.code(code).send({ error: { code: errorCode, message } });
+  }
+  return outcome.story;
 });
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/snapshots", async (request) =>
@@ -219,8 +287,8 @@ app.get<{ Params: { id: string; commit: string }; Querystring: { path?: string }
 
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
-  ingest.stop();
-  museIngest.stop();
+  await ingest.stop();
+  await museIngest.stop();
   museWatcher?.stop();
   db.close();
   await app.close();
