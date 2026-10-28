@@ -36,7 +36,11 @@ export const ProjectSummarySchema = z.object({
 });
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
-export const SessionCheckStatusSchema = z.enum(["not_checked", "checked", "skipped"]);
+export const SessionCheckStatusSchema = z.enum([
+  "not_checked",
+  "checked",
+  "skipped",
+]);
 export type SessionCheckStatus = z.infer<typeof SessionCheckStatusSchema>;
 
 export const CaptureStateSchema = z.enum([
@@ -76,7 +80,10 @@ export const StoredEventSchema = z.object({
   observed_at: z.string().min(1),
   tool_call_id: z.string().nullable(),
   payload: z.unknown(),
-  redaction: z.object({ version: z.string(), findings: z.number().int().nonnegative() }),
+  redaction: z.object({
+    version: z.string(),
+    findings: z.number().int().nonnegative(),
+  }),
 });
 export type StoredEvent = z.infer<typeof StoredEventSchema>;
 
@@ -264,7 +271,9 @@ export const StoredCheckSchema = z.object({
   question: z.string().min(1),
   evidencePaths: z.array(z.string()),
   rubric: z.array(z.string()),
-  demonstration: z.object({ code: z.string(), observedStdout: z.string() }).nullable(),
+  demonstration: z
+    .object({ code: z.string(), observedStdout: z.string() })
+    .nullable(),
   createdAt: z.string().min(1),
 });
 export type StoredCheck = z.infer<typeof StoredCheckSchema>;
@@ -274,9 +283,15 @@ export const GenerateChecksResponseSchema = z.object({
   dropped: z.array(z.object({ hunkId: z.string(), reason: z.string() })),
   sandboxAvailable: z.boolean(),
 });
-export type GenerateChecksResponse = z.infer<typeof GenerateChecksResponseSchema>;
+export type GenerateChecksResponse = z.infer<
+  typeof GenerateChecksResponseSchema
+>;
 
-export const AnswerConfidenceSchema = z.enum(["guessing", "think_so", "certain"]);
+export const AnswerConfidenceSchema = z.enum([
+  "guessing",
+  "think_so",
+  "certain",
+]);
 export type AnswerConfidence = z.infer<typeof AnswerConfidenceSchema>;
 
 export const AnswerCheckRequestSchema = z.object({
@@ -416,7 +431,11 @@ export const ChangeCardSchema = z.object({
 });
 export type ChangeCard = z.infer<typeof ChangeCardSchema>;
 
-export const DetourCostReasonSchema = z.enum(["reverted", "side_effect", "repeated_attempt"]);
+export const DetourCostReasonSchema = z.enum([
+  "reverted",
+  "side_effect",
+  "repeated_attempt",
+]);
 export type DetourCostReason = z.infer<typeof DetourCostReasonSchema>;
 
 export const DetourSchema = z.object({
@@ -506,7 +525,9 @@ export type EngagementEvent = z.infer<typeof EngagementEventSchema>;
 export const RecordEngagementRequestSchema = z.object({
   events: z.array(EngagementEventSchema).min(1).max(100),
 });
-export type RecordEngagementRequest = z.infer<typeof RecordEngagementRequestSchema>;
+export type RecordEngagementRequest = z.infer<
+  typeof RecordEngagementRequestSchema
+>;
 
 export const EngagementStateSchema = z.object({
   sessionId: z.string().min(1),
@@ -523,19 +544,27 @@ const StoredCheckQuestionBaseSchema = z.object({
   evidencePaths: z.array(z.string()),
 });
 
-export const StoredCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend({
-  format: z.literal("mcq"),
-  options: z.array(z.object({ id: z.string().min(1), text: z.string().min(1) })).min(2),
-  correctOptionId: z.string().min(1),
-  distractorSources: z.array(z.string()),
-});
-export type StoredCheckMcqQuestion = z.infer<typeof StoredCheckMcqQuestionSchema>;
+export const StoredCheckMcqQuestionSchema =
+  StoredCheckQuestionBaseSchema.extend({
+    format: z.literal("mcq"),
+    options: z
+      .array(z.object({ id: z.string().min(1), text: z.string().min(1) }))
+      .min(2),
+    correctOptionId: z.string().min(1),
+    distractorSources: z.array(z.string()),
+  });
+export type StoredCheckMcqQuestion = z.infer<
+  typeof StoredCheckMcqQuestionSchema
+>;
 
-export const StoredCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.extend({
-  format: z.literal("free_text"),
-  rubric: z.array(z.string().min(1)).min(1),
-});
-export type StoredCheckFreeTextQuestion = z.infer<typeof StoredCheckFreeTextQuestionSchema>;
+export const StoredCheckFreeTextQuestionSchema =
+  StoredCheckQuestionBaseSchema.extend({
+    format: z.literal("free_text"),
+    rubric: z.array(z.string().min(1)).min(1),
+  });
+export type StoredCheckFreeTextQuestion = z.infer<
+  typeof StoredCheckFreeTextQuestionSchema
+>;
 
 export const StoredCheckQuestionSchema = z.discriminatedUnion("format", [
   StoredCheckMcqQuestionSchema,
@@ -543,16 +572,24 @@ export const StoredCheckQuestionSchema = z.discriminatedUnion("format", [
 ]);
 export type StoredCheckQuestion = z.infer<typeof StoredCheckQuestionSchema>;
 
-export const PublicCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend({
-  format: z.literal("mcq"),
-  options: z.array(z.object({ id: z.string().min(1), text: z.string().min(1) })).min(2),
-});
-export type PublicCheckMcqQuestion = z.infer<typeof PublicCheckMcqQuestionSchema>;
+export const PublicCheckMcqQuestionSchema =
+  StoredCheckQuestionBaseSchema.extend({
+    format: z.literal("mcq"),
+    options: z
+      .array(z.object({ id: z.string().min(1), text: z.string().min(1) }))
+      .min(2),
+  });
+export type PublicCheckMcqQuestion = z.infer<
+  typeof PublicCheckMcqQuestionSchema
+>;
 
-export const PublicCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.extend({
-  format: z.literal("free_text"),
-});
-export type PublicCheckFreeTextQuestion = z.infer<typeof PublicCheckFreeTextQuestionSchema>;
+export const PublicCheckFreeTextQuestionSchema =
+  StoredCheckQuestionBaseSchema.extend({
+    format: z.literal("free_text"),
+  });
+export type PublicCheckFreeTextQuestion = z.infer<
+  typeof PublicCheckFreeTextQuestionSchema
+>;
 
 export const PublicCheckQuestionSchema = z.discriminatedUnion("format", [
   PublicCheckMcqQuestionSchema,
@@ -581,7 +618,12 @@ export const CardPictureSchema = z.object({
 });
 export type CardPicture = z.infer<typeof CardPictureSchema>;
 
-export const ChecksV2StatusSchema = z.enum(["offered", "in_progress", "completed", "skipped"]);
+export const ChecksV2StatusSchema = z.enum([
+  "offered",
+  "in_progress",
+  "completed",
+  "skipped",
+]);
 export type ChecksV2Status = z.infer<typeof ChecksV2StatusSchema>;
 
 export const ChecksV2StateSchema = z.object({
@@ -644,10 +686,36 @@ export const SessionHistoryResponseSchema = z.object({
   sessionId: z.string().min(1),
   entries: z.array(HistoryEntrySchema),
 });
-export type SessionHistoryResponse = z.infer<typeof SessionHistoryResponseSchema>;
+export type SessionHistoryResponse = z.infer<
+  typeof SessionHistoryResponseSchema
+>;
 
 export const ArtifactKindSchema = z.enum(["story", "checks_v2", "ask_thread"]);
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
+
+// --- Checks v2 request/response shapes (additive; stored vs public already above) ---
+
+export const CheckMeRequestSchema = z.object({
+  cardId: z.string().min(1),
+});
+export type CheckMeRequest = z.infer<typeof CheckMeRequestSchema>;
+
+export const CheckV2AnswerRequestSchema = z.object({
+  confidence: AnswerConfidenceSchema,
+  questionId: z.string().min(1),
+  selectedOptionId: z.string().min(1).nullable().default(null),
+  answerText: z.string().max(8000).nullable().default(null),
+});
+export type CheckV2AnswerRequest = z.infer<typeof CheckV2AnswerRequestSchema>;
+
+export const CheckV2AnswerResponseSchema = z.object({
+  attempt: CheckAttemptV2Schema,
+  reveal: z.object({
+    summary: z.string().min(1),
+    evidence: z.array(AskEvidenceSchema),
+  }),
+});
+export type CheckV2AnswerResponse = z.infer<typeof CheckV2AnswerResponseSchema>;
 
 export const ArtifactRefSchema = z.object({
   sessionId: z.string().min(1),

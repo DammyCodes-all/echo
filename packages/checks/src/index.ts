@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import type { ChangeCard, EngagementTier, PictureBucket } from "@echo/contracts";
 
 export interface HunkInput {
   path: string;
@@ -237,4 +238,68 @@ export function gradeRubric(check: Check, answerText: string, hits: RubricHit[])
 /** Top-N riskiest hunks become check candidates. */
 export function selectChecks(ranked: RankedHunk[], limit = 5): RankedHunk[] {
   return ranked.slice(0, Math.max(0, limit));
+}
+
+// --- Checks v2: card targeting and answer mapping (pure, no model/db) ---
+//
+// All five ownership kinds stay eligible as question topics: kind selection
+// is a prompt instruction, not a sandbox gate. There are no executable
+// demonstrations in v1 — sandbox-run drafting is cut, so every v2 question
+// grades against a text rubric (MCQ by key, free-text by rubric hits) and
+// `demonstration` is always null.
+
+/**
+ * Pick target card ids for a check set: riskiest first (highRisk desc, then
+ * rank asc), capped at `limit` — and never padded (small sessions yield
+ * fewer targets; zero cards yields none). Then one engaged spot-check: if no
+ * pick is `engaged` but some card is, swap the lowest-priority non-highRisk
+ * pick for the best-ranked engaged card. Single swap max; all-highRisk picks
+ * never swap (risk outranks the nudge).
+ */
+export function selectTargets(
+  cards: ChangeCard[],
+  tiers: Record<string, EngagementTier>,
+  limit = 5,
+): string[] {
+  if (cards.length === 0) return [];
+  const ordered = [...cards].sort(
+    (a, b) => Number(b.highRisk) - Number(a.highRisk) || a.rank - b.rank || a.id.localeCompare(b.id),
+  );
+  const picked = ordered.slice(0, Math.max(0, Math.min(limit, ordered.length)));
+  const hasEngaged = picked.some((card) => tiers[card.id] === "engaged");
+  if (!hasEngaged) {
+    const engaged = ordered.filter(
+      (card) => tiers[card.id] === "engaged" && !picked.some((other) => other.id === card.id),
+    );
+    const candidate = engaged[0];
+    if (candidate !== undefined) {
+      // Lowest-priority non-highRisk pick = last in priority order. All
+      // highRisk picks means there is no safe swap: keep risk intact.
+      const swapIndex = picked.map((card) => card.highRisk).lastIndexOf(false);
+      if (swapIndex >= 0) picked[swapIndex] = candidate;
+    }
+  }
+  return picked.map((card) => card.id);
+}
+
+/** Map an attempt to its picture bucket. `confident` is `confidence !== "guessing"`. */
+export function bucketFor(args: {
+  attempted: boolean;
+  correct: boolean;
+  confident: boolean;
+}): PictureBucket {
+  if (!args.attempted) return "never_looked";
+  if (args.correct && args.confident) return "solid";
+  if (args.correct) return "right_but_unsure";
+  if (args.confident) return "confident_but_wrong";
+  return "wrong_and_knew_it";
+}
+
+/** MCQ scoring: strict key equality; null/undefined (no selection) is wrong. */
+export function gradeMcq(
+  selectedOptionId: string | null | undefined,
+  correctOptionId: string,
+): boolean {
+  if (selectedOptionId === null || selectedOptionId === undefined) return false;
+  return selectedOptionId === correctOptionId;
 }
