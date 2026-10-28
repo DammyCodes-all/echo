@@ -151,12 +151,18 @@ function sanitizeEvidence(value: unknown): unknown {
   return value;
 }
 
+export interface SessionImportOptions {
+  /** Canonical project id resolved by the server; defaults to directory identity. */
+  projectId?: string;
+}
+
 export function importOpenCodeSession(
   db: DatabaseSync,
   session: OpenCodeSessionSummary,
   observedAt: Date = new Date(),
+  options: SessionImportOptions = {},
 ): SessionImport {
-  const projectId = projectIdForDirectory(session.directory ?? "unknown");
+  const projectId = options.projectId ?? projectIdForDirectory(session.directory ?? "unknown");
   const observedIso = observedAt.toISOString();
   const events: TapeEvent[] = [];
   let tapeSeq = 0;
