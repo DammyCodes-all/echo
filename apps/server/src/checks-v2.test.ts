@@ -149,7 +149,9 @@ function seedSession(sessionId: string): { db: EchoDb; dataDir: string } {
 
 function stubFetchQueue(replies: unknown[]) {
   let calls = 0;
-  const fetchImpl = (async () => {
+  const bodies: string[] = [];
+  const fetchImpl = (async (_url: unknown, init?: { body?: unknown }) => {
+    bodies.push(String(init?.body ?? ""));
     const reply = replies[Math.min(calls, replies.length - 1)];
     calls += 1;
     return new Response(
@@ -160,7 +162,7 @@ function stubFetchQueue(replies: unknown[]) {
       { headers: { "Content-Type": "application/json" } },
     );
   }) as typeof fetch;
-  return { fetchImpl, calls: () => calls };
+  return { fetchImpl, calls: () => calls, bodies: () => bodies };
 }
 
 function draftSet(): unknown {
@@ -579,4 +581,65 @@ describe("createChecksV2Service", () => {
       db.close();
     }
   });
+
+  it("drafts with a 10k low-reasoning budget by default", async () => {
+    const { db, dataDir } = seedSession("ses_v2_budget");
+    try {
+      const { fetchImpl, bodies } = stubFetchQueue([draftSet()]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const outcome = await service.generate("ses_v2_budget");
+      expect(outcome.status).toBe(200);
+      const request = JSON.parse(bodies()[0] ?? "{}") as Record<string, unknown>;
+      expect(request["max_tokens"]).toBe(10_000);
+      expect(request["reasoning_effort"]).toBe("low");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("honors explicit model env over the checks budget defaults", async () => {
+    const { db, dataDir } = seedSession("ses_v2_budgenv");
+    try {
+      const { fetchImpl, bodies } = stubFetchQueue([draftSet()]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        {
+          env: { ...ENV, META_MAX_TOKENS: "4000", META_REASONING_EFFORT: "medium" },
+          fetchImpl,
+        },
+      );
+      const outcome = await service.generate("ses_v2_budgenv");
+      expect(outcome.status).toBe(200);
+      const request = JSON.parse(bodies()[0] ?? "{}") as Record<string, unknown>;
+      expect(request["max_tokens"]).toBe(4000);
+      expect(request["reasoning_effort"]).toBe("medium");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("generate fails closed fast when the model call stalls", async () => {
+    const { db, dataDir } = seedSession("ses_v2_stall");
+    try {
+      // A stalled model call: pending until aborted, like a real hung fetch.
+      const hangingFetch = ((_url: string, init?: { signal?: AbortSignal }) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            reject(new DOMException("This operation was aborted", "AbortError"));
+          });
+        })) as typeof fetch;
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl: hangingFetch, timeoutMs: 50 },
+      );
+      const outcome = await service.generate("ses_v2_stall");
+      expect(outcome.status).toBe(503);
+      expect(getSessionSummary(db, "ses_v2_stall")?.checkStatus).toBe("not_checked");
+    } finally {
+      db.close();
+    }
+  }, 10_000);
 });

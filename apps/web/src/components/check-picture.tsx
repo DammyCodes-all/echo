@@ -79,7 +79,7 @@ export function CheckPicture({
       <button
         type="button"
         onClick={onDone}
-        className="rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white"
+        className="rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base"
       >
         Done — back to inbox
       </button>

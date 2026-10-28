@@ -11,7 +11,7 @@ import type {
   VerifiedCounts,
 } from "@echo/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api } from "../api";
 import { AskThreadPanel } from "../components/ask-thread-panel";
@@ -30,6 +30,9 @@ import { useEngagement } from "../hooks/use-engagement";
 const CHECK_UNAVAILABLE = "Check unavailable (model off). Your session status is untouched.";
 
 function checkMessage(error: unknown): string {
+  if ((error instanceof DOMException || error instanceof Error) && error.name === "TimeoutError") {
+    return "Check timed out — the model is slow or unreachable. Try again.";
+  }
   const raw = error instanceof Error ? error.message : "Check failed.";
   return /unavailable/i.test(raw) ? CHECK_UNAVAILABLE : raw;
 }
@@ -264,6 +267,8 @@ export function StoryPage() {
   const [checkFinished, setCheckFinished] = useState(false);
   const [checkBusy, setCheckBusy] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  const checkAbortRef = useRef<AbortController | null>(null);
+  const checkCancelRef = useRef(false);
 
   const storyForGate = storyQuery.data as unknown as SessionStory | undefined;
   const checksQuery = useQuery({
@@ -360,34 +365,47 @@ export function StoryPage() {
 
   const handleStartCheck = async () => {
     if (checkBusy) return;
+    const controller = new AbortController();
+    checkAbortRef.current = controller;
+    checkCancelRef.current = false;
     setCheckBusy(true);
     setCheckError(null);
     try {
-      const next = await api.generateChecksV2(sessionId);
+      const next = await api.generateChecksV2(sessionId, controller.signal);
       queryClient.setQueryData(["checks-v2", sessionId], next);
       setCheckFocusId(null);
       setCheckRunnerOpen(true);
     } catch (unknown) {
-      setCheckError(checkMessage(unknown));
+      if (!checkCancelRef.current) setCheckError(checkMessage(unknown));
     } finally {
+      checkAbortRef.current = null;
       setCheckBusy(false);
     }
   };
 
   const handleCheckMe = async (asked: { id: string; headline: string }) => {
     if (checkBusy) return;
+    const controller = new AbortController();
+    checkAbortRef.current = controller;
+    checkCancelRef.current = false;
     setCheckBusy(true);
     setCheckError(null);
     try {
-      const next: ChecksV2Response = await api.checkMe(sessionId, asked.id);
+      const next: ChecksV2Response = await api.checkMe(sessionId, asked.id, controller.signal);
       queryClient.setQueryData(["checks-v2", sessionId], next);
       setCheckFocusId(next.questions.find((question) => question.cardId === asked.id)?.id ?? null);
       setCheckRunnerOpen(true);
     } catch (unknown) {
-      setCheckError(checkMessage(unknown));
+      if (!checkCancelRef.current) setCheckError(checkMessage(unknown));
     } finally {
+      checkAbortRef.current = null;
       setCheckBusy(false);
     }
+  };
+
+  const handleCancelCheck = () => {
+    checkCancelRef.current = true;
+    checkAbortRef.current?.abort();
   };
 
   const handleSkipCheck = async () => {
@@ -480,7 +498,9 @@ export function StoryPage() {
                 type="button"
                 onClick={() => setSortMode("risk")}
                 className={`rounded-dusk-code px-3 py-2 text-sm ${
-                  sortMode === "risk" ? "bg-dusk-ink text-white" : "bg-dusk-pill text-dusk-ink"
+                  sortMode === "risk"
+                    ? "bg-dusk-accent-wash text-dusk-ink"
+                    : "bg-dusk-pill text-dusk-ink"
                 }`}
               >
                 Risk
@@ -489,7 +509,9 @@ export function StoryPage() {
                 type="button"
                 onClick={() => setSortMode("session")}
                 className={`rounded-dusk-code px-3 py-2 text-sm ${
-                  sortMode === "session" ? "bg-dusk-ink text-white" : "bg-dusk-pill text-dusk-ink"
+                  sortMode === "session"
+                    ? "bg-dusk-accent-wash text-dusk-ink"
+                    : "bg-dusk-pill text-dusk-ink"
                 }`}
               >
                 Session order
@@ -626,7 +648,7 @@ export function StoryPage() {
                 <button
                   type="button"
                   onClick={handleBackToInbox}
-                  className="rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white"
+                  className="rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base"
                 >
                   Done — back to inbox
                 </button>
@@ -646,6 +668,7 @@ export function StoryPage() {
                 }
                 onStart={() => void handleStartCheck()}
                 onSkip={() => void handleSkipCheck()}
+                onCancel={handleCancelCheck}
                 starting={checkBusy}
               />
             )}
