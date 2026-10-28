@@ -407,3 +407,17 @@ notes.
 - status: done
 - evidence: `tsc` clean; `pnpm test` → 48 files / 391 passed (incl. new legacy-drift test: v1+v2 + old-v3 remote_url + versions {1,2,3} heals to {1..6} with checkpoints backfilled); `pnpm build` ok; live daemon on the real `~/.local/share/echo/echo.sqlite` healed in place (versions 1..6, all tables present) — `/api/health` ok, `/api/projects` serves real rows; pre-fix backup at `/tmp/opencode/echo-backup-20261028.sqlite`
 - notes: Backup copy taken before the first healed boot. Commits `0459c02`/`35ab95a` (concurrent session) landed the same worktree fix; the biome --write formatting on `database.ts`/`db.test.ts` is still unstaged. Repo-wide `pnpm lint` still flags `useLiteralKeys` in the concurrent session's in-flight `apps/server/src/story.ts`/`story.test.ts`/`engagement.test.ts` — untouched, not mine.
+
+## 2026-10-28 — Merge main + origin/main (22↔22) + story engine unification
+
+- item: resolved all 6 textual conflicts (index.ts → ours + drop story-generate wiring; muse-ingest.ts → ours + drop storyOnce + its tests; contracts → ours + CardId/HunkId + HunkIdSchema on ReviewHunk/evidenceByHunk keys; BuildTracker concatenated; eval churn taken from ours); adopted origin's additive work (packages/story engine + fixture sessions/expected JSONs + tests, tape review test, tsconfig path, server dep); fixed 24 canonical-ID test fallout (fixtures to h_ + 16 hex; invalid refs like H99/ZZZ/card-nope preserved); applied CardIdSchema to AskThread empty() (schemaVersion: 1 was missing → threads would 500)
+- status: done
+- evidence: full gate green on merged HEAD — tsc clean, biome 187 files (infos only), pnpm test → 48 files / 391 passed, pnpm build ok
+- notes: Per user decision the engine is theirs: rewire subagent replaced story.ts internals with extractFacts/buildNarrationMessages/validateStoryFacts/dropFailedClaims/buildSkeletonStory, deleted story-facts*/story.test.ts/story-eval*/story-generate*, kept our orchestration shell (GET read-through, watermark, reset, redaction). Follow-up parent fix in this same entry: live probe proved the new engine starved at 8k tokens (finish=length, null content, 2/2 runs) — model client now sends top-level reasoning_effort (validated; default unset; env META_REASONING_EFFORT), story narration uses 50k floor + medium effort + one parse-failure regen with the zod errors quoted, plus envelope/shape normalization for server-owned fields (tapeWatermark/generator), moment ""→null/label fallback, card claim object→array coercion, invalid previousPicture→null. Live end-to-end (real model, seeded payment-retry session): OUTCOME generated, 1 card partly_observed/highRisk, no gaps, inbox summary written. Remaining lint infos are stylistic unsafe-fix suggestions on dynamic Record access — left as-is. The merge commit itself was landed by the concurrent session; no uncommitted work remains.
+
+## 2026-10-28 — Remote sync (merge origin/main, no conflicts)
+
+- item: merged `origin/main` (`45d7ffb` + `extractWorkspaceRoot` import/test commits) into local `03fbe7f`; pushed as `532dc02`
+- status: done
+- evidence: ort merge, zero conflicts (local side touched only generated `eval/muse-fixture` output, remote side only `muse-ingest.ts`/`capture-muse` import files); post-merge gate: `tsc` clean, `pnpm test` → 48 files / 397 passed, `pnpm build` ok; `git push` clean, `main` in sync with `origin/main`
+- notes: Chose merge over rebase per repo convention (all prior syncs are ort merges). Regenerated `eval/muse-fixture` output + this entry left unstaged — user owns history.
