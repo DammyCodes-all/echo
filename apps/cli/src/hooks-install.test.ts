@@ -165,4 +165,22 @@ describe("installMuseHooks", () => {
     expect(entry?.timeout).toBe(5);
     expect(entry?.commandWindows).toBe("pwsh -c ...");
   });
+
+  it("never treats a user entry that mentions hooks in prose as stale", () => {
+    const { settings, cliBin } = paths();
+    const prose = 'echo "my hook muse helper"';
+    writeFileSync(
+      settings,
+      `${JSON.stringify({ hooks: { PreToolUse: [{ type: "command", command: prose, timeout: 3 }] } }, null, 2)}\n`,
+    );
+    const result = installMuseHooks({ settingsPath: settings, cliBin });
+    expect(result.changed).toBe(true);
+    const stored = JSON.parse(readFileSync(settings, "utf8")) as {
+      hooks: Record<string, Array<{ command: string }>>;
+    };
+    // The user's entry survives untouched alongside the installed Echo entry.
+    expect(stored.hooks.PreToolUse).toHaveLength(2);
+    expect(stored.hooks.PreToolUse?.[0]?.command).toBe(prose);
+    expect(stored.hooks.PreToolUse?.[1]?.command).toBe(`"${cliBin}" hook muse PreToolUse`);
+  });
 });
