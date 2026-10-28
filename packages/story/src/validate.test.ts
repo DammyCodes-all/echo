@@ -438,6 +438,27 @@ describe("dropFailedClaims", () => {
     expect(dropped.diagnostics).toEqual([]);
   });
 
+  it("drops failed top-level claims to gap lines", () => {
+    const facts = factSet([makeHunkFact({ addedText: "const x = 2;" })]);
+    const draft = minimalDraft({
+      shortVersion: [{ text: "Sets x to 99", label: "observed", factIds: ["F1"] }],
+      askVsResult: {
+        asked: [],
+        delivered: [{ text: "Delivered 99 fixes", label: "observed", factIds: ["F1"] }],
+        extras: [],
+        missing: [],
+      },
+    });
+    const dropped = dropFailedClaims(validateStoryFacts(facts, draft));
+    expect(dropped.dropped).toHaveLength(2);
+    expect(dropped.story.shortVersion).toEqual([]);
+    expect(dropped.story.askVsResult.delivered).toEqual([]);
+    expect(dropped.story.gaps).toEqual([
+      "Echo couldn't verify this: Sets x to 99",
+      "Echo couldn't verify this: Delivered 99 fixes",
+    ]);
+  });
+
   it("keeps a failing summary with a diagnostic", () => {
     const facts = factSet([makeHunkFact()]);
     const draft = minimalDraft({ summary: "Changed 99 files." });

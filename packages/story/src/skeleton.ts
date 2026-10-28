@@ -1,12 +1,5 @@
 import type { ChangeCard, Detour, SessionStory, StoryClaim } from "@echo/contracts";
-import type {
-  AttemptFact,
-  FactSet,
-  GapFact,
-  HunkFact,
-  PromptFact,
-  RunFact,
-} from "./facts";
+import type { AttemptFact, FactSet, GapFact, HunkFact, PromptFact, RunFact } from "./facts";
 import { type StoryValidation, validateStoryFacts } from "./validate";
 
 /**
@@ -157,9 +150,22 @@ export function buildSkeletonStory(facts: FactSet, meta: SkeletonMeta): Skeleton
     return fb - fa || bb - ba || rb - ra || a.hunkId.localeCompare(b.hunkId);
   });
   const rankOf = new Map(rankedHunks.map((hunk, index) => [hunk.hunkId, index + 1]));
-  const cards = behaviorHunks.map((hunk, index) => {
-    const card = cardFor(hunk, index, facts);
-    card.rank = rankOf.get(hunk.hunkId) ?? index + 1;
+  const attempts = attemptsOf(facts);
+  const earliestTouch = (path: string): string => {
+    const times = attempts
+      .filter((attempt) => attempt.path === path)
+      .map((attempt) => attempt.takenAt)
+      .sort();
+    return times[0] ?? "9999";
+  };
+  const chronoHunks = [...behaviorHunks].sort(
+    (a, b) =>
+      earliestTouch(a.path).localeCompare(earliestTouch(b.path)) || a.path.localeCompare(b.path),
+  );
+  const orderOf = new Map(chronoHunks.map((hunk, index) => [hunk.hunkId, index]));
+  const cards = behaviorHunks.map((hunk) => {
+    const card = cardFor(hunk, orderOf.get(hunk.hunkId) ?? 0, facts);
+    card.rank = rankOf.get(hunk.hunkId) ?? 1;
     return card;
   });
 
