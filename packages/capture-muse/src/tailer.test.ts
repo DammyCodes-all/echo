@@ -249,9 +249,11 @@ describe("tailChunk", () => {
         baseOffset,
         cursor: freshLaneCursor(),
       });
+    const gapKey = (result: ReturnType<typeof tailChunk>): string | undefined =>
+      result.events.find((event) => event.kind === "capture.gap")?.record_key ?? undefined;
     const expected = `muse:ses_parent:gap:parse-invalid:${100 + Buffer.byteLength(head, "utf8")}`;
-    expect(at(100).events[0]?.record_key).toBe(expected);
-    expect(at(5000).events[0]?.record_key).toBe(
+    expect(gapKey(at(100))).toBe(expected);
+    expect(gapKey(at(5000))).toBe(
       `muse:ses_parent:gap:parse-invalid:${5000 + Buffer.byteLength(head, "utf8")}`,
     );
   });
