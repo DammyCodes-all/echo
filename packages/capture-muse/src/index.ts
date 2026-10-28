@@ -11,7 +11,7 @@ export { collectReferencedChildIds, finalizeMuseSession } from "./finalize";
 export type { HookTranslateInput, HookTranslateResult, MuseHookName } from "./hooks";
 export { MUSE_HOOK_EVENTS, resolveHookProject, translateMuseHook } from "./hooks";
 export type { MuseImportRequest, MuseImportResult } from "./import";
-export { importMuseSession } from "./import";
+export { extractWorkspaceRoot, importMuseSession } from "./import";
 export type { MuseMapContext, MuseMapResult, TapeEventInput } from "./map";
 export {
   ADAPTER_SCHEMA,

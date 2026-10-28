@@ -78,27 +78,86 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 // Attribution without guessing: only explicit workspace markers count. A log
-// without one cannot be tied to a project, so the import refuses instead of
+// without one cannot be tied to a project, so the caller refuses instead of
 // snapshotting the wrong tree.
-function extractWorkspaceRoot(content: string): string | null {
+//
+// Observed marker shapes (Oct 28, 2026 logs): a `route_facts` record carries
+// the launch cwd at payload.record.cwd, and session metadata/intake records
+// carry payload.<*>.workspace_root at varying depths. Frame envelopes wrap
+// real records in children[].record_json. The legacy top-level paths stay
+// for fixture/spool compatibility.
+function candidateRecords(parsed: unknown): Record<string, unknown>[] {
+  if (!isRecord(parsed)) return [];
+  const out = [parsed];
+  const children = parsed.children;
+  if (Array.isArray(children)) {
+    for (const child of children) {
+      if (!isRecord(child) || typeof child.record_json !== "string") continue;
+      try {
+        const inner: unknown = JSON.parse(child.record_json);
+        if (isRecord(inner)) out.push(inner);
+      } catch {
+        // Unparseable children are not evidence.
+      }
+    }
+  }
+  return out;
+}
+
+// Bounded exact-key search: the key name is fixed, only the depth varies.
+function nestedRoots(payload: Record<string, unknown>): string[] {
+  const found: string[] = [];
+  let visited = 0;
+  const stack: Array<{ value: unknown; depth: number }> = [{ value: payload, depth: 0 }];
+  while (stack.length > 0 && visited < 1000) {
+    const current = stack.pop() as { value: unknown; depth: number };
+    visited += 1;
+    if (!isRecord(current.value) || current.depth > 6) continue;
+    for (const [key, value] of Object.entries(current.value)) {
+      if (key === "workspace_root" && typeof value === "string" && value.length > 0) {
+        found.push(value);
+      } else if (isRecord(value)) {
+        stack.push({ value, depth: current.depth + 1 });
+      } else if (Array.isArray(value)) {
+        for (const entry of value) {
+          if (isRecord(entry)) stack.push({ value: entry, depth: current.depth + 1 });
+        }
+      }
+    }
+  }
+  return found;
+}
+
+export function extractWorkspaceRoot(content: string): string | null {
+  const nested = new Set<string>();
   for (const line of content.split("\n", 200)) {
     if (!line.includes("workspace_root") && !line.includes("route_facts")) continue;
+    let parsed: unknown;
     try {
-      const parsed: unknown = JSON.parse(line);
-      if (!isRecord(parsed)) continue;
-      const payload = parsed.payload;
+      parsed = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    for (const record of candidateRecords(parsed)) {
+      const payload = record.payload;
       if (!isRecord(payload)) continue;
+      if (payload.kind === "route_facts") {
+        const recordFacts = payload.record;
+        if (isRecord(recordFacts) && typeof recordFacts.cwd === "string" && recordFacts.cwd.length > 0) {
+          return recordFacts.cwd;
+        }
+      }
       const metadata = payload.metadata;
-      if (isRecord(metadata) && typeof metadata.workspace_root === "string") {
+      if (isRecord(metadata) && typeof metadata.workspace_root === "string" && metadata.workspace_root.length > 0) {
         return metadata.workspace_root;
       }
       const facts = payload.route_facts;
-      if (isRecord(facts) && typeof facts.cwd === "string") return facts.cwd;
-    } catch {
-      // Unparseable lines are not evidence.
+      if (isRecord(facts) && typeof facts.cwd === "string" && facts.cwd.length > 0) return facts.cwd;
+      for (const root of nestedRoots(payload)) nested.add(root);
     }
   }
-  return null;
+  // One workspace per session: conflicting roots mean ambiguity, not a choice.
+  return nested.size === 1 ? [...nested][0] ?? null : null;
 }
 
 function readChildContents(sessionFile: string): Array<{ id: string; content: string }> {

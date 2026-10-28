@@ -15,6 +15,7 @@ import {
   ADAPTER_VERSION,
   buildTapeEvent,
   emptyLinks,
+  extractWorkspaceRoot,
   finalizeMuseSession,
   freshLaneCursor,
   getMuseVersion,
@@ -182,33 +183,6 @@ function childContents(sessionFile: string): Array<{ id: string; content: string
     }
   }
   return out;
-}
-
-function extractWorkspaceRoot(content: string): string | null {
-  // Attribution without guessing: only explicit workspace markers count.
-  for (const line of content.split("\n", 200)) {
-    if (!line.includes("workspace_root") && !line.includes("route_facts")) continue;
-    try {
-      const parsed: unknown = JSON.parse(line);
-      if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) continue;
-      const payload = (parsed as Record<string, unknown>).payload;
-      if (payload === null || typeof payload !== "object" || Array.isArray(payload)) continue;
-      const record = payload as Record<string, unknown>;
-      const metadata = record.metadata;
-      if (metadata !== null && typeof metadata === "object" && !Array.isArray(metadata)) {
-        const root = (metadata as Record<string, unknown>).workspace_root;
-        if (typeof root === "string" && root.length > 0) return root;
-      }
-      const facts = record.route_facts;
-      if (facts !== null && typeof facts === "object" && !Array.isArray(facts)) {
-        const cwd = (facts as Record<string, unknown>).cwd;
-        if (typeof cwd === "string" && cwd.length > 0) return cwd;
-      }
-    } catch {
-      // Unparseable lines are not evidence; the reader counts them.
-    }
-  }
-  return null;
 }
 
 // Positional read of new bytes only: the daemon tails large logs instead of

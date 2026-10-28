@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openEchoDb } from "@echo/db";
 import { describe, expect, it } from "vitest";
-import { importMuseSession } from "./import";
+import { extractWorkspaceRoot, importMuseSession } from "./import";
 
 function envelope(seq: number, id: string, streamId: string, workspaceRoot: string): string {
   return JSON.stringify({
@@ -118,5 +118,95 @@ describe("importMuseSession", () => {
       })}\n`,
     );
     await expect(importMuseSession({ dataDir, path: logPath })).rejects.toThrow(/--project/);
+  });
+});
+
+describe("extractWorkspaceRoot", () => {
+  it("reads the launch cwd from an observed route_facts record", () => {
+    const line = JSON.stringify({
+      schema_version: 1,
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 3,
+      payload_type: "runtime.route_facts",
+      payload: {
+        kind: "route_facts",
+        record: { cwd: "/home/user/repo", pid: 1 },
+      },
+    });
+    expect(extractWorkspaceRoot(`${line}\n`)).toBe("/home/user/repo");
+  });
+
+  it("finds nested workspace_root markers at varying depths", () => {
+    const line = JSON.stringify({
+      schema_version: 1,
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 5,
+      payload_type: "runtime.session.metadata",
+      payload: {
+        kind: "metadata",
+        record: { command: { session_metadata: { workspace_root: "/home/user/repo" } } },
+      },
+    });
+    expect(extractWorkspaceRoot(`${line}\n`)).toBe("/home/user/repo");
+  });
+
+  it("unwraps frame children to reach their markers", () => {
+    const inner = JSON.stringify({
+      schema_version: 1,
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 15,
+      payload_type: "runtime.route_facts",
+      payload: { kind: "route_facts", record: { cwd: "/home/user/repo" } },
+    });
+    const frame = JSON.stringify({
+      retained_frame: "session_permission_transaction",
+      children: [{ record_json: inner }],
+    });
+    expect(extractWorkspaceRoot(`${frame}\n`)).toBe("/home/user/repo");
+  });
+
+  it("refuses conflicting roots instead of guessing", () => {
+    const a = JSON.stringify({
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 1,
+      payload: { kind: "metadata", record: { workspace_root: "/repo/a" } },
+    });
+    const b = JSON.stringify({
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 2,
+      payload: { kind: "metadata", record: { workspace_root: "/repo/b" } },
+    });
+    expect(extractWorkspaceRoot(`${a}\n${b}\n`)).toBeNull();
+  });
+
+  it("keeps the legacy top-level marker paths", () => {
+    const meta = JSON.stringify({
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 1,
+      payload: { kind: "accepted", metadata: { workspace_root: "/repo/legacy" } },
+    });
+    expect(extractWorkspaceRoot(`${meta}\n`)).toBe("/repo/legacy");
+    const facts = JSON.stringify({
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 1,
+      payload: { kind: "x", route_facts: { cwd: "/repo/facts" } },
+    });
+    expect(extractWorkspaceRoot(`${facts}\n`)).toBe("/repo/facts");
+  });
+
+  it("returns null without markers, with empty roots, or past line 200", () => {
+    expect(extractWorkspaceRoot('{"stream":{},"sequence":1,"payload":{"kind":"x"}}\n')).toBeNull();
+    const empty = JSON.stringify({
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 1,
+      payload: { kind: "route_facts", record: { cwd: "" } },
+    });
+    expect(extractWorkspaceRoot(`${empty}\n`)).toBeNull();
+    const late = JSON.stringify({
+      stream: { kind: "session", id: "ses_1" },
+      sequence: 1,
+      payload: { kind: "route_facts", record: { cwd: "/repo/late" } },
+    });
+    expect(extractWorkspaceRoot(`${"{}\n".repeat(200)}${late}\n`)).toBeNull();
   });
 });
