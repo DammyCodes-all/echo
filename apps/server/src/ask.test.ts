@@ -329,14 +329,14 @@ describe("createAskService", () => {
 
   it("scopes retrieval to the card's single touch as the file scope", async () => {
     const { db, dataDir } = seedDb();
-    writeStory(db, dataDir, [makeCard("card-1", ["src/app.ts"])]);
+    writeStory(db, dataDir, [makeCard("h_aaaaaaaaaaaaaaaa", ["src/app.ts"])]);
     const { fetchImpl } = stubFetch(ANSWERED_STUB);
     const service = createAskService(db, dataDir, { env: ENV, fetchImpl });
     const outcome = await service.answer(SESSION_ID, {
       question: "Which file did the write tool touch?",
       filePath: null,
       symbols: [],
-      cardId: "card-1",
+      cardId: "h_aaaaaaaaaaaaaaaa",
     });
     expect(outcome.status).toBe(200);
     const body = outcome.body as { status: string; searchedScope: { filePath: string | null } };
@@ -345,25 +345,25 @@ describe("createAskService", () => {
     const messages = await threadMessages(service);
     expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
     expect(messages[0]).toMatchObject({
-      cardId: "card-1",
+      cardId: "h_aaaaaaaaaaaaaaaa",
       text: "Which file did the write tool touch?",
       response: null,
     });
-    expect(messages[1]).toMatchObject({ role: "assistant", cardId: "card-1" });
+    expect(messages[1]).toMatchObject({ role: "assistant", cardId: "h_aaaaaaaaaaaaaaaa" });
     expect(messages[1]?.response).toMatchObject({ status: "answered" });
     db.close();
   });
 
   it("uses symbol terms for multi-file cards and lets explicit filePath win", async () => {
     const { db, dataDir } = seedDb();
-    writeStory(db, dataDir, [makeCard("card-2", ["src/app.ts", "src/other.ts"])]);
+    writeStory(db, dataDir, [makeCard("h_bbbbbbbbbbbbbbbb", ["src/app.ts", "src/other.ts"])]);
     const { fetchImpl } = stubFetch(ANSWERED_STUB);
     const service = createAskService(db, dataDir, { env: ENV, fetchImpl });
     const scoped = await service.answer(SESSION_ID, {
       question: "Which file did the write tool touch?",
       filePath: null,
       symbols: [],
-      cardId: "card-2",
+      cardId: "h_bbbbbbbbbbbbbbbb",
     });
     expect(scoped.status).toBe(200);
     const scopedBody = scoped.body as {
@@ -376,7 +376,7 @@ describe("createAskService", () => {
       question: "What did the write tool do to the app?",
       filePath: "src/other.ts",
       symbols: [],
-      cardId: "card-2",
+      cardId: "h_bbbbbbbbbbbbbbbb",
     });
     expect(explicit.status).toBe(200);
     expect(
@@ -392,7 +392,7 @@ describe("createAskService", () => {
       question: "Why this change?",
       filePath: null,
       symbols: [],
-      cardId: "card-1",
+      cardId: "h_aaaaaaaaaaaaaaaa",
     });
     expect(outcome.status).toBe(400);
     expect(outcome.body).toMatchObject({
@@ -404,7 +404,7 @@ describe("createAskService", () => {
 
   it("rejects unknown card ids against a present story", async () => {
     const { db, dataDir } = seedDb();
-    writeStory(db, dataDir, [makeCard("card-1", ["src/app.ts"])]);
+    writeStory(db, dataDir, [makeCard("h_aaaaaaaaaaaaaaaa", ["src/app.ts"])]);
     const { fetchImpl } = stubFetch(ANSWERED_STUB);
     const service = createAskService(db, dataDir, { env: ENV, fetchImpl });
     const outcome = await service.answer(SESSION_ID, {

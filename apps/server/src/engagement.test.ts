@@ -36,13 +36,13 @@ const eventsBody = {
     },
     {
       id: "evt_seen_a",
-      cardId: "card-a",
+      cardId: "h_cccccccccccccccc",
       kind: "card_seen",
       occurredAt: "2026-10-28T10:01:00.000Z",
     },
     {
       id: "evt_expanded_b",
-      cardId: "card-b",
+      cardId: "h_dddddddddddddddd",
       kind: "card_expanded",
       occurredAt: "2026-10-28T10:02:00.000Z",
     },
@@ -58,13 +58,17 @@ describe("engagement service", () => {
       expect(recorded.status).toBe(200);
       expect(recorded.body).toEqual({ sessionId, inserted: 3 });
 
-      const outcome = service.state(sessionId, ["card-a", "card-b", "card-c"]);
+      const outcome = service.state(sessionId, [
+        "h_cccccccccccccccc",
+        "h_dddddddddddddddd",
+        "h_eeeeeeeeeeeeeeee",
+      ]);
       expect(outcome.status).toBe(200);
       const parsed = EngagementStateSchema.parse(outcome.body);
       expect(parsed.tiers).toEqual({
-        "card-a": "seen",
-        "card-b": "engaged",
-        "card-c": "unseen",
+        h_cccccccccccccccc: "seen",
+        h_dddddddddddddddd: "engaged",
+        h_eeeeeeeeeeeeeeee: "unseen",
       });
     } finally {
       db.close();
@@ -127,10 +131,10 @@ describe("engagement service", () => {
     try {
       const service = createEngagementService(db);
       service.record(sessionId, eventsBody);
-      const outcome = service.state(sessionId, ["card-a", "card-never"]);
+      const outcome = service.state(sessionId, ["h_cccccccccccccccc", "h_ffffffffffffffff"]);
       expect(outcome.status).toBe(200);
       const parsed = EngagementStateSchema.parse(outcome.body);
-      expect(parsed.tiers["card-never"]).toBe("unseen");
+      expect(parsed.tiers["h_ffffffffffffffff"]).toBe("unseen");
     } finally {
       db.close();
     }
@@ -144,7 +148,7 @@ describe("engagement service", () => {
       const outcome = service.state(sessionId);
       expect(outcome.status).toBe(200);
       const parsed = EngagementStateSchema.parse(outcome.body);
-      expect(parsed.tiers).toEqual({ "card-a": "seen", "card-b": "engaged" });
+      expect(parsed.tiers).toEqual({ h_cccccccccccccccc: "seen", h_dddddddddddddddd: "engaged" });
     } finally {
       db.close();
     }

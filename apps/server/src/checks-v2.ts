@@ -38,7 +38,7 @@ import {
 } from "@echo/model";
 import { redactJson } from "@echo/redaction";
 import { buildSessionReview } from "./review-index";
-import { computeWatermark } from "./story-facts";
+import { computeWatermark } from "./story";
 
 /** Prompt version recorded on model-generated check sets. */
 export const CHECK_PROMPT_VERSION = "check-v1";
