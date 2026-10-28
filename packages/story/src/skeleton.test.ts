@@ -1,12 +1,7 @@
 import { SessionStorySchema } from "@echo/contracts";
-import { type FixtureStorySession, buildAllStorySessions } from "@echo/fixtures";
+import { buildAllStorySessions, type FixtureStorySession } from "@echo/fixtures";
 import { describe, expect, it } from "vitest";
-import {
-  type FactSet,
-  buildSkeletonStory,
-  extractFacts,
-  isStoryStale,
-} from "./index";
+import { buildSkeletonStory, extractFacts, type FactSet, isStoryStale } from "./index";
 
 const META = { generatedAt: "2026-10-28T12:00:00.000Z", tapeSha256: "test-sha" };
 
@@ -43,7 +38,11 @@ describe("buildSkeletonStory", () => {
     const { session, facts } = skeletonFor("payment-retry");
     const { story } = buildSkeletonStory(facts, META);
     expect(story.skeleton).toBe(true);
-    expect(story.generator).toEqual({ kind: "skeleton", model: null, promptVersion: "skeleton-v1" });
+    expect(story.generator).toEqual({
+      kind: "skeleton",
+      model: null,
+      promptVersion: "skeleton-v1",
+    });
     expect(story.tapeWatermark).toEqual({ eventCount: session.tape.length, sha256: "test-sha" });
     expect(story.shortVersion).toHaveLength(1);
     expect(story.askVsResult.asked).toHaveLength(1);
@@ -135,8 +134,12 @@ describe("isStoryStale", () => {
   it("spots count and hash drift past the watermark", () => {
     const { facts } = skeletonFor("payment-retry");
     const { story } = buildSkeletonStory(facts, META);
-    expect(isStoryStale(story, { eventCount: facts.tapeEventCount, sha256: "test-sha" })).toBe(false);
-    expect(isStoryStale(story, { eventCount: facts.tapeEventCount + 1, sha256: "test-sha" })).toBe(true);
+    expect(isStoryStale(story, { eventCount: facts.tapeEventCount, sha256: "test-sha" })).toBe(
+      false,
+    );
+    expect(isStoryStale(story, { eventCount: facts.tapeEventCount + 1, sha256: "test-sha" })).toBe(
+      true,
+    );
     expect(isStoryStale(story, { eventCount: facts.tapeEventCount, sha256: "other" })).toBe(true);
   });
 });
