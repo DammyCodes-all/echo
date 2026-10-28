@@ -524,9 +524,7 @@ const StoredCheckQuestionBaseSchema = z.object({
 
 export const StoredCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend({
   format: z.literal("mcq"),
-  options: z
-    .array(z.object({ id: z.string().min(1), text: z.string().min(1) }))
-    .min(2),
+  options: z.array(z.object({ id: z.string().min(1), text: z.string().min(1) })).min(2),
   correctOptionId: z.string().min(1),
   distractorSources: z.array(z.string()),
 });
@@ -536,9 +534,7 @@ export const StoredCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.e
   format: z.literal("free_text"),
   rubric: z.array(z.string().min(1)).min(1),
 });
-export type StoredCheckFreeTextQuestion = z.infer<
-  typeof StoredCheckFreeTextQuestionSchema
->;
+export type StoredCheckFreeTextQuestion = z.infer<typeof StoredCheckFreeTextQuestionSchema>;
 
 export const StoredCheckQuestionSchema = z.discriminatedUnion("format", [
   StoredCheckMcqQuestionSchema,
@@ -548,18 +544,14 @@ export type StoredCheckQuestion = z.infer<typeof StoredCheckQuestionSchema>;
 
 export const PublicCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend({
   format: z.literal("mcq"),
-  options: z
-    .array(z.object({ id: z.string().min(1), text: z.string().min(1) }))
-    .min(2),
+  options: z.array(z.object({ id: z.string().min(1), text: z.string().min(1) })).min(2),
 });
 export type PublicCheckMcqQuestion = z.infer<typeof PublicCheckMcqQuestionSchema>;
 
 export const PublicCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.extend({
   format: z.literal("free_text"),
 });
-export type PublicCheckFreeTextQuestion = z.infer<
-  typeof PublicCheckFreeTextQuestionSchema
->;
+export type PublicCheckFreeTextQuestion = z.infer<typeof PublicCheckFreeTextQuestionSchema>;
 
 export const PublicCheckQuestionSchema = z.discriminatedUnion("format", [
   PublicCheckMcqQuestionSchema,
@@ -588,12 +580,7 @@ export const CardPictureSchema = z.object({
 });
 export type CardPicture = z.infer<typeof CardPictureSchema>;
 
-export const ChecksV2StatusSchema = z.enum([
-  "offered",
-  "in_progress",
-  "completed",
-  "skipped",
-]);
+export const ChecksV2StatusSchema = z.enum(["offered", "in_progress", "completed", "skipped"]);
 export type ChecksV2Status = z.infer<typeof ChecksV2StatusSchema>;
 
 export const ChecksV2StateSchema = z.object({

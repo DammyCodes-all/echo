@@ -9,8 +9,6 @@ import {
   StoredCheckQuestionSchema,
 } from "./index";
 
-const claim = { text: "The retry wrapper landed.", label: "observed", factIds: ["F1"] };
-
 function minimalCard(overrides: Record<string, unknown> = {}) {
   return {
     id: "h_0123456789abcdef",
@@ -91,9 +89,7 @@ describe("story-first contracts", () => {
   });
 
   it("rejects an invalid verification badge", () => {
-    const result = ChangeCardSchema.safeParse(
-      minimalCard({ verification: "verified" }),
-    );
+    const result = ChangeCardSchema.safeParse(minimalCard({ verification: "verified" }));
     expect(result.success).toBe(false);
   });
 
@@ -199,16 +195,12 @@ describe("story-first contracts", () => {
       kind: "story_opened",
       occurredAt: "2026-10-28T10:00:00.000Z",
     };
-    expect(RecordEngagementRequestSchema.safeParse({ events: [] }).success).toBe(
-      false,
-    );
+    expect(RecordEngagementRequestSchema.safeParse({ events: [] }).success).toBe(false);
     expect(
       RecordEngagementRequestSchema.safeParse({
         events: Array.from({ length: 101 }, (_, i) => ({ ...one, id: `e${i}` })),
       }).success,
     ).toBe(false);
-    expect(
-      RecordEngagementRequestSchema.safeParse({ events: [one] }).success,
-    ).toBe(true);
+    expect(RecordEngagementRequestSchema.safeParse({ events: [one] }).success).toBe(true);
   });
 });
