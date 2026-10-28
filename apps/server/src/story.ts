@@ -314,7 +314,34 @@ function enrichStory(facts: FactSet, story: SessionStory): SessionStory {
     }
   }
 
-  return { ...story, detours, looseEnds };
+  // Per-hunk import gap, kept card-specific: a hunk whose attempts never
+  // survived gets an uncertain note under "What checked it". This is the
+  // card-level home for the "no surviving attempt evidence" boost marker now
+  // that boost strings stay out of riskReasons. Runs before validation so
+  // the claim is checked like any other (the path must be in the cited
+  // facts); at most one note per path per card.
+  const gapHunksById = new Map(hunks.map((hunk) => [hunk.hunkId, hunk]));
+  const notedCards = story.cards.map((card) => {
+    const byPath = new Map<string, HunkFact[]>();
+    for (const id of card.constituentHunkIds) {
+      const hunk = gapHunksById.get(id);
+      if (!hunk) continue;
+      const marker = `no surviving attempt evidence for ${hunk.path}`;
+      if (!hunk.risk.boostReasons.includes(marker)) continue;
+      byPath.set(hunk.path, [...(byPath.get(hunk.path) ?? []), hunk]);
+    }
+    if (byPath.size === 0) return card;
+    const notes: StoryClaim[] = [];
+    for (const [path, group] of byPath) {
+      const text = `No surviving attempt evidence for ${path}`;
+      if (card.checkedBy.some((claim) => claim.text === text)) continue;
+      notes.push({ text, label: "uncertain", factIds: group.map((hunk) => hunk.id) });
+    }
+    if (notes.length === 0) return card;
+    return { ...card, checkedBy: [...card.checkedBy, ...notes] };
+  });
+
+  return { ...story, cards: notedCards, detours, looseEnds };
 }
 
 /**
