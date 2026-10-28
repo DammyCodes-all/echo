@@ -8,6 +8,9 @@ export function openEchoDb(path: string): EchoDb {
   db.exec("PRAGMA journal_mode = WAL");
   db.exec("PRAGMA synchronous = NORMAL");
   db.exec("PRAGMA foreign_keys = ON");
+  // Writers contend: daemon polls and CLI maintenance (e.g. import) share
+  // this file. Wait briefly instead of failing fast with SQLITE_BUSY.
+  db.exec("PRAGMA busy_timeout = 5000");
   migrate(db);
   return db;
 }

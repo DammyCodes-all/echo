@@ -191,6 +191,7 @@ describe("tailChunk", () => {
     });
     expect(one.events).toHaveLength(1);
     expect(one.truncatedTail).toBe(true);
+    expect(one.diagnostics).toContain("truncated_tail");
     expect(one.consumedBytes).toBe(Buffer.byteLength(fullLine, "utf8"));
     // The next poll re-reads from the persisted offset, so it sees the
     // completed line once the writer finishes it.
