@@ -299,6 +299,68 @@ export function pruneReaderCheckpoints(db: EchoDb, sessionId: string, keepLanes:
   return Number(result.changes);
 }
 
+export interface SessionBuildPin {
+  sessionId: string;
+  museVersion: string | null;
+  adapterVersion: string | null;
+  exportSchemaVersion: number | null;
+  observedAt: string;
+}
+
+export function upsertSessionBuildPin(db: EchoDb, pin: SessionBuildPin): void {
+  db.prepare(
+    `INSERT INTO session_build_pins
+      (session_id, muse_version, adapter_version, export_schema_version, observed_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+      muse_version = excluded.muse_version,
+      adapter_version = excluded.adapter_version,
+      export_schema_version = excluded.export_schema_version,
+      observed_at = excluded.observed_at`,
+  ).run(
+    pin.sessionId,
+    pin.museVersion,
+    pin.adapterVersion,
+    pin.exportSchemaVersion,
+    pin.observedAt,
+  );
+}
+
+export function getSessionBuildPin(db: EchoDb, sessionId: string): SessionBuildPin | null {
+  const row = db.prepare("SELECT * FROM session_build_pins WHERE session_id = ?").get(sessionId) as
+    | Record<string, unknown>
+    | undefined;
+  if (!row) return null;
+  return {
+    sessionId: String(row.session_id),
+    museVersion: row.muse_version === null ? null : String(row.muse_version),
+    adapterVersion: row.adapter_version === null ? null : String(row.adapter_version),
+    exportSchemaVersion:
+      row.export_schema_version === null ? null : Number(row.export_schema_version),
+    observedAt: String(row.observed_at),
+  };
+}
+
+export interface BuildVersionSummary {
+  museVersion: string | null;
+  sessions: number;
+  lastObserved: string;
+}
+
+export function listBuildVersions(db: EchoDb, limit = 5): BuildVersionSummary[] {
+  const rows = db
+    .prepare(
+      `SELECT muse_version, COUNT(*) AS sessions, MAX(observed_at) AS last_observed
+       FROM session_build_pins GROUP BY muse_version ORDER BY last_observed DESC LIMIT ?`,
+    )
+    .all(limit) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    museVersion: row.muse_version === null ? null : String(row.muse_version),
+    sessions: Number(row.sessions),
+    lastObserved: String(row.last_observed),
+  }));
+}
+
 export function insertStampedEvents(db: EchoDb, sessionId: string, events: TapeEvent[]): number {
   const insert = db.prepare(
     `INSERT OR IGNORE INTO events (id, session_id, tape_seq, source_sequence, record_key, kind, ts, observed_at, tool_call_id, payload_json, redaction_json, created_at)

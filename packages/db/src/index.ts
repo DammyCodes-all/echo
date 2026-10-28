@@ -2,6 +2,7 @@ export { type EchoDb, openEchoDb, withTransaction } from "./database";
 export { MIGRATIONS, type Migration } from "./migrations";
 export {
   appendEvents,
+  type BuildVersionSummary,
   getReaderCheckpoint,
   getSession,
   getSessionBuildPin,
@@ -26,7 +27,6 @@ export {
   type ReaderCheckpoint,
   readAllEvents,
   readEvents,
-  type BuildVersionSummary,
   type SessionBuildPin,
   type SessionRow,
   type SessionSummary,

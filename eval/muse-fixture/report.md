@@ -1,6 +1,6 @@
 # Capture integrity (fixture)
 
-Sample: 1 synthetic session, 34 tape events, 7 snapshots, 9 snapshot files.
+Sample: 1 synthetic session, 31 tape events, 4 snapshots, 9 snapshot files.
 
 Coverage: 12/14 pass; missed states: rapid edit/revert, torn tail.
 
@@ -12,4 +12,4 @@ Caveats: synthetic fixture, single session, no real Muse build; intermediates as
 
 Not measured here (need real tapes, stay manual): citation support, refusal rate, check pass rate, time to first check, hunk selection, attempt tree.
 
-Echo commit: 48a0b33962781d80d14e128df3adf60a92b5543c
+Echo commit: 675e9db6fdb0bfecfa7ac71746384e9968e50e9a

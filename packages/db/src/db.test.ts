@@ -7,12 +7,14 @@ import {
   appendEvents,
   getReaderCheckpoint,
   getSession,
+  getSessionBuildPin,
   getSessionEventIds,
   getSessionSummary,
   getSnapshotByCommit,
   hasEventKind,
   insertSnapshot,
   latestSnapshot,
+  listBuildVersions,
   listProjects,
   listReaderCheckpoints,
   listSessions,
@@ -24,6 +26,7 @@ import {
   upsertProject,
   upsertReaderCheckpoint,
   upsertSession,
+  upsertSessionBuildPin,
 } from "./index";
 
 function makeEvent(seq: number, overrides: Partial<TapeEvent> = {}): TapeEvent {
