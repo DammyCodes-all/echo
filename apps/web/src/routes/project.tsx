@@ -1,11 +1,8 @@
 import type { SessionSummary } from "@echo/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { useEffect } from "react";
 import { Link, useParams } from "react-router";
 import { api, formatTime } from "../api";
 import { ScaffoldPage } from "../components/scaffold-page";
-
-const LAST_PROJECT_KEY = "echo:lastProject";
 
 function checkBadgeClass(checkStatus: SessionSummary["checkStatus"]): string {
   const base =
@@ -38,16 +35,6 @@ export function ProjectPage() {
     queryKey: ["projects"],
     queryFn: api.projects,
   });
-
-  useEffect(() => {
-    if (sessions.isSuccess) {
-      try {
-        localStorage.setItem(LAST_PROJECT_KEY, projectId);
-      } catch {
-        // Private-mode storage failure must not break the inbox.
-      }
-    }
-  }, [sessions.isSuccess, projectId]);
 
   const projectName = projects.data?.find((project) => project.id === projectId)?.name;
 
