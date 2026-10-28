@@ -7,6 +7,13 @@ another entry — regressions get a new entry.
 Entry fields: item, status (`done` | `partial` | `blocked`), evidence,
 notes.
 
+## 2026-10-28 — Spec items 1–2: canonical projects + session understanding
+
+- item: item 1 (canonical repo root + normalized remote identity, remote-aware project rows, workspace UI shows remote) and item 2 (Muse/OpenCode baseline + post-action + final shadow snapshots, deterministic hunk/attempt/evidence review index, `/api/sessions/:id/review`, replay inspector backed by positional line origins)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 136 files clean, `pnpm test` → 27 files / 179 passed, `pnpm build` ok; live-server probe (temp data dir, alt port) listed real projects with normalized `remoteUrl` and joined sessions; review covered by integration tests over real shadow repos (Git diffs, not fixtures)
+- notes: Review pass fixed: allowlist scoping (enabled `/repo/docs` no longer captures `/repo/sibling`), removed a dead extra baseline→final diff, changed paths now union all consecutive snapshots (fully reverted files count as attempts), reverted attempts link only to overlapping hunks (file-deletion case links deletion hunks as likely), per-path diff failures degrade to diagnostics instead of 500s, Muse baseline/tool.post/final snapshots with partial-quality on late/failed capture, one tool.post snapshot per session per poll, Windows drive-letter and file:// remote normalization, temp-path test hygiene. Tool→snapshot linkage stays path-level (no turn/batch ids persisted); review caps at 100k events silently. UI verified through build + served endpoints only — no browser interaction available here; items 3–4 untouched.
+
 ## 2026-10-28 — Sandbox execution ladder (docker, bwrap, WASM)
 
 - item: Phase 0 sandbox backends + Phase 5 sandbox runner
@@ -132,6 +139,13 @@ notes.
 - status: done
 - evidence: `pnpm typecheck` clean, `pnpm lint` 130 files clean, `pnpm test` → 24 files / 146 passed, `pnpm build` ok; `packages/capture-muse` → 29 passed. Live e2e over 11 parent sessions: invalid 45 → 0, big-session markers 0 → 224 with headerFrames 225 → 1, unexplained gaps 101 → 0, `capture.compaction` 0 → 1172, `session.ended` 0 → 6.
 - notes: Marker check now precedes the header check (live markers carry `position`, not `sequence`); `recorded_at`-less fork/side lines parse with null timestamp, mapper falls back to `observed_at` + `missing_source_timestamp`; `session.end/resumed/fork/side` map to `session.ended/started/subagent.started/notification` instead of `agent.unknown`. One `sequence_jump` (e.g. 119→122) survives per trimmed session and is reported, not hidden.
+
+## 2026-10-27 — Diff panel crash on uncaptured files
+
+- item: `apps/web` diff-panel comparable guard + error ordering
+- status: partial
+- evidence: `@echo/web` build ok; crash-shape repro (added/deleted metadata-only file) no longer reaches `parseDiffFromFile`; user dev servers untouched and healthy (5173 → 200, 4783 `/api/health` ok); stray spawned processes reaped.
+- notes: `comparable` was `captured !== false`, so undefined-side + uncaptured-side entries called `parseDiffFromFile(null, null)` and threw. Now requires one side `captured === true`, both-null returns null, and load errors render before the loading state. Full gate not re-run: `tsc` currently fails on an unrelated in-flight edit (`packages/snapshots/src/index.ts` imports non-exported `RepositoryIdentity`), untouched by this fix.
 
 ## 2026-10-28 — Merge origin/main (fourth divergence)
 
