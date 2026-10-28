@@ -8,6 +8,12 @@ import type { ParsedMuseEvent, ParsedMuseMarker } from "./reader";
 export const ADAPTER_VERSION = "0.1.0";
 export const ADAPTER_SCHEMA = "session-jsonl/frame1";
 
+// Single-choke-point bound for Muse-derived payloads: the live tailer, the
+// import path and the export recovery all funnel through buildTapeEvent, so a
+// cap here covers every path uniformly. Oversized payloads are replaced with
+// a content-free marker (byte size + sha256, no raw bytes) and tagged.
+export const MAX_PAYLOAD_BYTES = 256 * 1024;
+
 export interface MuseMapContext {
   sessionId: string;
   projectId: string;
@@ -221,6 +227,26 @@ function stripEncryptedFields(value: unknown): { cleaned: unknown; removed: bool
   return { cleaned: value, removed: false };
 }
 
+function boundPayload(payload: unknown): { value: unknown; truncated: boolean } {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(payload) ?? "null";
+  } catch {
+    return { value: { unserializable: true }, truncated: true };
+  }
+  if (Buffer.byteLength(serialized, "utf8") <= MAX_PAYLOAD_BYTES) {
+    return { value: payload, truncated: false };
+  }
+  return {
+    value: {
+      truncated: true,
+      bytes: Buffer.byteLength(serialized, "utf8"),
+      sha256: createHash("sha256").update(serialized).digest("hex"),
+    },
+    truncated: true,
+  };
+}
+
 export function buildTapeEvent(input: TapeEventInput): {
   event: TapeEvent;
   redactionFailed: boolean;
@@ -231,6 +257,9 @@ export function buildTapeEvent(input: TapeEventInput): {
   const stripped = stripEncryptedFields(payload);
   if (stripped.removed) diagnostics.push("encrypted_content_removed");
   payload = stripped.cleaned;
+  const bounded = boundPayload(payload);
+  payload = bounded.value;
+  if (bounded.truncated) diagnostics.push("truncation");
   let redactionFailed = false;
   try {
     const redacted = redactJson(payload);
@@ -291,6 +320,16 @@ export function mapMuseToTape(
   markers: ParsedMuseMarker[],
   invalidLines: number,
   ctx: MuseMapContext,
+  options?: {
+    // Incremental tailing resumes mid-log: a session.started already emitted
+    // by an earlier chunk must not repeat as session.started again.
+    sessionStartedEmitted?: boolean;
+    // Chunk marker indices continue the lane counter so keys stay stable
+    // across polls (parent lane matches a full read; child lanes are scoped
+    // per lane to avoid cross-lane index collisions).
+    markerIndexOffset?: number;
+    markerLane?: string;
+  },
 ): MuseMapResult {
   const observedIso = (ctx.observedAt ?? new Date()).toISOString();
   const events: TapeEvent[] = [];
@@ -311,7 +350,7 @@ export function mapMuseToTape(
     events.push(event);
   };
 
-  let sessionStartedEmitted = false;
+  let sessionStartedEmitted = options?.sessionStartedEmitted ?? false;
   for (const record of parsedEvents) {
     const innerKind = innerKindOf(record.payloadType, record.payload);
     let kind = canonicalKind(record.payloadType, innerKind);
@@ -362,7 +401,9 @@ export function mapMuseToTape(
       recordType: "marker",
       sequence: null,
       ts: null,
-      recordKey: recordKeyFor(`marker:${markers.indexOf(marker)}`),
+      recordKey: recordKeyFor(
+        `marker:${options?.markerLane ? `${options.markerLane}:` : ""}${(options?.markerIndexOffset ?? 0) + markers.indexOf(marker)}`,
+      ),
       diagnostics: [],
     });
   }
