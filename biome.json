@@ -7,7 +7,8 @@
       "!**/dist",
       "!**/node_modules",
       "!**/coverage",
-      "!**/pnpm-lock.yaml"
+      "!**/pnpm-lock.yaml",
+      "!eval/muse-fixture/result.json"
     ]
   },
   "formatter": {
