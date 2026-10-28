@@ -15,6 +15,7 @@ import {
   listSessions,
   listSnapshotFiles,
   openEchoDb,
+  readAllEvents,
   readEvents,
   upsertProject,
   upsertSession,
@@ -64,7 +65,12 @@ function openTestDb() {
 }
 
 function seed(db: ReturnType<typeof openTestDb>): void {
-  upsertProject(db, { id: "prj_1", root: "/repo", name: "repo" });
+  upsertProject(db, {
+    id: "prj_1",
+    root: "/repo",
+    remoteUrl: "github.com/example/echo",
+    name: "repo",
+  });
   upsertSession(db, {
     id: "ses_1",
     projectId: "prj_1",
@@ -89,7 +95,7 @@ describe("openEchoDb migrations", () => {
       version: number;
     }>;
     second.close();
-    expect(rows.map((row) => row.version)).toEqual([1, 2]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3]);
   });
 });
 
@@ -103,6 +109,10 @@ describe("repositories", () => {
 
     const page = readEvents(db, "ses_1", 0, 10);
     expect(page.map((row) => row.tape_seq)).toEqual([1, 2]);
+    expect(readAllEvents(db, "ses_1", true, 1).map((row) => row.event_id)).toEqual([
+      "evt_test_0",
+      "evt_test_1",
+    ]);
     expect(page[0]?.kind).toBe("tool.completed");
     expect(page[0]?.tool_call_id).toBe("prt_0");
     expect(hasEventKind(db, "ses_1", "tool.completed")).toBe(true);
@@ -118,11 +128,35 @@ describe("repositories", () => {
 
     const projects = listProjects(db);
     expect(projects).toHaveLength(1);
-    expect(projects[0]).toMatchObject({ id: "prj_1", root: "/repo", sessionCount: 1 });
+    expect(projects[0]).toMatchObject({
+      id: "prj_1",
+      root: "/repo",
+      remoteUrl: "github.com/example/echo",
+      sessionCount: 1,
+    });
 
     const sessions = listSessions(db, "prj_1");
     expect(sessions).toHaveLength(1);
     expect(sessions[0]).toMatchObject({ id: "ses_1", eventCount: 1, title: "spike" });
+    db.close();
+  });
+
+  it("keeps the same project when its folder moves with the same remote", () => {
+    const db = openTestDb();
+    seed(db);
+    upsertProject(db, {
+      id: "prj_1",
+      root: "/moved/echo",
+      remoteUrl: "github.com/example/echo",
+      name: "echo",
+    });
+
+    expect(listProjects(db)[0]).toMatchObject({
+      id: "prj_1",
+      root: "/moved/echo",
+      remoteUrl: "github.com/example/echo",
+      name: "echo",
+    });
     db.close();
   });
 
