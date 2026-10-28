@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
 import { useParams } from "react-router";
 import { api, summarizePayload } from "../api";
+import { AskPanel } from "../components/ask-panel";
 import { DiffPanel } from "../components/diff-panel";
 import { FileStatePanel } from "../components/file-state-panel";
 import { type HunkEntry, HunkPanel } from "../components/hunk-panel";
@@ -117,6 +118,7 @@ export function ReplayPage() {
             sessionId={sessionId}
             review={review.data ?? null}
           />
+          <AskPanel sessionId={sessionId} selectedPath={selectedPath} onCite={setScrubTs} />
         </div>
       </div>
       <FileStatePanel sessionId={sessionId} asOfTs={scrubTs} />
