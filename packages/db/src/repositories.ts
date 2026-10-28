@@ -1,4 +1,12 @@
-import type { TapeEvent } from "@echo/contracts";
+import type {
+  ArtifactKind,
+  CaptureState,
+  EngagementKind,
+  EngagementTier,
+  SessionCheckStatus,
+  TapeEvent,
+  TapeWatermark,
+} from "@echo/contracts";
 import { type EchoDb, withTransaction } from "./database";
 
 export interface ProjectSummary {
@@ -21,6 +29,10 @@ export interface SessionSummary {
   status: string;
   captureQuality: string;
   eventCount: number;
+  summary: string | null;
+  checkStatus: SessionCheckStatus;
+  highRiskCount: number;
+  captureState: CaptureState;
 }
 
 export interface StoredEvent {
@@ -430,7 +442,7 @@ export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
   const rows = db
     .prepare(
       `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
-              s.status, s.capture_quality,
+              s.status, s.capture_quality, s.check_status, s.story_summary, s.high_risk_count,
               (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count
        FROM sessions s WHERE s.project_id = ? ORDER BY s.updated_at DESC`,
     )
@@ -442,7 +454,7 @@ export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary
   const rows = db
     .prepare(
       `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
-              s.status, s.capture_quality,
+              s.status, s.capture_quality, s.check_status, s.story_summary, s.high_risk_count,
               (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count
        FROM sessions s WHERE s.id = ?`,
     )
@@ -451,7 +463,17 @@ export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary
   return row ? toSessionSummary(row) : null;
 }
 
+function deriveCaptureState(status: string, captureQuality: string): CaptureState {
+  if (status === "recording") return "recording";
+  if (captureQuality === "import_only") return "import_only";
+  if (captureQuality === "partial") return "partial";
+  if (captureQuality === "degraded") return "degraded";
+  return "ready";
+}
+
 function toSessionSummary(row: Record<string, unknown>): SessionSummary {
+  const status = String(row.status);
+  const captureQuality = String(row.capture_quality);
   return {
     id: String(row.id),
     projectId: String(row.project_id),
@@ -460,9 +482,166 @@ function toSessionSummary(row: Record<string, unknown>): SessionSummary {
     directory: row.directory === null ? null : String(row.directory),
     startedAt: row.started_at === null ? null : String(row.started_at),
     endedAt: row.ended_at === null ? null : String(row.ended_at),
-    status: String(row.status),
-    captureQuality: String(row.capture_quality),
+    status,
+    captureQuality,
     eventCount: Number(row.event_count),
+    summary: row.story_summary === null ? null : String(row.story_summary),
+    checkStatus: String(row.check_status) as SessionCheckStatus,
+    highRiskCount: Number(row.high_risk_count),
+    captureState: deriveCaptureState(status, captureQuality),
+  };
+}
+
+export function setSessionCheckStatus(
+  db: EchoDb,
+  sessionId: string,
+  status: SessionCheckStatus,
+): void {
+  db.prepare("UPDATE sessions SET check_status = ?, updated_at = ? WHERE id = ?").run(
+    status,
+    nowIso(),
+    sessionId,
+  );
+}
+
+export function setSessionStoryState(
+  db: EchoDb,
+  sessionId: string,
+  state: { summary: string | null; highRiskCount: number },
+): void {
+  db.prepare(
+    "UPDATE sessions SET story_summary = ?, high_risk_count = ?, updated_at = ? WHERE id = ?",
+  ).run(state.summary, state.highRiskCount, nowIso(), sessionId);
+}
+
+export interface EngagementEventInput {
+  id: string;
+  cardId: string | null;
+  kind: EngagementKind;
+  occurredAt: string;
+}
+
+export interface EngagementEventRow {
+  id: string;
+  sessionId: string;
+  cardId: string | null;
+  kind: EngagementKind;
+  occurredAt: string;
+}
+
+export function recordEngagementEvents(
+  db: EchoDb,
+  sessionId: string,
+  events: EngagementEventInput[],
+): number {
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO engagement_events
+       (id, session_id, card_id, kind, occurred_at, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+  );
+  const now = nowIso();
+  return withTransaction(db, () => {
+    let inserted = 0;
+    for (const event of events) {
+      const result = insert.run(event.id, sessionId, event.cardId, event.kind, event.occurredAt, now);
+      inserted += Number(result.changes);
+    }
+    return inserted;
+  });
+}
+
+export function listEngagementEvents(db: EchoDb, sessionId: string): EngagementEventRow[] {
+  const rows = db
+    .prepare(
+      `SELECT id, session_id, card_id, kind, occurred_at
+       FROM engagement_events WHERE session_id = ? ORDER BY occurred_at, rowid`,
+    )
+    .all(sessionId) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    id: String(row.id),
+    sessionId: String(row.session_id),
+    cardId: row.card_id === null ? null : String(row.card_id),
+    kind: String(row.kind) as EngagementKind,
+    occurredAt: String(row.occurred_at),
+  }));
+}
+
+const ENGAGED_KINDS: ReadonlySet<string> = new Set(["card_expanded", "code_shown", "ask_opened"]);
+
+export function deriveEngagementTiers(
+  db: EchoDb,
+  sessionId: string,
+  cardIds: string[],
+): Record<string, EngagementTier> {
+  const rows = db
+    .prepare("SELECT card_id, kind FROM engagement_events WHERE session_id = ?")
+    .all(sessionId) as Array<{ card_id: string | null; kind: string }>;
+  const seen = new Set<string>();
+  const engaged = new Set<string>();
+  for (const row of rows) {
+    if (row.card_id === null) continue;
+    if (ENGAGED_KINDS.has(row.kind)) engaged.add(row.card_id);
+    else if (row.kind === "card_seen") seen.add(row.card_id);
+  }
+  const tiers: Record<string, EngagementTier> = {};
+  for (const cardId of cardIds) {
+    if (engaged.has(cardId)) tiers[cardId] = "engaged";
+    else if (seen.has(cardId)) tiers[cardId] = "seen";
+    else tiers[cardId] = "unseen";
+  }
+  return tiers;
+}
+
+export interface ArtifactRefRow {
+  sessionId: string;
+  kind: ArtifactKind;
+  path: string;
+  tapeWatermark: TapeWatermark;
+  generator: string;
+  generatedAt: string;
+}
+
+export function upsertArtifactRef(db: EchoDb, ref: ArtifactRefRow): void {
+  db.prepare(
+    `INSERT INTO session_artifacts
+       (session_id, kind, path, tape_event_count, tape_sha256, generator, generated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, kind) DO UPDATE SET
+       path = excluded.path,
+       tape_event_count = excluded.tape_event_count,
+       tape_sha256 = excluded.tape_sha256,
+       generator = excluded.generator,
+       generated_at = excluded.generated_at`,
+  ).run(
+    ref.sessionId,
+    ref.kind,
+    ref.path,
+    ref.tapeWatermark.eventCount,
+    ref.tapeWatermark.sha256,
+    ref.generator,
+    ref.generatedAt,
+  );
+}
+
+export function getArtifactRef(
+  db: EchoDb,
+  sessionId: string,
+  kind: ArtifactKind,
+): ArtifactRefRow | null {
+  const row = db
+    .prepare("SELECT * FROM session_artifacts WHERE session_id = ? AND kind = ?")
+    .get(sessionId, kind) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    sessionId: String(row.session_id),
+    kind: String(row.kind) as ArtifactKind,
+    path: String(row.path),
+    tapeWatermark: {
+      eventCount: Number(row.tape_event_count),
+      sha256: String(row.tape_sha256),
+    },
+    generator: String(row.generator),
+    generatedAt: String(row.generated_at),
   };
 }
 

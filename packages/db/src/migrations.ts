@@ -122,4 +122,31 @@ CREATE TABLE session_build_pins (
 );
 `,
   },
+  {
+    version: 6,
+    sql: `
+ALTER TABLE sessions ADD COLUMN check_status TEXT NOT NULL DEFAULT 'not_checked';
+ALTER TABLE sessions ADD COLUMN story_summary TEXT;
+ALTER TABLE sessions ADD COLUMN high_risk_count INTEGER NOT NULL DEFAULT 0;
+CREATE TABLE engagement_events (
+  id TEXT PRIMARY KEY,
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  card_id TEXT,
+  kind TEXT NOT NULL,
+  occurred_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX idx_engagement_session_card ON engagement_events (session_id, card_id);
+CREATE TABLE session_artifacts (
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  kind TEXT NOT NULL,
+  path TEXT NOT NULL,
+  tape_event_count INTEGER NOT NULL,
+  tape_sha256 TEXT NOT NULL,
+  generator TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, kind)
+);
+`,
+  },
 ];

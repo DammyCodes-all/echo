@@ -5,6 +5,8 @@ import type { TapeEvent } from "@echo/contracts";
 import { describe, expect, it } from "vitest";
 import {
   appendEvents,
+  deriveEngagementTiers,
+  getArtifactRef,
   getReaderCheckpoint,
   getSession,
   getSessionBuildPin,
@@ -15,6 +17,7 @@ import {
   insertSnapshot,
   latestSnapshot,
   listBuildVersions,
+  listEngagementEvents,
   listProjects,
   listReaderCheckpoints,
   listSessions,
@@ -23,6 +26,10 @@ import {
   pruneReaderCheckpoints,
   readAllEvents,
   readEvents,
+  recordEngagementEvents,
+  setSessionCheckStatus,
+  setSessionStoryState,
+  upsertArtifactRef,
   upsertProject,
   upsertReaderCheckpoint,
   upsertSession,
@@ -103,7 +110,7 @@ describe("openEchoDb migrations", () => {
       version: number;
     }>;
     second.close();
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it("waits on locked writers instead of failing fast", () => {
@@ -415,6 +422,109 @@ describe("repositories", () => {
       { museVersion: "Muse Code 1.4.13", sessions: 1, lastObserved: "2026-10-28T11:00:00.000Z" },
     ]);
     expect(getSessionBuildPin(db, "ses_missing")).toBeNull();
+    db.close();
+  });
+
+  it("defaults check status and capture state on new sessions", () => {
+    const db = openTestDb();
+    seed(db);
+    const summary = getSessionSummary(db, "ses_1");
+    expect(summary).toMatchObject({
+      checkStatus: "not_checked",
+      summary: null,
+      highRiskCount: 0,
+      captureState: "import_only",
+    });
+    expect(listSessions(db, "prj_1")[0]).toMatchObject({
+      checkStatus: "not_checked",
+      captureState: "import_only",
+    });
+    db.close();
+  });
+
+  it("round-trips check status", () => {
+    const db = openTestDb();
+    seed(db);
+    setSessionCheckStatus(db, "ses_1", "checked");
+    expect(getSessionSummary(db, "ses_1")?.checkStatus).toBe("checked");
+    setSessionCheckStatus(db, "ses_1", "skipped");
+    expect(getSessionSummary(db, "ses_1")?.checkStatus).toBe("skipped");
+    db.close();
+  });
+
+  it("round-trips story state", () => {
+    const db = openTestDb();
+    seed(db);
+    setSessionStoryState(db, "ses_1", { summary: "Root cause: race in import.", highRiskCount: 2 });
+    expect(getSessionSummary(db, "ses_1")).toMatchObject({
+      summary: "Root cause: race in import.",
+      highRiskCount: 2,
+    });
+    setSessionStoryState(db, "ses_1", { summary: null, highRiskCount: 0 });
+    expect(getSessionSummary(db, "ses_1")).toMatchObject({ summary: null, highRiskCount: 0 });
+    db.close();
+  });
+
+  it("dedupes engagement events by id and derives tiers with engaged precedence", () => {
+    const db = openTestDb();
+    seed(db);
+    const first = recordEngagementEvents(db, "ses_1", [
+      { id: "eng_1", cardId: "card_a", kind: "card_seen", occurredAt: "2026-10-28T10:00:00.000Z" },
+      { id: "eng_2", cardId: "card_a", kind: "code_shown", occurredAt: "2026-10-28T10:01:00.000Z" },
+      { id: "eng_3", cardId: "card_b", kind: "card_seen", occurredAt: "2026-10-28T10:02:00.000Z" },
+      { id: "eng_4", cardId: null, kind: "story_opened", occurredAt: "2026-10-28T10:03:00.000Z" },
+    ]);
+    expect(first).toBe(4);
+    const second = recordEngagementEvents(db, "ses_1", [
+      { id: "eng_1", cardId: "card_a", kind: "card_seen", occurredAt: "2026-10-28T10:00:00.000Z" },
+      { id: "eng_2", cardId: "card_a", kind: "code_shown", occurredAt: "2026-10-28T10:01:00.000Z" },
+    ]);
+    expect(second).toBe(0);
+
+    const events = listEngagementEvents(db, "ses_1");
+    expect(events.map((row) => row.id)).toEqual(["eng_1", "eng_2", "eng_3", "eng_4"]);
+    expect(events[0]).toMatchObject({ sessionId: "ses_1", cardId: "card_a", kind: "card_seen" });
+
+    expect(deriveEngagementTiers(db, "ses_1", ["card_a", "card_b", "card_c"])).toEqual({
+      card_a: "engaged",
+      card_b: "seen",
+      card_c: "unseen",
+    });
+    db.close();
+  });
+
+  it("upserts artifact refs and returns null for missing kinds", () => {
+    const db = openTestDb();
+    seed(db);
+    expect(getArtifactRef(db, "ses_1", "story")).toBeNull();
+    upsertArtifactRef(db, {
+      sessionId: "ses_1",
+      kind: "story",
+      path: "/data/story_v1.md",
+      tapeWatermark: { eventCount: 10, sha256: "aaa" },
+      generator: "storyteller-0.1",
+      generatedAt: "2026-10-28T10:00:00.000Z",
+    });
+    expect(getArtifactRef(db, "ses_1", "story")).toMatchObject({
+      sessionId: "ses_1",
+      kind: "story",
+      path: "/data/story_v1.md",
+      tapeWatermark: { eventCount: 10, sha256: "aaa" },
+    });
+    upsertArtifactRef(db, {
+      sessionId: "ses_1",
+      kind: "story",
+      path: "/data/story_v2.md",
+      tapeWatermark: { eventCount: 12, sha256: "bbb" },
+      generator: "storyteller-0.2",
+      generatedAt: "2026-10-28T11:00:00.000Z",
+    });
+    expect(getArtifactRef(db, "ses_1", "story")).toMatchObject({
+      path: "/data/story_v2.md",
+      tapeWatermark: { eventCount: 12, sha256: "bbb" },
+      generator: "storyteller-0.2",
+    });
+    expect(getArtifactRef(db, "ses_1", "checks_v2")).toBeNull();
     db.close();
   });
 });

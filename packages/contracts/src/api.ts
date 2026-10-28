@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { EvidenceLabelSchema } from "./evidence";
 
 export const ErrorCodeSchema = z.enum([
   "invalid_request",
@@ -35,6 +36,18 @@ export const ProjectSummarySchema = z.object({
 });
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
+export const SessionCheckStatusSchema = z.enum(["not_checked", "checked", "skipped"]);
+export type SessionCheckStatus = z.infer<typeof SessionCheckStatusSchema>;
+
+export const CaptureStateSchema = z.enum([
+  "recording",
+  "ready",
+  "partial",
+  "degraded",
+  "import_only",
+]);
+export type CaptureState = z.infer<typeof CaptureStateSchema>;
+
 export const SessionSummarySchema = z.object({
   id: z.string().min(1),
   projectId: z.string().min(1),
@@ -46,6 +59,10 @@ export const SessionSummarySchema = z.object({
   status: z.string().min(1),
   captureQuality: z.string().min(1),
   eventCount: z.number().int().nonnegative(),
+  summary: z.string().nullable(),
+  checkStatus: SessionCheckStatusSchema,
+  highRiskCount: z.number().int().nonnegative(),
+  captureState: CaptureStateSchema,
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -329,3 +346,308 @@ export const SessionReportSchema = z.object({
   gaps: z.array(z.string()),
 });
 export type SessionReport = z.infer<typeof SessionReportSchema>;
+
+// --- Story-first surface (ADR 0011) and calibration checks v2 (ADR 0012) ---
+
+export const VerificationBadgeSchema = z.enum([
+  "observed",
+  "partly_observed",
+  "agent_stated",
+  "nothing",
+]);
+export type VerificationBadge = z.infer<typeof VerificationBadgeSchema>;
+
+export const TapeWatermarkSchema = z.object({
+  eventCount: z.number().int().nonnegative(),
+  sha256: z.string().min(1),
+});
+export type TapeWatermark = z.infer<typeof TapeWatermarkSchema>;
+
+export const StoryClaimSchema = z.object({
+  text: z.string().min(1),
+  label: EvidenceLabelSchema,
+  factIds: z.array(z.string()),
+});
+export type StoryClaim = z.infer<typeof StoryClaimSchema>;
+
+export const PictureBucketSchema = z.enum([
+  "solid",
+  "right_but_unsure",
+  "confident_but_wrong",
+  "wrong_and_knew_it",
+  "never_looked",
+]);
+export type PictureBucket = z.infer<typeof PictureBucketSchema>;
+
+const ChangeCardMomentSchema = z.object({
+  eventId: z.string().min(1).nullable(),
+  toolCallId: z.string().min(1).nullable(),
+  ts: z.string().min(1).nullable(),
+  excerpt: z.string(),
+  label: EvidenceLabelSchema,
+});
+export type ChangeCardMoment = z.infer<typeof ChangeCardMomentSchema>;
+
+const ChangeCardHistorySchema = z.object({
+  priorSessionIds: z.array(z.string()),
+  previousPicture: PictureBucketSchema.nullable(),
+  note: z.string().nullable(),
+});
+export type ChangeCardHistory = z.infer<typeof ChangeCardHistorySchema>;
+
+export const ChangeCardSchema = z.object({
+  id: z.string().min(1),
+  headline: z.string().min(1),
+  constituentHunkIds: z.array(z.string()),
+  constituentActionIds: z.array(z.string()),
+  rank: z.number().int().min(1),
+  sessionOrder: z.number().int().nonnegative(),
+  highRisk: z.boolean(),
+  riskReasons: z.array(z.string()),
+  verification: VerificationBadgeSchema,
+  why: z.array(StoryClaimSchema),
+  before: z.array(StoryClaimSchema),
+  now: z.array(StoryClaimSchema),
+  checkedBy: z.array(StoryClaimSchema),
+  touches: z.array(z.string()),
+  moment: ChangeCardMomentSchema,
+  history: ChangeCardHistorySchema,
+});
+export type ChangeCard = z.infer<typeof ChangeCardSchema>;
+
+export const DetourCostReasonSchema = z.enum(["reverted", "side_effect", "repeated_attempt"]);
+export type DetourCostReason = z.infer<typeof DetourCostReasonSchema>;
+
+export const DetourSchema = z.object({
+  id: z.string().min(1),
+  headline: z.string().min(1),
+  claims: z.array(StoryClaimSchema),
+  attemptIds: z.array(z.string()),
+  costReason: DetourCostReasonSchema,
+});
+export type Detour = z.infer<typeof DetourSchema>;
+
+export const LooseEndKindSchema = z.enum(["assumption", "todo", "untested"]);
+export type LooseEndKind = z.infer<typeof LooseEndKindSchema>;
+
+export const LooseEndSchema = z.object({
+  id: z.string().min(1),
+  kind: LooseEndKindSchema,
+  claims: z.array(StoryClaimSchema),
+  cardId: z.string().min(1).nullable(),
+});
+export type LooseEnd = z.infer<typeof LooseEndSchema>;
+
+export const StoryGeneratorSchema = z.object({
+  kind: z.enum(["model", "skeleton"]),
+  model: z.string().nullable(),
+  promptVersion: z.string(),
+});
+export type StoryGenerator = z.infer<typeof StoryGeneratorSchema>;
+
+export const AskVsResultSchema = z.object({
+  asked: z.array(StoryClaimSchema),
+  delivered: z.array(StoryClaimSchema),
+  extras: z.array(StoryClaimSchema),
+  missing: z.array(StoryClaimSchema),
+});
+export type AskVsResult = z.infer<typeof AskVsResultSchema>;
+
+export const VerifiedCountsSchema = z.object({
+  observed: z.number().int().nonnegative(),
+  partlyObserved: z.number().int().nonnegative(),
+  agentStated: z.number().int().nonnegative(),
+  nothing: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+export type VerifiedCounts = z.infer<typeof VerifiedCountsSchema>;
+
+export const SessionStorySchema = z.object({
+  schemaVersion: z.literal(1),
+  sessionId: z.string().min(1),
+  generatedAt: z.string().min(1),
+  generator: StoryGeneratorSchema,
+  tapeWatermark: TapeWatermarkSchema,
+  summary: z.string().min(1),
+  skeleton: z.boolean(),
+  shortVersion: z.array(StoryClaimSchema),
+  askVsResult: AskVsResultSchema,
+  cards: z.array(ChangeCardSchema),
+  routineSummary: z.string().nullable(),
+  detours: z.array(DetourSchema),
+  looseEnds: z.array(LooseEndSchema),
+  blindSpots: z.array(z.string()),
+  gaps: z.array(z.string()),
+  verifiedCounts: VerifiedCountsSchema,
+});
+export type SessionStory = z.infer<typeof SessionStorySchema>;
+
+export const EngagementKindSchema = z.enum([
+  "story_opened",
+  "card_seen",
+  "card_expanded",
+  "code_shown",
+  "ask_opened",
+]);
+export type EngagementKind = z.infer<typeof EngagementKindSchema>;
+
+export const EngagementTierSchema = z.enum(["unseen", "seen", "engaged"]);
+export type EngagementTier = z.infer<typeof EngagementTierSchema>;
+
+export const EngagementEventSchema = z.object({
+  id: z.string().min(1),
+  cardId: z.string().min(1).nullable(),
+  kind: EngagementKindSchema,
+  occurredAt: z.string().min(1),
+});
+export type EngagementEvent = z.infer<typeof EngagementEventSchema>;
+
+export const RecordEngagementRequestSchema = z.object({
+  events: z.array(EngagementEventSchema).min(1).max(100),
+});
+export type RecordEngagementRequest = z.infer<typeof RecordEngagementRequestSchema>;
+
+export const EngagementStateSchema = z.object({
+  sessionId: z.string().min(1),
+  tiers: z.record(z.string(), EngagementTierSchema),
+});
+export type EngagementState = z.infer<typeof EngagementStateSchema>;
+
+const StoredCheckQuestionBaseSchema = z.object({
+  id: z.string().min(1),
+  cardId: z.string().min(1),
+  kind: CheckKindSchema,
+  question: z.string().min(1),
+  evidenceFactIds: z.array(z.string()),
+  evidencePaths: z.array(z.string()),
+});
+
+export const StoredCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend({
+  format: z.literal("mcq"),
+  options: z
+    .array(z.object({ id: z.string().min(1), text: z.string().min(1) }))
+    .min(2),
+  correctOptionId: z.string().min(1),
+  distractorSources: z.array(z.string()),
+});
+export type StoredCheckMcqQuestion = z.infer<typeof StoredCheckMcqQuestionSchema>;
+
+export const StoredCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.extend({
+  format: z.literal("free_text"),
+  rubric: z.array(z.string().min(1)).min(1),
+});
+export type StoredCheckFreeTextQuestion = z.infer<
+  typeof StoredCheckFreeTextQuestionSchema
+>;
+
+export const StoredCheckQuestionSchema = z.discriminatedUnion("format", [
+  StoredCheckMcqQuestionSchema,
+  StoredCheckFreeTextQuestionSchema,
+]);
+export type StoredCheckQuestion = z.infer<typeof StoredCheckQuestionSchema>;
+
+export const PublicCheckMcqQuestionSchema = StoredCheckQuestionBaseSchema.extend({
+  format: z.literal("mcq"),
+  options: z
+    .array(z.object({ id: z.string().min(1), text: z.string().min(1) }))
+    .min(2),
+});
+export type PublicCheckMcqQuestion = z.infer<typeof PublicCheckMcqQuestionSchema>;
+
+export const PublicCheckFreeTextQuestionSchema = StoredCheckQuestionBaseSchema.extend({
+  format: z.literal("free_text"),
+});
+export type PublicCheckFreeTextQuestion = z.infer<
+  typeof PublicCheckFreeTextQuestionSchema
+>;
+
+export const PublicCheckQuestionSchema = z.discriminatedUnion("format", [
+  PublicCheckMcqQuestionSchema,
+  PublicCheckFreeTextQuestionSchema,
+]);
+export type PublicCheckQuestion = z.infer<typeof PublicCheckQuestionSchema>;
+
+export const CheckAttemptV2Schema = z.object({
+  id: z.string().min(1),
+  questionId: z.string().min(1),
+  confidence: AnswerConfidenceSchema,
+  selectedOptionId: z.string().min(1).nullable(),
+  answerText: z.string().nullable(),
+  correct: z.boolean(),
+  bucket: PictureBucketSchema,
+  rubricHits: z.array(RubricHitSchema),
+  evidence: z.array(AskEvidenceSchema),
+  createdAt: z.string().min(1),
+});
+export type CheckAttemptV2 = z.infer<typeof CheckAttemptV2Schema>;
+
+export const CardPictureSchema = z.object({
+  cardId: z.string().min(1),
+  bucket: PictureBucketSchema,
+  questionId: z.string().min(1).nullable(),
+});
+export type CardPicture = z.infer<typeof CardPictureSchema>;
+
+export const ChecksV2StatusSchema = z.enum([
+  "offered",
+  "in_progress",
+  "completed",
+  "skipped",
+]);
+export type ChecksV2Status = z.infer<typeof ChecksV2StatusSchema>;
+
+export const ChecksV2StateSchema = z.object({
+  schemaVersion: z.literal(1),
+  sessionId: z.string().min(1),
+  status: ChecksV2StatusSchema,
+  generatedAt: z.string().min(1),
+  tapeWatermark: TapeWatermarkSchema,
+  questions: z.array(StoredCheckQuestionSchema),
+  attempts: z.array(CheckAttemptV2Schema),
+  picture: z.array(CardPictureSchema),
+  currentQuestionId: z.string().min(1).nullable(),
+});
+export type ChecksV2State = z.infer<typeof ChecksV2StateSchema>;
+
+export const ChecksV2ResponseSchema = z.object({
+  schemaVersion: z.literal(1),
+  sessionId: z.string().min(1),
+  status: ChecksV2StatusSchema,
+  generatedAt: z.string().min(1),
+  tapeWatermark: TapeWatermarkSchema,
+  questions: z.array(PublicCheckQuestionSchema),
+  attempts: z.array(CheckAttemptV2Schema),
+  picture: z.array(CardPictureSchema),
+  currentQuestionId: z.string().min(1).nullable(),
+});
+export type ChecksV2Response = z.infer<typeof ChecksV2ResponseSchema>;
+
+export const AskThreadMessageSchema = z.object({
+  id: z.string().min(1),
+  role: z.enum(["user", "assistant"]),
+  text: z.string().min(1),
+  cardId: z.string().min(1).nullable(),
+  response: AskResponseSchema.nullable(),
+  createdAt: z.string().min(1),
+});
+export type AskThreadMessage = z.infer<typeof AskThreadMessageSchema>;
+
+export const AskThreadSchema = z.object({
+  sessionId: z.string().min(1),
+  updatedAt: z.string().min(1),
+  messages: z.array(AskThreadMessageSchema),
+});
+export type AskThread = z.infer<typeof AskThreadSchema>;
+
+export const ArtifactKindSchema = z.enum(["story", "checks_v2", "ask_thread"]);
+export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
+
+export const ArtifactRefSchema = z.object({
+  sessionId: z.string().min(1),
+  kind: ArtifactKindSchema,
+  path: z.string().min(1),
+  tapeWatermark: TapeWatermarkSchema,
+  generator: z.string().min(1),
+  generatedAt: z.string().min(1),
+});
+export type ArtifactRef = z.infer<typeof ArtifactRefSchema>;
