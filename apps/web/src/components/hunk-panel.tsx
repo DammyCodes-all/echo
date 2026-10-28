@@ -1,4 +1,4 @@
-import type { StoredEvent } from "@echo/contracts";
+import type { HunkEvidence, SessionReview, StoredEvent } from "@echo/contracts";
 import { getOpenedHunks, markHunkOpened } from "../opened-hunks";
 
 export interface HunkEntry {
@@ -41,18 +41,46 @@ function eventLabel(event: StoredEvent): string {
   return `${name} #${event.position_seq}`;
 }
 
+function rangesOverlap(aStart: number, aLines: number, bStart: number, bLines: number): boolean {
+  const aEnd = aStart + Math.max(aLines, 1) - 1;
+  const bEnd = bStart + Math.max(bLines, 1) - 1;
+  return Math.max(aStart, bStart) <= Math.min(aEnd, bEnd);
+}
+
+function evidenceForHunk(hunk: HunkEntry, review?: SessionReview | null): HunkEvidence[] {
+  if (!review) return [];
+  const matches = review.hunks.filter(
+    (entry) =>
+      entry.path === hunk.path &&
+      rangesOverlap(entry.newStart, entry.newLines, hunk.additionStart, hunk.additionLines),
+  );
+  return matches.flatMap((entry) => review.evidenceByHunk[entry.id] ?? []);
+}
+
+function riskForHunk(hunk: HunkEntry, review?: SessionReview | null): string | null {
+  if (!review) return null;
+  const match = review.hunks.find(
+    (entry) =>
+      entry.path === hunk.path &&
+      rangesOverlap(entry.newStart, entry.newLines, hunk.additionStart, hunk.additionLines),
+  );
+  if (!match || match.riskReasons.length === 0) return null;
+  return `risk ${match.riskScore} · ${match.riskReasons.join(", ")}`;
+}
 export function HunkPanel({
   hunks,
   events,
   selectedPath,
   onSelect,
   sessionId,
+  review,
 }: {
   hunks: HunkEntry[];
   events: StoredEvent[];
   selectedPath: string | null;
   onSelect: (path: string | null) => void;
   sessionId?: string;
+  review?: SessionReview | null;
 }) {
   const opened = sessionId !== undefined ? new Set(getOpenedHunks(sessionId)) : new Set<string>();
   return (
@@ -70,7 +98,9 @@ export function HunkPanel({
       ) : (
         <ol className="max-h-96 divide-y divide-dusk-hairline overflow-auto">
           {hunks.map((hunk) => {
-            const candidates = candidateEvents(hunk.path, events);
+            const reviewed = evidenceForHunk(hunk, review);
+            const candidates = review ? [] : candidateEvents(hunk.path, events);
+            const risk = riskForHunk(hunk, review);
             const active = hunk.path === selectedPath;
             const hunkKey = `${hunk.path}:${hunk.hunkIndex}`;
             const wasOpened = opened.has(hunkKey);
@@ -98,7 +128,24 @@ export function HunkPanel({
                     @@ -{hunk.deletionStart},{hunk.deletionLines} +{hunk.additionStart},
                     {hunk.additionLines} @@ · +{hunk.additionLines} −{hunk.deletionLines}
                   </span>
-                  {candidates.length > 0 ? (
+                  {risk ? (
+                    <span className="mt-0.5 block font-mono text-[10px] text-dusk-muted">
+                      {risk}
+                    </span>
+                  ) : null}
+                  {reviewed.length > 0 ? (
+                    <span className="mt-1 flex flex-col gap-1">
+                      {reviewed.map((entry) => (
+                        <span
+                          key={`${entry.relation}-${entry.confidence}-${entry.snapshotId ?? "none"}-${entry.eventId ?? "none"}-${entry.toolCallId ?? "none"}-${entry.detail}`}
+                          title={`${entry.relation} · ${entry.confidence}`}
+                          className="block font-mono text-[10px] leading-4 text-dusk-muted"
+                        >
+                          {entry.relation} · {entry.confidence} · {entry.detail}
+                        </span>
+                      ))}
+                    </span>
+                  ) : candidates.length > 0 ? (
                     <span className="mt-1 flex flex-wrap gap-1">
                       {candidates.map((event) => (
                         <span
@@ -112,7 +159,9 @@ export function HunkPanel({
                     </span>
                   ) : (
                     <span className="mt-1 block font-mono text-[10px] text-dusk-muted">
-                      no tool event references this path
+                      {review
+                        ? "no linked evidence in this hunk range"
+                        : "no tool event references this path"}
                     </span>
                   )}
                 </button>

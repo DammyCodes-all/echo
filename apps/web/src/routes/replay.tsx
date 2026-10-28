@@ -27,6 +27,11 @@ export function ReplayPage() {
     queryFn: () => api.events(sessionId),
     refetchInterval: 4000,
   });
+  const review = useQuery({
+    queryKey: ["review", sessionId],
+    queryFn: () => api.review(sessionId),
+    refetchInterval: 8000,
+  });
   const [hunks, setHunks] = useState<HunkEntry[]>([]);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   // Scrub position: the event time the file-state panel shows. Null follows
@@ -110,10 +115,19 @@ export function ReplayPage() {
             selectedPath={selectedPath}
             onSelect={setSelectedPath}
             sessionId={sessionId}
+            review={review.data ?? null}
           />
         </div>
       </div>
       <FileStatePanel sessionId={sessionId} asOfTs={scrubTs} />
+      {review.isError ? (
+        <p className="mt-4 font-mono text-[11px] text-dusk-fail">Could not load review evidence.</p>
+      ) : null}
+      {review.data && review.data.diagnostics.length > 0 ? (
+        <p className="mt-4 font-mono text-[11px] text-dusk-muted">
+          Review evidence: {review.data.diagnostics.join(", ")}
+        </p>
+      ) : null}
       <DiffPanel
         sessionId={sessionId}
         selectedPath={selectedPath}

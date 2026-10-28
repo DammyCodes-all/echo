@@ -1,5 +1,6 @@
 import type {
   ProjectSummary,
+  SessionReview,
   SessionSummary,
   SnapshotFile,
   SnapshotFileContent,
@@ -25,6 +26,8 @@ export const api = {
   },
   snapshots: (sessionId: string) =>
     getJson<SnapshotSummary[]>(`/api/sessions/${encodeURIComponent(sessionId)}/snapshots`),
+  review: (sessionId: string) =>
+    getJson<SessionReview>(`/api/sessions/${encodeURIComponent(sessionId)}/review`),
   snapshotFiles: (sessionId: string, commit: string) =>
     getJson<SnapshotFile[]>(
       `/api/sessions/${encodeURIComponent(sessionId)}/snapshots/${encodeURIComponent(commit)}/files`,
