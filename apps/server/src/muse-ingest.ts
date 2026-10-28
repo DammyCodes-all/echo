@@ -404,6 +404,8 @@ export function createMuseIngest(options: MuseIngestOptions) {
   const sessionsDir = options.sessionsDir ?? resolveMuseSessionsDir();
   let timer: NodeJS.Timeout | null = null;
   let running = false;
+  let stopped = false;
+  let inflight: Promise<MuseIngestResult> | null = null;
   let lastUnattributed = 0;
   // Set once per boot when the muse binary is missing: export_unavailable is
   // environmental, not per-session, so retrying every poll only spams the log.
@@ -1165,12 +1167,15 @@ export function createMuseIngest(options: MuseIngestOptions) {
   }
 
   async function runOnce(): Promise<MuseIngestResult> {
-    if (running) return emptyResult();
+    if (running || stopped) return emptyResult();
     running = true;
+    const current = scan();
+    inflight = current;
     try {
-      return await scan();
+      return await current;
     } finally {
       running = false;
+      if (inflight === current) inflight = null;
     }
   }
 
@@ -1199,9 +1204,22 @@ export function createMuseIngest(options: MuseIngestOptions) {
     }, pollMs);
   }
 
-  function stop(): void {
+  async function stop(): Promise<void> {
     if (timer) clearInterval(timer);
     timer = null;
+    stopped = true;
+    // Drain the in-flight poll before the caller closes the db: scan touches
+    // it throughout (latestSnapshot, inserts, checkpoints), so closing
+    // underneath it logs "database is not open". Poll errors stay owned by
+    // the poll caller.
+    const current = inflight;
+    if (current) {
+      try {
+        await current;
+      } catch {
+        // Ignored here; the runOnce caller already observes the failure.
+      }
+    }
   }
 
   return { runOnce, start, stop, sessionsDir };
