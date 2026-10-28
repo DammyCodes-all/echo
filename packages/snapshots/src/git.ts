@@ -1,5 +1,7 @@
-import fs, { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import fs, { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
+import { type RepositoryIdentity, repositoryIdentityFor } from "@echo/core";
 import git from "isomorphic-git";
 
 export interface RepoHandle {
@@ -170,6 +172,39 @@ export function findRepositoryRoot(start: string): string | null {
   }
 }
 
+async function readOriginRemote(root: string): Promise<string | null> {
+  try {
+    const remote = await git.getConfig({ fs, dir: root, path: "remote.origin.url" });
+    return typeof remote === "string" ? remote : null;
+  } catch {
+    // No registered remote (or an unreadable config) is a normal fallback to
+    // root identity, not a capture failure.
+    return null;
+  }
+}
+
+/**
+ * Resolve the canonical Echo repository identity for any working directory.
+ * Git discovery runs before hashing, so a session started in a subdirectory
+ * joins the repository project; the registered remote keeps the same project
+ * when its folder moves.
+ */
+export async function resolveRepositoryIdentity(
+  startDir: string,
+  remoteOverride?: string | null,
+): Promise<RepositoryIdentity> {
+  const discovered = findRepositoryRoot(startDir);
+  const fallbackRoot = resolve(discovered ?? startDir);
+  let canonicalRoot: string;
+  try {
+    canonicalRoot = realpathSync(fallbackRoot);
+  } catch {
+    canonicalRoot = fallbackRoot;
+  }
+  const remoteUrl = remoteOverride ?? (discovered ? await readOriginRemote(discovered) : null);
+  return repositoryIdentityFor({ directory: startDir, canonicalRoot, remoteUrl });
+}
+
 export function resolveSourceGitDir(root: string): string {
   const dotGit = join(root, ".git");
   if (!existsSync(dotGit)) throw new Error(`not a git repository: ${root}`);
@@ -240,4 +275,60 @@ export async function readSourceBlob(root: string, oid: string): Promise<Uint8Ar
 export async function readShadowBlob(shadowDir: string, oid: string): Promise<Uint8Array> {
   const { blob } = await git.readBlob({ fs, dir: shadowDir, gitdir: shadowDir, oid });
   return blob;
+}
+
+const DIFF_ENV = {
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_SYSTEM: "/dev/null",
+  GIT_CEILING_DIRECTORIES: "/",
+  GIT_OPTIONAL_LOCKS: "0",
+  TZ: "UTC",
+  LANG: "C",
+  NODE_OPTIONS: "",
+};
+
+/**
+ * Unified diff between two shadow commits for one path. Git is the
+ * line-mapping authority; callers parse the returned diff rather than
+ * reimplementing diff alignment.
+ */
+export function diffShadowCommits(
+  shadowDir: string,
+  oldOid: string,
+  newOid: string,
+  path: string,
+  context = 3,
+): string {
+  if (!/^[0-9a-f]{40}$/.test(oldOid) || !/^[0-9a-f]{40}$/.test(newOid)) {
+    throw new Error("shadow diff needs two full commit oids");
+  }
+  if (path.length === 0 || path.length > 1024) throw new Error(`invalid snapshot path: ${path}`);
+  const result = spawnSync(
+    "git",
+    [
+      "--git-dir",
+      shadowDir,
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      `--unified=${context}`,
+      oldOid,
+      newOid,
+      "--",
+      path,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env, ...DIFF_ENV },
+    },
+  );
+  if (result.error) throw result.error;
+  // Git exits 1 when the two commits differ; only other statuses are errors.
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`shadow diff failed: ${String(result.stderr).slice(0, 500)}`);
+  }
+  return result.stdout ?? "";
 }

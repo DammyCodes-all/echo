@@ -1,4 +1,10 @@
-export { findRepositoryRoot, readShadowBlob } from "./git";
+export type { RepositoryIdentity } from "@echo/core";
+export {
+  diffShadowCommits,
+  findRepositoryRoot,
+  readShadowBlob,
+  resolveRepositoryIdentity,
+} from "./git";
 export { loadManifest, type ManifestEntry, type SnapshotManifest } from "./manifest";
 export {
   DEFAULT_SNAPSHOT_LIMITS,
