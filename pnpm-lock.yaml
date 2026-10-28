@@ -196,6 +196,9 @@ importers:
       '@echo/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@echo/db':
+        specifier: workspace:*
+        version: link:../../packages/db
       commander:
         specifier: ^15.0.0
         version: 15.0.0

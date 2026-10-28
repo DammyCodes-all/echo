@@ -15,6 +15,7 @@
     "@echo/capture-muse": "workspace:*",
     "@echo/config": "workspace:*",
     "@echo/contracts": "workspace:*",
+    "@echo/db": "workspace:*",
     "commander": "^15.0.0",
     "ignore": "^7.0.5",
     "isomorphic-git": "^1.32.0"

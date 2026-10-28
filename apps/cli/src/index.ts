@@ -2,9 +2,9 @@ import { resolve } from "node:path";
 import { importMuseSession } from "@echo/capture-muse";
 import { loadEchoConfig, resolveEchoPaths, saveEchoConfig } from "@echo/config";
 import { Command } from "commander";
+import { runDoctor } from "./doctor";
 import { runHookCommand } from "./hook";
 import { installMuseHooks, resolveEchoCliBin, resolveMuseSettingsPath } from "./hooks-install";
-import { runDoctor } from "./doctor";
 import { runRecordSession } from "./record";
 
 const program = new Command();
