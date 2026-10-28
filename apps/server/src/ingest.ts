@@ -76,6 +76,8 @@ function emptyResult(): IngestRunResult {
 export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOptions) {
   let timer: NodeJS.Timeout | null = null;
   let running = false;
+  let stopped = false;
+  let inflight: Promise<IngestRunResult> | null = null;
 
   async function scan(): Promise<IngestRunResult> {
     const result = emptyResult();
@@ -327,12 +329,15 @@ export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOpt
   }
 
   async function runOnce(): Promise<IngestRunResult> {
-    if (running) return emptyResult();
+    if (running || stopped) return emptyResult();
     running = true;
+    const current = scan();
+    inflight = current;
     try {
-      return await scan();
+      return await current;
     } finally {
       running = false;
+      if (inflight === current) inflight = null;
     }
   }
 
@@ -352,9 +357,21 @@ export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOpt
     }, interval);
   }
 
-  function stop(): void {
+  async function stop(): Promise<void> {
     if (timer) clearInterval(timer);
     timer = null;
+    stopped = true;
+    // Drain the in-flight poll before the caller closes the db: scan touches
+    // it throughout (latestSnapshot, inserts), so closing underneath it logs
+    // "database is not open". Poll errors stay owned by the poll caller.
+    const current = inflight;
+    if (current) {
+      try {
+        await current;
+      } catch {
+        // Ignored here; the runOnce caller already observes the failure.
+      }
+    }
   }
 
   return { runOnce, start, stop };

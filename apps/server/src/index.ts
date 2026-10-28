@@ -2,11 +2,9 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import {
-  AnswerCheckRequestSchema,
   AskRequestSchema,
   CheckMeRequestSchema,
   CheckV2AnswerRequestSchema,
-  GenerateChecksRequestSchema,
 } from "@echo/contracts";
 import {
   getSession,
@@ -21,7 +19,6 @@ import {
 } from "@echo/db";
 import Fastify from "fastify";
 import { createAskService } from "./ask";
-import { createChecksService } from "./checks";
 import { createChecksV2Service } from "./checks-v2";
 import { createEngagementService } from "./engagement";
 import { loadLocalEnv } from "./env";
@@ -79,7 +76,6 @@ const museIngest = createMuseIngest({
   onSessionQuiescent: storyHook,
 });
 const ask = createAskService(db, paths.dataDir, { log: app.log });
-const checks = createChecksService(db, paths.dataDir);
 const checksV2 = createChecksV2Service({ db, dataDir: paths.dataDir, log: app.log });
 const engagement = createEngagementService(db);
 const history = createHistoryService(db, paths.dataDir);
@@ -162,11 +158,6 @@ app.get<{ Params: { id: string } }>("/api/sessions/:id/ask/thread", async (reque
   return reply.code(outcome.status).send(outcome.body);
 });
 
-app.get<{ Params: { id: string } }>("/api/sessions/:id/checks", async (request, reply) => {
-  const outcome = await checks.sessionChecks(request.params.id);
-  return reply.code(outcome.status).send(outcome.body);
-});
-
 app.post<{ Params: { id: string } }>(
   "/api/sessions/:id/checks-v2/generate",
   async (request, reply) => {
@@ -213,31 +204,6 @@ app.post<{ Params: { id: string } }>("/api/sessions/:id/checks-v2/skip", async (
   return reply.code(outcome.status).send(outcome.body);
 });
 
-app.post<{ Params: { id: string } }>(
-  "/api/sessions/:id/checks/generate",
-  async (request, reply) => {
-    const parsed = GenerateChecksRequestSchema.safeParse(request.body ?? {});
-    if (!parsed.success) {
-      return reply.code(400).send({
-        error: { code: "invalid_request", message: "limit 1..5 with opened/waived hunk lists" },
-      });
-    }
-    const outcome = await checks.generate(request.params.id, parsed.data);
-    return reply.code(outcome.status).send(outcome.body);
-  },
-);
-
-app.post<{ Params: { id: string } }>("/api/checks/:id/answer", async (request, reply) => {
-  const parsed = AnswerCheckRequestSchema.safeParse(request.body);
-  if (!parsed.success) {
-    return reply.code(400).send({
-      error: { code: "invalid_request", message: "confidence plus a non-empty answer" },
-    });
-  }
-  const outcome = await checks.answer(request.params.id, parsed.data);
-  return reply.code(outcome.status).send(outcome.body);
-});
-
 app.post<{ Params: { id: string } }>("/api/sessions/:id/engagement", async (request, reply) => {
   const outcome = engagement.record(request.params.id, request.body);
   return reply.code(outcome.status).send(outcome.body);
@@ -256,11 +222,6 @@ app.get<{ Params: { id: string }; Querystring: { cardIds?: string } }>(
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/history", async (request, reply) => {
   const outcome = history.forSession(request.params.id);
-  return reply.code(outcome.status).send(outcome.body);
-});
-
-app.get<{ Params: { id: string } }>("/api/sessions/:id/report", async (request, reply) => {
-  const outcome = await checks.report(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
 });
 
@@ -326,8 +287,8 @@ app.get<{ Params: { id: string; commit: string }; Querystring: { path?: string }
 
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
-  ingest.stop();
-  museIngest.stop();
+  await ingest.stop();
+  await museIngest.stop();
   museWatcher?.stop();
   db.close();
   await app.close();
