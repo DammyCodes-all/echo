@@ -256,6 +256,9 @@ importers:
       '@echo/snapshots':
         specifier: workspace:*
         version: link:../../packages/snapshots
+      '@echo/story':
+        specifier: workspace:*
+        version: link:../../packages/story
       '@echo/tape':
         specifier: workspace:*
         version: link:../../packages/tape

@@ -36,7 +36,11 @@ const SYSTEM_PROMPT = [
   'Reply with JSON: {"refusal": boolean, "refusal_reason": "not_on_tape"|"insufficient_evidence"|"ambiguous_question"|"model_error"|null, "answer": string, "claims": [{"text": string, "evidence_ids": string[], "quote": string|null}], "uncertainty": "low"|"medium"|"high"}.',
 ].join("\n");
 
-function storedToTape(sessionId: string, projectId: string, stored: StoredEvent): TapeEvent | null {
+export function storedToTape(
+  sessionId: string,
+  projectId: string,
+  stored: StoredEvent,
+): TapeEvent | null {
   const kind = TapeEventKindSchema.safeParse(stored.kind);
   if (!kind.success) return null;
   const redaction =
