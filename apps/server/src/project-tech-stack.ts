@@ -187,15 +187,11 @@ export function buildSkeletonStack(input: {
     const last = module.split("/").pop() ?? module;
     push(last.startsWith("@") ? module : last, "framework");
   }
-  const signals = [
-    ...input.signals.frameworks.slice(0, 3),
-    ...input.signals.languages
-      .slice(0, 3)
-      .map(({ language }) => LANGUAGE_DISPLAY[language] ?? language),
-  ].filter((name, index, all) => all.indexOf(name) === index);
+  // Skeleton stays honest and plain: just the codebase name. The tech
+  // names live in items, and the model writes the real outcome line.
   return {
     projectId: input.project.id,
-    purpose: signals.length > 0 ? `${base} codebase (${signals.join(", ")})` : `${base} codebase`,
+    purpose: `${base} codebase`,
     items,
     generator: "skeleton",
     generatedAt: input.generatedAt,
@@ -267,7 +263,10 @@ export function createProjectTechStackService(
           'Return ONLY JSON: {"purpose": string, "items": [{"name": string, "kind": "language"|"framework"|"build"|"data"|"infra"}]}.',
           "Rules: at most 8 items, most significant first; merge duplicates (react + react-dom = React);",
           "drop one-off mentions and transitive-only noise; every name MUST come from the SIGNALS below, never invent;",
-          "purpose is one line (<=140 chars) saying what this repo IS, never mention Echo.",
+          "purpose is one plain-words line (<=140 chars) saying what someone GETS from this repo — the outcome, not the mechanism;",
+          "no jargon in purpose: no stack names, no acronyms, no words like calibrate/snapshot/tape/artifact/pipeline;",
+          "bad: 'TypeScript-first capture with local daemon persistence';",
+          "good: 'A workspace that turns coding sessions into short stories you can review.'",
         ].join(" "),
       },
       {

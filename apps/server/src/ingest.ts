@@ -11,6 +11,7 @@ import { loadEchoConfig } from "@echo/config";
 import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import {
   type EchoDb,
+  ensureIngestProject,
   getSessionEventIds,
   getSessionRecordKeys,
   insertSnapshot,
@@ -19,7 +20,6 @@ import {
   maxSourceSequence,
   maxTapeSeq,
   type SnapshotInsert,
-  upsertProject,
   upsertSession,
 } from "@echo/db";
 import {
@@ -93,238 +93,253 @@ export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOpt
       const listed = listOpenCodeSessions(store);
       result.scanned = listed.length;
       for (const summary of listed) {
-        if (!summary.directory) continue;
-        const directory = summary.directory;
-        const identity = await resolveRepositoryIdentity(directory);
-        if (!projectEnabled(directory, config.projects)) continue;
-        const session = readOpenCodeSession(store, summary.id);
-        if (!session?.directory) continue;
+        try {
+          if (!summary.directory) continue;
+          const directory = summary.directory;
+          const identity = await resolveRepositoryIdentity(directory);
+          if (!projectEnabled(directory, config.projects)) continue;
+          const session = readOpenCodeSession(store, summary.id);
+          if (!session?.directory) continue;
 
-        const imported = importOpenCodeSession(store, session, new Date(), {
-          projectId: identity.projectId,
-        });
-        // Adapters can disagree about the remote (or it appears mid-life):
-        // adopt the canonical row so tapes, shadow dir and session row agree.
-        imported.projectId = upsertProject(db, {
-          id: identity.projectId,
-          root: identity.canonicalRoot,
-          remoteUrl: identity.remoteUrl,
-          name: basename(identity.canonicalRoot),
-        });
-        const observedAt = new Date().toISOString();
-        const tapePath = join(
-          dataDir,
-          "projects",
-          imported.projectId,
-          "sessions",
-          session.id,
-          "tape.jsonl",
-        );
-        mkdirSync(dirname(tapePath), { recursive: true });
-
-        const synthetic: TapeEvent[] = [];
-        const previousMax = maxSourceSequence(db, session.id);
-        const currentMax = imported.events.reduce<number | null>((max, event) => {
-          if (event.source.sequence === null) return max;
-          return max === null ? event.source.sequence : Math.max(max, event.source.sequence);
-        }, null);
-        if (previousMax !== null && currentMax !== null && currentMax < previousMax) {
-          synthetic.push(
-            makeGapEvent({
-              agent: "opencode",
-              sessionId: session.id,
-              projectId: imported.projectId,
-              observedAt,
-              key: `sequence-reset:${previousMax}:${currentMax}`,
-              code: "sequence_reset",
-              detail: { previous_max: previousMax, current_max: currentMax },
-            }),
-          );
-        }
-        const previousKeys = getSessionRecordKeys(db, session.id);
-        const currentKeys = new Set(
-          imported.events
-            .map((event) => event.record_key)
-            .filter((key): key is string => key !== null),
-        );
-        const vanished = [...previousKeys].filter((key) => !currentKeys.has(key)).sort();
-        if (vanished.length > 0) {
-          synthetic.push(
-            makeGapEvent({
-              agent: "opencode",
-              sessionId: session.id,
-              projectId: imported.projectId,
-              observedAt,
-              key: `vanished:${vanished.join(",")}`,
-              code: "source_replaced",
-              detail: {
-                vanished_count: vanished.length,
-                names: vanished.slice(0, 10),
-              },
-            }),
-          );
-        }
-
-        const snapshotEvents: TapeEvent[] = [];
-        const snapshotRows: SnapshotInsert[] = [];
-        let snapshotsTaken = 0;
-        let snapshotFailed = false;
-        const shadowDir = join(dataDir, "projects", imported.projectId, "shadow.git");
-        const snapshotRoot = findRepositoryRoot(session.directory) ?? identity.canonicalRoot;
-        const existingIds = getSessionEventIds(db, session.id);
-
-        const takeSnapshot = async (input: {
-          trigger: "baseline" | "final";
-          key: string;
-          sourceOid?: string;
-        }): Promise<void> => {
-          const eventId = makeSnapshotEventId(session.id, input.trigger, input.key);
-          if (existingIds.has(eventId)) return;
-          const common = {
-            shadowDir,
-            sessionId: session.id,
-            projectId: imported.projectId,
-            trigger: input.trigger,
-            eventId,
-            takenAt: new Date(),
-          };
-          const snapshot: SnapshotResult = input.sourceOid
-            ? await snapshotGitTree({
-                ...common,
-                sourceRoot: snapshotRoot,
-                sourceOid: input.sourceOid,
-              })
-            : await snapshotWorkingTree({ ...common, root: snapshotRoot, dataDir });
-          snapshotEvents.push(
-            makeSnapshotEvent({
-              agent: "opencode",
-              sessionId: session.id,
-              projectId: imported.projectId,
-              eventId,
-              observedAt,
-              result: snapshot,
-            }),
-          );
-          snapshotRows.push({
-            id: snapshot.commitOid,
-            sessionId: session.id,
-            commitOid: snapshot.commitOid,
-            parentOid: snapshot.parentOid,
-            trigger: snapshot.trigger,
-            eventId,
-            takenAt: snapshot.takenAt,
-            fileCount: snapshot.fileCount,
-            totalBytes: snapshot.totalBytes,
-            status: snapshot.status,
-            diagnostics: snapshot.diagnostics,
-            files: snapshot.files.map((file) => ({
-              path: file.path,
-              mode: file.mode,
-              blobOid: file.blobOid,
-              size: file.size,
-              sha256: file.sha256,
-              captured: file.captured,
-              reason: file.reason,
-            })),
+          // Same repo keeps its historic id across remote adds/removes and
+          // folder moves (one row per repository); the returned id is what
+          // sessions, tapes and snapshots must use.
+          const projectId = ensureIngestProject(db, {
+            id: identity.projectId,
+            root: identity.canonicalRoot,
+            remoteUrl: identity.remoteUrl,
+            name: basename(identity.canonicalRoot),
           });
-          existingIds.add(eventId);
-          snapshotsTaken += 1;
-        };
 
-        if (imported.baselineOid !== null && latestSnapshot(db, session.id, "baseline") === null) {
-          try {
-            await takeSnapshot({
-              trigger: "baseline",
-              key: imported.baselineOid,
-              sourceOid: imported.baselineOid,
+          const imported = importOpenCodeSession(store, session, new Date(), {
+            projectId,
+          });
+          const observedAt = new Date().toISOString();
+          const tapePath = join(
+            dataDir,
+            "projects",
+            projectId,
+            "sessions",
+            session.id,
+            "tape.jsonl",
+          );
+          mkdirSync(dirname(tapePath), { recursive: true });
+
+          const synthetic: TapeEvent[] = [];
+          const previousMax = maxSourceSequence(db, session.id);
+          const currentMax = imported.events.reduce<number | null>((max, event) => {
+            if (event.source.sequence === null) return max;
+            return max === null ? event.source.sequence : Math.max(max, event.source.sequence);
+          }, null);
+          if (previousMax !== null && currentMax !== null && currentMax < previousMax) {
+            synthetic.push(
+              makeGapEvent({
+                agent: "opencode",
+                sessionId: session.id,
+                projectId: projectId,
+                observedAt,
+                key: `sequence-reset:${previousMax}:${currentMax}`,
+                code: "sequence_reset",
+                detail: { previous_max: previousMax, current_max: currentMax },
+              }),
+            );
+          }
+          const previousKeys = getSessionRecordKeys(db, session.id);
+          const currentKeys = new Set(
+            imported.events
+              .map((event) => event.record_key)
+              .filter((key): key is string => key !== null),
+          );
+          const vanished = [...previousKeys].filter((key) => !currentKeys.has(key)).sort();
+          if (vanished.length > 0) {
+            synthetic.push(
+              makeGapEvent({
+                agent: "opencode",
+                sessionId: session.id,
+                projectId: projectId,
+                observedAt,
+                key: `vanished:${vanished.join(",")}`,
+                code: "source_replaced",
+                detail: {
+                  vanished_count: vanished.length,
+                  names: vanished.slice(0, 10),
+                },
+              }),
+            );
+          }
+
+          const snapshotEvents: TapeEvent[] = [];
+          const snapshotRows: SnapshotInsert[] = [];
+          let snapshotsTaken = 0;
+          let snapshotFailed = false;
+          const shadowDir = join(dataDir, "projects", projectId, "shadow.git");
+          const snapshotRoot = findRepositoryRoot(session.directory) ?? identity.canonicalRoot;
+          const existingIds = getSessionEventIds(db, session.id);
+
+          const takeSnapshot = async (input: {
+            trigger: "baseline" | "final";
+            key: string;
+            sourceOid?: string;
+          }): Promise<void> => {
+            const eventId = makeSnapshotEventId(session.id, input.trigger, input.key);
+            if (existingIds.has(eventId)) return;
+            const common = {
+              shadowDir,
+              sessionId: session.id,
+              projectId: projectId,
+              trigger: input.trigger,
+              eventId,
+              takenAt: new Date(),
+            };
+            const snapshot: SnapshotResult = input.sourceOid
+              ? await snapshotGitTree({
+                  ...common,
+                  sourceRoot: snapshotRoot,
+                  sourceOid: input.sourceOid,
+                })
+              : await snapshotWorkingTree({ ...common, root: snapshotRoot, dataDir });
+            snapshotEvents.push(
+              makeSnapshotEvent({
+                agent: "opencode",
+                sessionId: session.id,
+                projectId: projectId,
+                eventId,
+                observedAt,
+                result: snapshot,
+              }),
+            );
+            snapshotRows.push({
+              id: snapshot.commitOid,
+              sessionId: session.id,
+              commitOid: snapshot.commitOid,
+              parentOid: snapshot.parentOid,
+              trigger: snapshot.trigger,
+              eventId,
+              takenAt: snapshot.takenAt,
+              fileCount: snapshot.fileCount,
+              totalBytes: snapshot.totalBytes,
+              status: snapshot.status,
+              diagnostics: snapshot.diagnostics,
+              files: snapshot.files.map((file) => ({
+                path: file.path,
+                mode: file.mode,
+                blobOid: file.blobOid,
+                size: file.size,
+                sha256: file.sha256,
+                captured: file.captured,
+                reason: file.reason,
+              })),
             });
-          } catch (error) {
-            snapshotFailed = true;
-            log.error(
-              { err: String(error), session_id: session.id, trigger: "baseline" },
-              "shadow snapshot failed",
-            );
-          }
-        }
+            existingIds.add(eventId);
+            snapshotsTaken += 1;
+          };
 
-        const boundaryTs = imported.events.reduce<string | null>((max, event) => {
-          if (event.kind !== "turn.ended" && event.kind !== "turn.failed") return max;
-          return max === null || event.ts > max ? event.ts : max;
-        }, null);
-        const lastFinal = latestSnapshot(db, session.id, "final");
-        if (boundaryTs !== null && (lastFinal === null || boundaryTs > lastFinal.takenAt)) {
-          try {
-            await takeSnapshot({ trigger: "final", key: boundaryTs });
-          } catch (error) {
-            snapshotFailed = true;
-            log.error(
-              { err: String(error), session_id: session.id, trigger: "final" },
-              "shadow snapshot failed",
-            );
+          if (
+            imported.baselineOid !== null &&
+            latestSnapshot(db, session.id, "baseline") === null
+          ) {
+            try {
+              await takeSnapshot({
+                trigger: "baseline",
+                key: imported.baselineOid,
+                sourceOid: imported.baselineOid,
+              });
+            } catch (error) {
+              snapshotFailed = true;
+              log.error(
+                { err: String(error), session_id: session.id, trigger: "baseline" },
+                "shadow snapshot failed",
+              );
+            }
           }
-        }
 
-        let quality: CaptureQuality = imported.quality;
-        const snapshotPartial = snapshotEvents.some(
-          (event) => (event.payload as { status?: string }).status === "partial",
-        );
-        if (synthetic.length > 0 || snapshotFailed || snapshotPartial) quality = "partial";
-
-        upsertSession(db, {
-          id: session.id,
-          projectId: imported.projectId,
-          agent: "opencode",
-          model: sessionModelLabel(session.model),
-          directory: session.directory,
-          title: session.title,
-          startedAt:
-            session.timeCreated === null ? null : new Date(session.timeCreated).toISOString(),
-          tapePath,
-          captureQuality: quality,
-        });
-
-        const started = imported.events[0];
-        const rest = imported.events.slice(1);
-        const baselineEvents = snapshotEvents.filter(
-          (event) => (event.payload as { trigger?: string }).trigger === "baseline",
-        );
-        const finalEvents = snapshotEvents.filter(
-          (event) => (event.payload as { trigger?: string }).trigger !== "baseline",
-        );
-        const all = [
-          ...(started ? [started] : []),
-          ...baselineEvents,
-          ...rest,
-          ...synthetic,
-          ...finalEvents,
-        ];
-
-        const existing = getSessionEventIds(db, session.id);
-        const fresh = all.filter((event) => !existing.has(event.event_id));
-        if (fresh.length > 0) {
-          let seq = maxTapeSeq(db, session.id);
-          for (const event of fresh) {
-            seq += 1;
-            event.tape_seq = seq;
+          const boundaryTs = imported.events.reduce<string | null>((max, event) => {
+            if (event.kind !== "turn.ended" && event.kind !== "turn.failed") return max;
+            return max === null || event.ts > max ? event.ts : max;
+          }, null);
+          const lastFinal = latestSnapshot(db, session.id, "final");
+          if (boundaryTs !== null && (lastFinal === null || boundaryTs > lastFinal.takenAt)) {
+            try {
+              await takeSnapshot({ trigger: "final", key: boundaryTs });
+            } catch (error) {
+              snapshotFailed = true;
+              log.error(
+                { err: String(error), session_id: session.id, trigger: "final" },
+                "shadow snapshot failed",
+              );
+            }
           }
-          const writer = new TapeWriter(tapePath);
-          try {
-            for (const event of fresh) writer.append(event);
-            writer.flush();
-          } finally {
-            writer.close();
+
+          let quality: CaptureQuality = imported.quality;
+          const snapshotPartial = snapshotEvents.some(
+            (event) => (event.payload as { status?: string }).status === "partial",
+          );
+          if (synthetic.length > 0 || snapshotFailed || snapshotPartial) quality = "partial";
+
+          upsertSession(db, {
+            id: session.id,
+            projectId,
+            agent: "opencode",
+            model: sessionModelLabel(session.model),
+            directory: session.directory,
+            title: session.title,
+            startedAt:
+              session.timeCreated === null ? null : new Date(session.timeCreated).toISOString(),
+            tapePath,
+            captureQuality: quality,
+          });
+
+          const started = imported.events[0];
+          const rest = imported.events.slice(1);
+          const baselineEvents = snapshotEvents.filter(
+            (event) => (event.payload as { trigger?: string }).trigger === "baseline",
+          );
+          const finalEvents = snapshotEvents.filter(
+            (event) => (event.payload as { trigger?: string }).trigger !== "baseline",
+          );
+          const all = [
+            ...(started ? [started] : []),
+            ...baselineEvents,
+            ...rest,
+            ...synthetic,
+            ...finalEvents,
+          ];
+
+          const existing = getSessionEventIds(db, session.id);
+          const fresh = all.filter((event) => !existing.has(event.event_id));
+          if (fresh.length > 0) {
+            let seq = maxTapeSeq(db, session.id);
+            for (const event of fresh) {
+              seq += 1;
+              event.tape_seq = seq;
+            }
+            const writer = new TapeWriter(tapePath);
+            try {
+              for (const event of fresh) writer.append(event);
+              writer.flush();
+            } finally {
+              writer.close();
+            }
+            result.eventsAdded += insertStampedEvents(db, session.id, fresh);
+            result.capturedSessions += 1;
           }
-          result.eventsAdded += insertStampedEvents(db, session.id, fresh);
-          result.capturedSessions += 1;
-        }
-        for (const row of snapshotRows) insertSnapshot(db, row);
-        result.snapshotsTaken += snapshotsTaken;
-        if (onSessionQuiescent) {
-          try {
-            onSessionQuiescent(session.id);
-          } catch (error) {
-            log.error({ err: String(error), session_id: session.id }, "story hook failed");
+          for (const row of snapshotRows) insertSnapshot(db, row);
+          result.snapshotsTaken += snapshotsTaken;
+          if (onSessionQuiescent) {
+            try {
+              onSessionQuiescent(session.id);
+            } catch (error) {
+              log.error({ err: String(error), session_id: session.id }, "story hook failed");
+            }
           }
+        } catch (error) {
+          // One poison session must not starve the rest of the poll: the throw
+          // above (identity migration, snapshot, tape write) used to abort the
+          // whole scan, hiding every session behind it.
+          log.error(
+            { err: String(error), session_id: summary.id },
+            "opencode session ingest failed, skipping",
+          );
         }
       }
     } finally {

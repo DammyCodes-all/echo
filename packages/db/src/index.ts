@@ -20,6 +20,7 @@ export {
   deriveEngagementTiers,
   type EngagementEventInput,
   type EngagementEventRow,
+  ensureIngestProject,
   getArtifactRef,
   getProject,
   getProjectArtifactRef,
