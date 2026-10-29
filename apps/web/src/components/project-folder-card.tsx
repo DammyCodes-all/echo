@@ -67,6 +67,9 @@ function canHover(): boolean {
 
 const HOVER_OPEN_DELAY_MS = 150;
 
+/** Pre-load peek: one blank sheet so the resting pocket isn't empty; the load remount swaps in real files. */
+const REST_PEEK: FolderFile[] = [{ name: "Loading sessions…" }];
+
 export function ProjectFolderCard({ project, index }: { project: ProjectSummary; index: number }) {
   const navigate = useNavigate();
   const [files, setFiles] = useState<FolderFile[] | null>(null);
@@ -198,7 +201,7 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
         tone="dark"
         art={DUSK_ART}
         seed={hashString(project.id)}
-        files={files ?? []}
+        files={files ?? (total > 0 ? REST_PEEK : [])}
         action="more"
         menu={[{ label: "Open project", onSelect: openProject }]}
         open={open}
