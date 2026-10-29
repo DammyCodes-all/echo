@@ -214,7 +214,11 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
       {open ? (
         failed ? (
           <p className="text-sm text-dusk-muted">Could not load sessions.</p>
-        ) : (
+        ) : files !== null && files.length === 0 ? (
+          <p className="max-w-80 text-center text-sm text-dusk-muted">
+            No sessions yet — run a Muse or OpenCode session in this repo to capture one.
+          </p>
+        ) : total > 0 ? (
           <Link
             to={`/projects/${project.id}`}
             className="text-sm text-dusk-muted underline underline-offset-4 hover:text-dusk-ink"
@@ -224,7 +228,7 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
           >
             View all {total} session{total === 1 ? "" : "s"} →
           </Link>
-        )
+        ) : null
       ) : null}
     </div>
   );
