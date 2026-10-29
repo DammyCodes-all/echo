@@ -787,3 +787,16 @@ notes.
 - status: done
 - evidence: `tsc` clean, `pnpm test` → 55 files / 463 passed, `pnpm build` ok; `biome` 1 error confined to a concurrent worker's unstaged `session-card.tsx` restyle (left alone) + 1 pre-existing warning (`ingest.test.ts` unused `root`) + 4 pre-existing infos
 - notes: `session-card.tsx` + `project-overview.tsx` restyle and a fresh `result.json` stamp churn appeared mid-merge from concurrent runs — all left unstaged/untouched. Nothing pushed.
+
+## 2026-10-29 — Stable session titles across regens
+
+- item: session titles no longer shift when the session itself changes — `upsertSession` keeps the first non-empty `sessions.title` (later polls update model/directory/tape path/quality but never the title, null never clears); story summaries freeze the same way — `persistStory` reuses the first persisted summary on regen while cards/risks/gaps/watermark still refresh, with one upgrade path (skeleton fallback yields to the first real model narration), and now returns the persisted story so API responses match the artifact/DB instead of the pre-freeze draft
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (1 warning + 4 infos, pre-existing), `pnpm test` → 55 files / 467 passed, `pnpm build` ok; new coverage: db `session title stability` (freeze + null-never-clears + first-non-empty-wins), story `session title stability` (model regen keeps title while watermark advances, skeleton→model upgrades once then freezes)
+- notes: Card titles (session cards, folder cards) and the story page header all read the frozen summary, so hierarchy navigation stays put. Daemon picks up server changes via `tsx watch` reload.
+## 2026-10-29 — SessionCard breathing room (cramped-footer restyle)
+
+- item: `SessionCard` footer de-jumbled — hairline divider between title and footer; badges restyled into the story-card voice (wash fill, no border, sentence case, `rounded-dusk-code px-2.5 py-1 text-xs semibold`, 14px icons); title loosened (`leading-6`, `text-pretty`, `break-words`, 3rem 2-line slot); footer `gap-x-4` + wrap fallback so a future Checked+risk pair never spills on 390px; grid `gap-4` → `gap-5`; loading skeleton mirrors the new card shape
+- status: done
+- evidence: full gate green (tsc clean, biome exit 0 with only the pre-existing warning + 4 infos in untouched server tests, 55 files / 467 passed, build ok); headless-chrome passes on the live dev stack — 1400px overview (footers calm, badges quiet), 390px cards (time + badge hold one line, no overflow), skeleton state matches card shape
+- notes: One transient single-test failure mid-window, green on the re-runs before and after — load flake, web change is vitest-exempt. Remaining density is skeleton-summary copy (path-soup titles), a content problem for the story slice, not this card. No new chrome language; dusk tokens only.

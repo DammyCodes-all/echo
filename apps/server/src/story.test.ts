@@ -1010,3 +1010,93 @@ describe("finalizeStory", () => {
     expect(byId.get("h_aaaaaaaaaaaaaaaa")?.sessionOrder).toBe(1);
   });
 });
+
+describe("session title stability", () => {
+  function titledDraft(summary: string): SessionStory {
+    return { ...modelDraft("add a greeting line"), summary };
+  }
+
+  function growTape(
+    db: ReturnType<typeof openEchoDb>,
+    sessionId: string,
+    projectId: string,
+    eventId: string,
+  ) {
+    appendEvents(db, sessionId, [
+      seedTapeEvent(sessionId, projectId, eventId, "prompt.submitted", {
+        text: "keep going",
+      }),
+    ]);
+  }
+
+  it("keeps the first model summary on regen while other details refresh", async () => {
+    const { dataDir, db, sessionId, projectId } = await seedSession();
+    try {
+      const { fetchImpl, calls } = stubFetchSequence([
+        titledDraft("First title"),
+        titledDraft("Second title"),
+      ]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const first = await service.maybeGenerateStory(sessionId);
+      expect(first.outcome).toBe("generated");
+      expect(first.story?.summary).toBe("First title");
+
+      growTape(db, sessionId, projectId, "evt_late_title");
+      const second = await service.maybeGenerateStory(sessionId);
+      // Regen ran against the new tape...
+      expect(second.outcome).toBe("generated");
+      expect(calls()).toBe(2);
+      expect(second.story?.tapeWatermark.eventCount).toBeGreaterThan(
+        first.story?.tapeWatermark.eventCount ?? 0,
+      );
+      // ...but the title is frozen while the rest follows the fresh draft.
+      expect(second.story?.summary).toBe("First title");
+      expect(second.story?.shortVersion.map((claim) => claim.text)).toEqual([
+        "add a greeting line",
+      ]);
+      expect(getSessionSummary(db, sessionId)?.summary).toBe("First title");
+      const ref = getArtifactRef(db, sessionId, "story");
+      expect(JSON.parse(readFileSync(ref?.path ?? "", "utf8")).summary).toBe("First title");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("lets the first model narration replace a skeleton title, then freezes", async () => {
+    const { dataDir, db, sessionId, projectId } = await seedSession();
+    try {
+      const skeletonService = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch },
+      );
+      const skeleton = await skeletonService.maybeGenerateStory(sessionId);
+      expect(skeleton.outcome).toBe("skeleton");
+      const skeletonSummary = skeleton.story?.summary;
+      expect(typeof skeletonSummary).toBe("string");
+
+      const { fetchImpl } = stubFetchSequence([
+        titledDraft("Real model title"),
+        titledDraft("Renamed title"),
+      ]);
+      const modelService = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      growTape(db, sessionId, projectId, "evt_late_upgrade");
+      const upgraded = await modelService.maybeGenerateStory(sessionId);
+      expect(upgraded.outcome).toBe("generated");
+      expect(upgraded.story?.summary).toBe("Real model title");
+
+      growTape(db, sessionId, projectId, "evt_late_rename");
+      const renamed = await modelService.maybeGenerateStory(sessionId);
+      expect(renamed.outcome).toBe("generated");
+      expect(renamed.story?.summary).toBe("Real model title");
+      expect(getSessionSummary(db, sessionId)?.summary).toBe("Real model title");
+    } finally {
+      db.close();
+    }
+  });
+});

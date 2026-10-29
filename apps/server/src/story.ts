@@ -461,14 +461,28 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     generator: string;
     watermark: TapeWatermark;
     resetStatus: boolean;
-  }): boolean {
+  }): SessionStory | null {
+    // Session titles are stable: the first persisted summary wins. Regens
+    // still refresh cards, risks and gaps, but keep the original title so
+    // hierarchy navigation doesn't shift under the user. The one exception
+    // is the skeleton-to-model upgrade — a deterministic fallback yields to
+    // the first real narration.
+    const prevSummary = getSessionSummary(db, input.sessionId)?.summary ?? null;
+    const prevGenerator = getArtifactRef(db, input.sessionId, "story")?.generator ?? null;
+    const prevIsSkeleton = prevGenerator?.startsWith("skeleton-") ?? false;
+    const nextIsSkeleton = input.generator.startsWith("skeleton-");
+    const summary =
+      prevSummary !== null && prevSummary !== "" && (nextIsSkeleton || !prevIsSkeleton)
+        ? prevSummary
+        : input.story.summary;
+    const titled = summary === input.story.summary ? input.story : { ...input.story, summary };
     let scanned: unknown;
     try {
-      scanned = redactJsonImpl(input.story).value;
+      scanned = redactJsonImpl(titled).value;
     } catch (error) {
       // Content-free diagnostic: never log the payload that failed.
       log.error({ session_id: input.sessionId, err: String(error) }, "story redaction gate failed");
-      return false;
+      return null;
     }
     const story = SessionStorySchema.parse(scanned);
     const path = storyArtifactPath(dataDir, input.projectId, input.sessionId);
@@ -487,7 +501,7 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
       highRiskCount: story.cards.filter((card) => card.highRisk).length,
     });
     if (input.resetStatus) setSessionCheckStatus(db, input.sessionId, "not_checked");
-    return true;
+    return story;
   }
 
   function toReviewInputs(review: SessionReview): { hunks: ReviewHunk[]; attempts: FileAttempt[] } {
@@ -688,19 +702,18 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
         reviewDiagnostics: review.diagnostics,
         captureQuality,
       });
-      if (
-        !persistStory({
-          projectId: session.projectId,
-          sessionId,
-          story,
-          generator: SKELETON_PROMPT_VERSION,
-          watermark,
-          resetStatus: watermarkChanged,
-        })
-      ) {
+      const persisted = persistStory({
+        projectId: session.projectId,
+        sessionId,
+        story,
+        generator: SKELETON_PROMPT_VERSION,
+        watermark,
+        resetStatus: watermarkChanged,
+      });
+      if (!persisted) {
         return { outcome: "unavailable", story: null };
       }
-      return { outcome: "skeleton", story };
+      return { outcome: "skeleton", story: persisted };
     };
 
     if (modelOff()) {
@@ -740,16 +753,15 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
       reviewDiagnostics: review.diagnostics,
       captureQuality,
     });
-    if (
-      !persistStory({
-        projectId: session.projectId,
-        sessionId,
-        story,
-        generator: config.model,
-        watermark,
-        resetStatus: watermarkChanged,
-      })
-    ) {
+    const persisted = persistStory({
+      projectId: session.projectId,
+      sessionId,
+      story,
+      generator: config.model,
+      watermark,
+      resetStatus: watermarkChanged,
+    });
+    if (!persisted) {
       // Model content failed the artifact scan: drop it, keep a skeleton
       // from the (already redacted) facts when possible.
       log.error(
@@ -760,7 +772,7 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
         "story model content failed the redaction gate; showing skeleton instead",
       ]);
     }
-    return { outcome: "generated", story };
+    return { outcome: "generated", story: persisted };
   }
 
   return { maybeGenerateStory };

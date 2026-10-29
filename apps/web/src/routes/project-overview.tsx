@@ -191,19 +191,18 @@ export function ProjectOverviewPage() {
       <section className="mt-8 space-y-3 lg:mt-0">
         <h2 className="text-xl font-semibold tracking-tight">Agent sessions</h2>
         {sessions.isPending ? (
-          <div role="status" aria-label="Loading sessions" className="grid gap-4 sm:grid-cols-2">
+          <div role="status" aria-label="Loading sessions" className="grid gap-5 sm:grid-cols-2">
             {["first", "second", "third", "fourth"].map((key) => (
               <div
                 key={key}
                 aria-hidden
-                className="rounded-[20px] border border-dusk-hairline bg-dusk-surface p-5 motion-safe:animate-pulse"
+                className="rounded-[20px] border border-dusk-hairline bg-dusk-surface px-6 py-5 motion-safe:animate-pulse"
               >
-                <div className="h-4 w-3/4 rounded-dusk-code bg-dusk-pill" />
-                <div className="mt-2 h-4 w-1/2 rounded-dusk-code bg-dusk-pill" />
-                <div className="mt-1.5 h-3 w-2/5 rounded-dusk-code bg-dusk-pill" />
-                <div className="mt-4 flex gap-2 pt-4">
-                  <div className="h-5 w-16 rounded-full bg-dusk-pill" />
-                  <div className="h-5 w-20 rounded-full bg-dusk-pill" />
+                <div className="mb-4 h-4 w-3/4 rounded-dusk-code bg-dusk-pill" />
+                <div className="h-4 w-1/2 rounded-dusk-code bg-dusk-pill" />
+                <div className="mt-4 flex items-center justify-between gap-4 border-t border-dusk-hairline pt-3.5">
+                  <div className="h-3.5 w-20 rounded-dusk-code bg-dusk-pill" />
+                  <div className="h-7 w-24 rounded-dusk-code bg-dusk-pill" />
                 </div>
               </div>
             ))}
@@ -220,7 +219,7 @@ export function ProjectOverviewPage() {
           </div>
         ) : null}
         {list.length > 0 ? (
-          <div className="grid gap-4 sm:grid-cols-2">
+          <div className="grid gap-5 sm:grid-cols-2">
             {list.map((session) => (
               <SessionCard key={session.id} session={session} />
             ))}

@@ -31,12 +31,12 @@ function cardTitle(session: SessionSummary): string {
   return "No summary";
 }
 
+/** Same badge voice as the story cards: wash fill, no border, sentence case. */
 function checkBadgeClass(checkStatus: SessionSummary["checkStatus"]): string {
   const base =
-    "inline-flex items-center gap-1 rounded-dusk-pill border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest";
-  if (checkStatus === "checked")
-    return `${base} border-dusk-pass/40 bg-dusk-pass-wash text-dusk-pass`;
-  return `${base} border-dusk-hairline-strong text-dusk-muted`;
+    "inline-flex items-center gap-1.5 whitespace-nowrap rounded-dusk-code px-2.5 py-1 text-xs font-semibold";
+  if (checkStatus === "checked") return `${base} bg-dusk-pass-wash text-dusk-pass`;
+  return `${base} bg-dusk-track text-dusk-muted`;
 }
 
 function checkLabel(checkStatus: SessionSummary["checkStatus"]): string {
@@ -50,9 +50,9 @@ function checkIcon(checkStatus: SessionSummary["checkStatus"]) {
 }
 
 /**
- * Session card for the project overview: title, then one bottom row with the
- * relative last-activity time and only the badges that say something —
- * high-risk flags plus the non-default check states. The default
+ * Session card for the project overview: title, a hairline, then one bottom
+ * row with the relative last-activity time and only the badges that say
+ * something — high-risk flags plus the non-default check states. The default
  * `not_checked` and the capture/event-count details stay off the card; the
  * story page owns them.
  *
@@ -66,14 +66,14 @@ export const SessionCard = memo(function SessionCard({ session }: { session: Ses
   return (
     <Link
       to={`/sessions/${session.id}`}
-      className="flex h-full flex-col rounded-[20px] border border-dusk-hairline bg-dusk-surface p-5 transition-colors hover:border-dusk-accent/40 hover:bg-dusk-pill/30 focus-visible:outline-2 focus-visible:outline-dusk-accent"
+      className="flex h-full flex-col rounded-[20px] border border-dusk-hairline bg-dusk-surface px-6 py-5 transition-colors hover:border-dusk-accent/40 hover:bg-dusk-pill/30 focus-visible:outline-2 focus-visible:outline-dusk-accent"
     >
-      <span className="line-clamp-2 min-h-[2.75em] text-[15px] font-medium leading-snug tracking-tight text-dusk-ink">
+      <span className="mb-4 line-clamp-2 min-h-[3rem] break-words text-pretty text-[15px] font-medium leading-6 tracking-tight text-dusk-ink">
         {cardTitle(session)}
       </span>
-      <span className="mt-auto flex items-center justify-between gap-3 pt-4">
+      <span className="mt-auto flex flex-wrap items-center justify-between gap-x-4 gap-y-2 border-t border-dusk-hairline pt-3.5">
         <span
-          className="inline-flex items-center gap-1.5 font-mono text-xs text-dusk-muted"
+          className="inline-flex items-center gap-1.5 whitespace-nowrap font-mono text-xs tabular-nums text-dusk-muted"
           title={formatTime(session.lastActivity)}
         >
           <span aria-hidden className="inline-flex">
@@ -82,19 +82,19 @@ export const SessionCard = memo(function SessionCard({ session }: { session: Ses
           {timeAgo(session.lastActivity)}
         </span>
         {showCheck || showRisk ? (
-          <span className="flex shrink-0 items-center gap-2 text-xs">
+          <span className="flex shrink-0 items-center gap-2">
             {showCheck ? (
               <span className={checkBadgeClass(session.checkStatus)}>
                 <span aria-hidden className="inline-flex">
-                  <HugeiconsIcon icon={checkIcon(session.checkStatus)} size={12} strokeWidth={2} />
+                  <HugeiconsIcon icon={checkIcon(session.checkStatus)} size={14} strokeWidth={2} />
                 </span>
                 {checkLabel(session.checkStatus)}
               </span>
             ) : null}
             {showRisk ? (
-              <span className="inline-flex items-center gap-1 rounded-dusk-pill border border-dusk-fail/40 bg-dusk-fail-wash px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dusk-fail">
+              <span className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-dusk-code bg-dusk-fail-wash px-2.5 py-1 text-xs font-semibold text-dusk-fail">
                 <span aria-hidden className="inline-flex">
-                  <HugeiconsIcon icon={Alert02Icon} size={12} strokeWidth={2} />
+                  <HugeiconsIcon icon={Alert02Icon} size={14} strokeWidth={2} />
                 </span>
                 {session.highRiskCount} high-risk
               </span>
