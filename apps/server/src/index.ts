@@ -29,6 +29,7 @@ import { createHistoryService } from "./history";
 import { createIngest } from "./ingest";
 import { createMuseIngest } from "./muse-ingest";
 import { createMuseWatcher } from "./muse-watch";
+import { createProjectTechStackService } from "./project-tech-stack";
 import { buildSessionReview } from "./review-index";
 import { readSnapshotFile } from "./snapshot-view";
 import { createStoryService } from "./story";
@@ -83,6 +84,14 @@ const checksV2 = createChecksV2Service({ db, dataDir: paths.dataDir, log: app.lo
 const engagement = createEngagementService(db);
 const history = createHistoryService(db, paths.dataDir);
 const codeIndex = createCodeIndexService({ db });
+const techStack = createProjectTechStackService(
+  { db, dataDir: paths.dataDir, log: app.log },
+  {
+    ensureIndex: (projectId) => {
+      codeIndex.reindex(projectId);
+    },
+  },
+);
 
 app.get("/api/health", async () => ({
   status: "ok",
@@ -116,6 +125,27 @@ app.get<{ Params: { id: string } }>("/api/projects/:id/files", async (request, r
   }
   const { files, truncated } = listProjectTouchedFiles(db, request.params.id);
   return { projectId: project.id, files, truncated };
+});
+
+app.get<{ Params: { id: string } }>("/api/projects/:id/tech-stack", async (request, reply) => {
+  // Read-through cache: generates on missing/stale, serves the artifact when
+  // the code-index watermark still matches.
+  const outcome = await techStack.maybeGetTechStack(request.params.id);
+  if (outcome.outcome === "unknown_project" || !outcome.stack) {
+    const code = outcome.outcome === "index_missing" ? 503 : 500;
+    const errorCode =
+      outcome.outcome === "index_missing" ? "code_index_missing" : "stack_unavailable";
+    const message =
+      outcome.outcome === "unknown_project"
+        ? "unknown project"
+        : outcome.outcome === "index_missing"
+          ? "code index not ready"
+          : "tech stack unavailable";
+    return reply.code(outcome.outcome === "unknown_project" ? 404 : code).send({
+      error: { code: errorCode, message },
+    });
+  }
+  return outcome.stack;
 });
 
 function codeIndexError(reply: FastifyReply) {

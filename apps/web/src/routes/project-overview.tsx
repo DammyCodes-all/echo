@@ -1,45 +1,28 @@
-import type { SessionSummary } from "@echo/contracts";
+import type { ProjectTechStackKind } from "@echo/contracts";
 import {
   Alert02Icon,
   CheckmarkCircle02Icon,
+  CodeIcon,
   Database01Icon,
   Folder01Icon,
-  GitBranchIcon,
   Layers01Icon,
+  ServerStack01Icon,
   SkipForwardIcon,
-  TerminalIcon,
+  Wrench01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useQuery } from "@tanstack/react-query";
-import { Link, useParams } from "react-router";
-import { api, formatTime } from "../api";
+import { useParams } from "react-router";
+import { api } from "../api";
+import { SessionCard } from "../components/session-card";
 
-function checkBadgeClass(checkStatus: SessionSummary["checkStatus"]): string {
-  const base =
-    "rounded-dusk-pill border px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest";
-  if (checkStatus === "checked")
-    return `${base} border-dusk-pass/40 bg-dusk-pass-wash text-dusk-pass`;
-  return `${base} border-dusk-hairline-strong text-dusk-muted`;
-}
-
-function checkLabel(checkStatus: SessionSummary["checkStatus"]): string {
-  if (checkStatus === "checked") return "Checked";
-  if (checkStatus === "skipped") return "Skipped";
-  return "Not checked";
-}
-
-function rowSummary(session: SessionSummary): string {
-  if (session.summary) return session.summary;
-  if (session.captureState === "recording") return "Still recording — story pending…";
-  return "No summary";
-}
-
-function stackFromRemote(remoteUrl: string | null): string {
-  if (!remoteUrl) return "Local-only checkout";
-  if (remoteUrl.includes("github.com")) return "Git · GitHub";
-  if (remoteUrl.includes("gitlab")) return "Git · GitLab";
-  return "Git";
-}
+const TECH_KIND_ICON: Record<ProjectTechStackKind, typeof CodeIcon> = {
+  language: CodeIcon,
+  framework: Layers01Icon,
+  build: Wrench01Icon,
+  data: Database01Icon,
+  infra: ServerStack01Icon,
+};
 
 export function ProjectOverviewPage() {
   const { projectId = "" } = useParams();
@@ -53,6 +36,11 @@ export function ProjectOverviewPage() {
     refetchInterval: 5000,
   });
 
+  const techStack = useQuery({
+    queryKey: ["tech-stack", projectId],
+    queryFn: () => api.techStack(projectId),
+  });
+
   const list = sessions.data ?? [];
   const checked = list.filter((s) => s.checkStatus === "checked").length;
   const skipped = list.filter((s) => s.checkStatus === "skipped").length;
@@ -62,11 +50,21 @@ export function ProjectOverviewPage() {
     <div className="lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start lg:gap-6">
       <aside className="sticky top-[72px] max-h-[calc(100vh-96px)] space-y-4 overflow-y-auto overscroll-contain">
         <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Purpose</p>
-          <p className="mt-2 text-sm leading-6 text-dusk-ink">
-            Echo reviews what this repo&apos;s coding agents did — one short story per session, then
-            a check that calibration matches reality.
+          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+            Project summary
           </p>
+          {techStack.isPending ? (
+            <div aria-hidden className="mt-2 space-y-2 motion-safe:animate-pulse">
+              <div className="h-3.5 rounded-dusk-code bg-dusk-pill" />
+              <div className="h-3.5 w-4/5 rounded-dusk-code bg-dusk-pill" />
+              <div className="h-3.5 w-3/5 rounded-dusk-code bg-dusk-pill" />
+            </div>
+          ) : (
+            <p className="mt-2 text-sm leading-6 text-dusk-ink">
+              {techStack.data?.purpose ??
+                "Echo reviews what this repo's coding agents did — one short story per session, then a check that calibration matches reality."}
+            </p>
+          )}
           <p className="mt-3 flex items-center gap-1.5 break-all font-mono text-xs text-dusk-muted">
             <span aria-hidden className="inline-flex shrink-0">
               <HugeiconsIcon icon={Folder01Icon} size={14} strokeWidth={1.8} />
@@ -128,36 +126,53 @@ export function ProjectOverviewPage() {
               <dt className="mt-1 text-xs text-dusk-muted">High-risk cards</dt>
             </div>
           </dl>
-          <div className="mt-4 border-t border-dusk-hairline pt-4">
-            <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-              Tech stack
-            </p>
-            <dl className="mt-3 space-y-2 text-xs">
-              <div className="flex items-center gap-2">
-                <span aria-hidden className="inline-flex text-dusk-muted">
-                  <HugeiconsIcon icon={GitBranchIcon} size={14} strokeWidth={1.8} />
-                </span>
-                <dt className="text-dusk-muted">Checkout</dt>
-                <dd className="ml-auto text-right text-dusk-ink">
-                  {stackFromRemote(project.data?.remoteUrl ?? null)}
-                </dd>
+          {techStack.isPending ? (
+            <div className="mt-4 border-t border-dusk-hairline pt-4">
+              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+                Tech stack
+              </p>
+              <div aria-hidden className="mt-3 space-y-2.5 motion-safe:animate-pulse">
+                {["w-24", "w-32", "w-20"].map((width) => (
+                  <div key={width} className="flex items-center gap-2">
+                    <div className="size-3.5 shrink-0 rounded-full bg-dusk-pill" />
+                    <div className={`h-3 rounded-dusk-code bg-dusk-pill ${width}`} />
+                    <div className="ml-auto h-3 w-12 rounded-dusk-code bg-dusk-pill" />
+                  </div>
+                ))}
               </div>
-              <div className="flex items-center gap-2">
-                <span aria-hidden className="inline-flex text-dusk-muted">
-                  <HugeiconsIcon icon={TerminalIcon} size={14} strokeWidth={1.8} />
-                </span>
-                <dt className="text-dusk-muted">Capture</dt>
-                <dd className="ml-auto text-right text-dusk-ink">TypeScript-first</dd>
-              </div>
-              <div className="flex items-center gap-2">
-                <span aria-hidden className="inline-flex text-dusk-muted">
-                  <HugeiconsIcon icon={Database01Icon} size={14} strokeWidth={1.8} />
-                </span>
-                <dt className="text-dusk-muted">Runtime</dt>
-                <dd className="ml-auto text-right text-dusk-ink">local daemon + SQLite</dd>
-              </div>
-            </dl>
-          </div>
+            </div>
+          ) : techStack.isError ? (
+            <div className="mt-4 border-t border-dusk-hairline pt-4">
+              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+                Tech stack
+              </p>
+              <p className="mt-3 text-xs text-dusk-fail">Couldn&apos;t load the tech stack.</p>
+              <button
+                type="button"
+                onClick={() => void techStack.refetch()}
+                className="mt-2 rounded-dusk-code bg-dusk-pill px-3 py-1.5 text-xs text-dusk-ink transition-colors hover:text-dusk-accent-soft"
+              >
+                Retry
+              </button>
+            </div>
+          ) : techStack.data && techStack.data.items.length > 0 ? (
+            <div className="mt-4 border-t border-dusk-hairline pt-4">
+              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+                Tech stack
+              </p>
+              <dl className="mt-3 space-y-2 text-xs">
+                {techStack.data.items.map((item) => (
+                  <div key={`${item.kind}-${item.name}`} className="flex items-center gap-2">
+                    <span aria-hidden className="inline-flex text-dusk-muted">
+                      <HugeiconsIcon icon={TECH_KIND_ICON[item.kind]} size={14} strokeWidth={1.8} />
+                    </span>
+                    <dt className="text-dusk-ink">{item.name}</dt>
+                    <dd className="ml-auto text-right capitalize text-dusk-muted">{item.kind}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ) : null}
         </div>
       </aside>
 
@@ -174,36 +189,9 @@ export function ProjectOverviewPage() {
           </div>
         ) : null}
         {list.length > 0 ? (
-          <div className="divide-y divide-dusk-hairline overflow-hidden rounded-dusk-card bg-dusk-surface">
+          <div className="grid gap-4 sm:grid-cols-2">
             {list.map((session) => (
-              <Link
-                key={session.id}
-                to={`/sessions/${session.id}`}
-                className="flex flex-col gap-2 px-6 py-5 transition-colors hover:bg-dusk-pill/60 sm:flex-row sm:items-center sm:justify-between"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm text-dusk-ink">{rowSummary(session)}</p>
-                  <p className="mt-1 font-mono text-xs text-dusk-muted">
-                    {session.startedAt ? formatTime(session.startedAt) : "unknown time"} ·{" "}
-                    {session.eventCount} events
-                  </p>
-                </div>
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <span className={checkBadgeClass(session.checkStatus)}>
-                    {checkLabel(session.checkStatus)}
-                  </span>
-                  {session.highRiskCount > 0 ? (
-                    <span className="rounded-dusk-pill border border-dusk-fail/40 bg-dusk-fail-wash px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dusk-fail">
-                      {session.highRiskCount} high-risk
-                    </span>
-                  ) : null}
-                  {session.captureState !== "ready" ? (
-                    <span className="rounded-dusk-pill border border-dusk-hairline-strong px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dusk-peach">
-                      {session.captureState}
-                    </span>
-                  ) : null}
-                </div>
-              </Link>
+              <SessionCard key={session.id} session={session} />
             ))}
           </div>
         ) : null}

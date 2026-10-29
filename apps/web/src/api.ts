@@ -10,6 +10,7 @@ import type {
   EngagementState,
   ProjectFilesResponse,
   ProjectSummary,
+  ProjectTechStack,
   SessionHistoryResponse,
   SessionReview,
   SessionStory,
@@ -58,6 +59,8 @@ export const api = {
     getJson<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
   projectFiles: (projectId: string) =>
     getJson<ProjectFilesResponse>(`/api/projects/${encodeURIComponent(projectId)}/files`),
+  techStack: (projectId: string) =>
+    getJson<ProjectTechStack>(`/api/projects/${encodeURIComponent(projectId)}/tech-stack`),
   sessions: (projectId: string) =>
     getJson<SessionSummary[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
   session: (sessionId: string) =>
