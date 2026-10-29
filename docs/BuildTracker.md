@@ -510,3 +510,10 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 190 files clean (4 pre-existing infos), `pnpm test` → 49 files / 411 passed, `pnpm build` ok; built web bundle no longer contains footer copy
 - notes: UI-only (`apps/web/src/layout.tsx`). ScaffoldPage `max-w-2xl` header text kept for readability; page body is full width.
+
+## 2026-10-29 — Liquid glass project nav (bottom-right, HugeIcons)
+
+- item: vendored Nimbus LiquidNavbar into `apps/web/src/components/ui/liquid-glass-navbar.tsx` (WebGL water pill + CSS-drop fallback, no deps beyond React); replaced the ProjectLayout tab row with a `fixed right-6 bottom-6` dark-tone navbar wired to router (Overview/Learn/Architecture, active derived from pathname); HugeIcons strokes (`DashboardSquare01`/`BookOpen01`/`Structure01` via `@hugeicons/react` + `@hugeicons/core-free-icons`)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 191 files clean (4 pre-existing infos), `pnpm test` → 49 files / 411 passed, `pnpm build` ok; built web bundle contains `nimbus-nav` + `fixed right-6 bottom-6` + section labels
+- notes: Adapted the pasted component for repo strictness (typed Uniforms bag, null-guards over `!`, `tone` dep dropped as behavior-neutral, braces in forEach setters); kept intentional extra layout-effect deps + label-index keys + inline `<style>`/decorative canvas behind `biome-ignore` with reasons. Deprecated `hugeicons-react` rejected in favor of maintained `@hugeicons/react`. No browser here: positioning/animation unverified beyond bundle contents. No API/capture changes.
