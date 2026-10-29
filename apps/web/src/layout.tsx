@@ -1,4 +1,5 @@
 import { NavLink, Outlet } from "react-router";
+import { HeaderSearch } from "./components/search/expandable-search";
 import { SettingsMenu } from "./components/settings/settings-sheet";
 
 export function AppLayout() {
@@ -9,7 +10,10 @@ export function AppLayout() {
           <NavLink to="/" className="flex items-center">
             <span className="text-lg font-semibold tracking-tight">Echo</span>
           </NavLink>
-          <SettingsMenu />
+          <div className="flex items-center gap-1">
+            <HeaderSearch />
+            <SettingsMenu />
+          </div>
         </div>
       </header>
       <main className="mx-auto w-full max-w-7xl flex-1 px-6 py-10">
