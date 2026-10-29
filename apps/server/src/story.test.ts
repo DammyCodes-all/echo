@@ -14,6 +14,7 @@ import {
   getArtifactRef,
   getSessionSummary,
   insertSnapshot,
+  listSessions,
   openEchoDb,
   readAllEvents,
   setSessionCheckStatus,
@@ -26,7 +27,14 @@ import { snapshotWorkingTree } from "@echo/snapshots";
 import { buildSkeletonStory, extractFacts, SKELETON_PROMPT_VERSION } from "@echo/story";
 import type { FileAttempt } from "@echo/tape";
 import { describe, expect, it } from "vitest";
-import { computeWatermark, createStoryService, finalizeStory, normalizeDraftShape } from "./story";
+import {
+  computeWatermark,
+  createStoryService,
+  filterEmptySessions,
+  finalizeStory,
+  normalizeDraftShape,
+  storyHasContent,
+} from "./story";
 import { makeSnapshotEvent } from "./tape-events";
 
 const TAKEN_AT = new Date("2026-10-28T10:00:00.000Z");
@@ -1095,6 +1103,137 @@ describe("session title stability", () => {
       expect(renamed.outcome).toBe("generated");
       expect(renamed.story?.summary).toBe("Real model title");
       expect(getSessionSummary(db, sessionId)?.summary).toBe("Real model title");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("empty session filtering", () => {
+  function emptySkeleton(): SessionStory {
+    return {
+      ...modelDraft("unused"),
+      skeleton: true,
+      generator: { kind: "skeleton", model: null, promptVersion: SKELETON_PROMPT_VERSION },
+      summary: "No prompts recorded, no file changes recorded.",
+      shortVersion: [],
+      askVsResult: { asked: [], delivered: [], extras: [], missing: [] },
+    };
+  }
+
+  function writeStoryArtifact(
+    db: ReturnType<typeof openEchoDb>,
+    dataDir: string,
+    sessionId: string,
+    story: SessionStory,
+    generator: string,
+  ): void {
+    const path = join(dataDir, `${sessionId}.story.json`);
+    writeFileSync(path, `${JSON.stringify(story)}\n`);
+    upsertArtifactRef(db, {
+      sessionId,
+      kind: "story",
+      path,
+      tapeWatermark: { eventCount: 0, sha256: "empty" },
+      generator,
+      generatedAt: ISO,
+    });
+  }
+
+  function seedBareSession(
+    db: ReturnType<typeof openEchoDb>,
+    projectId: string,
+    root: string,
+    dataDir: string,
+    sessionId: string,
+  ): void {
+    upsertSession(db, {
+      id: sessionId,
+      projectId,
+      agent: "opencode",
+      model: null,
+      directory: root,
+      title: null,
+      startedAt: ISO,
+      tapePath: join(dataDir, `${sessionId}.jsonl`),
+      captureQuality: "import_only",
+    });
+  }
+
+  it("treats only content-free skeletons as empty", () => {
+    expect(storyHasContent(emptySkeleton())).toBe(false);
+    expect(
+      storyHasContent({
+        ...emptySkeleton(),
+        shortVersion: [{ text: "did a thing", label: "observed", factIds: ["F1"] }],
+      }),
+    ).toBe(true);
+    expect(
+      storyHasContent({
+        ...emptySkeleton(),
+        askVsResult: {
+          asked: [{ text: "do a thing", label: "observed", factIds: ["F1"] }],
+          delivered: [],
+          extras: [],
+          missing: [],
+        },
+      }),
+    ).toBe(true);
+    // A model narration always counts, even with no cards.
+    expect(storyHasContent(modelDraft("add a greeting line"))).toBe(true);
+  });
+
+  it("drops content-free skeletons but keeps recording and meaningful sessions", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-story-filter-data-"));
+    const root = mkdtempSync(join(tmpdir(), "echo-story-filter-root-"));
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    try {
+      const projectId = "prj_filter";
+      upsertProject(db, { id: projectId, root, name: "filter" });
+      seedBareSession(db, projectId, root, dataDir, "ses_empty");
+      seedBareSession(db, projectId, root, dataDir, "ses_full");
+      seedBareSession(db, projectId, root, dataDir, "ses_recording");
+      writeStoryArtifact(db, dataDir, "ses_empty", emptySkeleton(), SKELETON_PROMPT_VERSION);
+      writeStoryArtifact(db, dataDir, "ses_full", modelDraft("add a greeting line"), "test-model");
+
+      const ids = filterEmptySessions(db, listSessions(db, projectId)).map((session) => session.id);
+      expect(ids.sort()).toEqual(["ses_full", "ses_recording"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps sessions whose story artifact is missing or unreadable", () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-story-filter-read-"));
+    const root = mkdtempSync(join(tmpdir(), "echo-story-filter-readroot-"));
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    try {
+      const projectId = "prj_filter";
+      upsertProject(db, { id: projectId, root, name: "filter" });
+      seedBareSession(db, projectId, root, dataDir, "ses_broken");
+      const brokenPath = join(dataDir, "ses_broken.story.json");
+      writeFileSync(brokenPath, "not json\n");
+      upsertArtifactRef(db, {
+        sessionId: "ses_broken",
+        kind: "story",
+        path: brokenPath,
+        tapeWatermark: { eventCount: 0, sha256: "broken" },
+        generator: SKELETON_PROMPT_VERSION,
+        generatedAt: ISO,
+      });
+      // Also points at a file that does not exist.
+      seedBareSession(db, projectId, root, dataDir, "ses_gone");
+      upsertArtifactRef(db, {
+        sessionId: "ses_gone",
+        kind: "story",
+        path: join(dataDir, "missing.story.json"),
+        tapeWatermark: { eventCount: 0, sha256: "gone" },
+        generator: SKELETON_PROMPT_VERSION,
+        generatedAt: ISO,
+      });
+
+      const ids = filterEmptySessions(db, listSessions(db, projectId)).map((session) => session.id);
+      expect(ids.sort()).toEqual(["ses_broken", "ses_gone"]);
     } finally {
       db.close();
     }

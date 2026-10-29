@@ -20,6 +20,7 @@ import {
   buildFileAttempts,
   buildFinalLineOrigins,
   type FileVersion,
+  type FinalLineOrigin,
   hunkFromParsed,
   linkHunkEvidence,
   type ParsedDiffHunk,
@@ -30,7 +31,15 @@ import {
 
 export interface SessionReviewOptions {
   maxEvents?: number;
+  /** Wall-clock budget for the git-bound loops below. Pathological
+   *  sessions (hundreds of snapshots × hundreds of files) otherwise spawn
+   *  tens of thousands of git reads and never answer a page load. When the
+   *  budget trips, remaining paths degrade to uncertain with a
+   *  `review_budget_exceeded` diagnostic instead of hanging. */
+  budgetMs?: number;
 }
+
+const REVIEW_BUDGET_MS_DEFAULT = 10_000;
 
 function textDecoder(): TextDecoder {
   return new TextDecoder("utf-8", { fatal: true });
@@ -174,88 +183,14 @@ export async function buildSessionReview(
   ].sort();
   if (changedPaths.length === 0) diagnostics.push("no_file_changes");
 
-  const cache = new Map<string, string | null>();
-  const versionsByPath = new Map<string, FileVersion[]>();
-  for (const path of changedPaths) {
-    const versions: FileVersion[] = [];
-    for (const snapshot of snapshots) {
-      const file = filesBySnapshot.get(snapshot.id)?.get(path);
-      versions.push({
-        snapshotId: snapshot.id,
-        commitOid: snapshot.commitOid,
-        trigger: snapshot.trigger,
-        eventId: snapshot.eventId,
-        takenAt: snapshot.takenAt,
-        text: await readVersionText(shadowDir, cache, file),
-        captured: file?.captured ?? false,
-        reason: file?.reason ?? (file ? null : "absent"),
-      });
-    }
-    versionsByPath.set(path, versions);
-  }
-
-  const diffsByTransition = new Map<string, ParsedDiffHunk[][]>();
-  for (const path of changedPaths) {
-    const versions = versionsByPath.get(path) ?? [];
-    const hunksByTransition: ParsedDiffHunk[][] = [];
-    for (let index = 0; index < versions.length - 1; index += 1) {
-      const parent = versions[index] as FileVersion;
-      const child = versions[index + 1] as FileVersion;
-      const parentFile = filesBySnapshot.get(parent.snapshotId)?.get(path);
-      const childFile = filesBySnapshot.get(child.snapshotId)?.get(path);
-      if (
-        parent.commitOid === child.commitOid ||
-        (parentFile?.blobOid === childFile?.blobOid &&
-          parentFile?.sha256 === childFile?.sha256 &&
-          parentFile?.captured === childFile?.captured)
-      ) {
-        hunksByTransition.push([]);
-        continue;
-      }
-      try {
-        const diff = diffShadowCommits(shadowDir, parent.commitOid, child.commitOid, path);
-        const parsed = parseUnifiedDiffs(diff);
-        hunksByTransition.push(parsed[0]?.hunks ?? []);
-      } catch (error) {
-        // One unreadable transition must not fail the whole review; the
-        // affected path degrades to uncertain downstream.
-        diagnostics.push(pathDiagnostic(path));
-        void error;
-        markPathUncertain(versions);
-        hunksByTransition.push([]);
-      }
-    }
-    diffsByTransition.set(path, hunksByTransition);
-  }
-
-  const hunks: TapeReviewHunk[] = [];
-  for (const path of changedPaths) {
-    try {
-      const diff = diffShadowCommits(shadowDir, baseline.commitOid, final.commitOid, path);
-      const parsed = parseUnifiedDiffs(diff);
-      for (const hunk of parsed[0]?.hunks ?? []) {
-        hunks.push(hunkFromParsed(path, hunk));
-      }
-    } catch (error) {
-      diagnostics.push(pathDiagnostic(path));
-      void error;
-      markPathUncertain(versionsByPath.get(path) ?? []);
-    }
-  }
-  const ranked = rankHunks(hunks.map(toHunkInput));
-  const riskByKey = new Map(
-    ranked.map((entry) => [
-      `${entry.hunk.path}:${entry.hunk.deletionStart}:${entry.hunk.deletionLines}:${entry.hunk.additionStart}:${entry.hunk.additionLines}`,
-      entry,
-    ]),
-  );
-  const scoredHunks = hunks.map((hunk) => {
-    const risk = riskByKey.get(
-      `${hunk.path}:${hunk.oldStart}:${hunk.oldLines}:${hunk.newStart}:${hunk.newLines}`,
-    );
-    return { ...hunk, riskScore: risk?.score ?? 0, riskReasons: risk?.reasons ?? [] };
-  });
-
+  // One pass per path: every path that finishes the pass owns complete
+  // versions, one diff per transition, its baseline-to-final hunks, and its
+  // attempt/origin attribution, so downstream code never sees a half-built
+  // path. A path that never starts (or is abandoned mid-pass) contributes
+  // nothing, exactly like an unreadable one. Budget checks ride along the
+  // pass, so a pathological session (hundreds of snapshots × hundreds of
+  // files, tens of thousands of git reads) degrades to a partial review
+  // with a diagnostic instead of hanging a page load.
   const events = readAllEvents(db, sessionId, true, options.maxEvents ?? 25_000);
   const eventById = new Map(events.map((event) => [event.event_id, event]));
   for (const event of events) {
@@ -283,30 +218,150 @@ export async function buildSessionReview(
       text: eventText(event),
     }));
 
+  const cache = new Map<string, string | null>();
+  const attemptsByPath = new Map<string, FileAttempt[]>();
+  const originsByPath = new Map<string, FinalLineOrigin[]>();
+  const hunks: TapeReviewHunk[] = [];
+  const deadline = Date.now() + (options.budgetMs ?? REVIEW_BUDGET_MS_DEFAULT);
+  let budgetExceeded = false;
+  for (const path of changedPaths) {
+    if (Date.now() > deadline) {
+      budgetExceeded = true;
+      break;
+    }
+    const versions: FileVersion[] = [];
+    let abandoned = false;
+    for (const snapshot of snapshots) {
+      // Mid-path check: one file with hundreds of versions must not spend
+      // minutes past the deadline; an abandoned path contributes nothing,
+      // exactly like a path that never started.
+      if (Date.now() > deadline) {
+        abandoned = true;
+        break;
+      }
+      const file = filesBySnapshot.get(snapshot.id)?.get(path);
+      versions.push({
+        snapshotId: snapshot.id,
+        commitOid: snapshot.commitOid,
+        trigger: snapshot.trigger,
+        eventId: snapshot.eventId,
+        takenAt: snapshot.takenAt,
+        text: await readVersionText(shadowDir, cache, file),
+        captured: file?.captured ?? false,
+        reason: file?.reason ?? (file ? null : "absent"),
+      });
+    }
+    if (abandoned) {
+      budgetExceeded = true;
+      break;
+    }
+    const hunksByTransition: ParsedDiffHunk[][] = [];
+    for (let index = 0; index < versions.length - 1; index += 1) {
+      if (Date.now() > deadline) {
+        abandoned = true;
+        break;
+      }
+      const parent = versions[index] as FileVersion;
+      const child = versions[index + 1] as FileVersion;
+      const parentFile = filesBySnapshot.get(parent.snapshotId)?.get(path);
+      const childFile = filesBySnapshot.get(child.snapshotId)?.get(path);
+      if (
+        parent.commitOid === child.commitOid ||
+        (parentFile?.blobOid === childFile?.blobOid &&
+          parentFile?.sha256 === childFile?.sha256 &&
+          parentFile?.captured === childFile?.captured)
+      ) {
+        hunksByTransition.push([]);
+        continue;
+      }
+      try {
+        const diff = diffShadowCommits(shadowDir, parent.commitOid, child.commitOid, path);
+        const parsed = parseUnifiedDiffs(diff);
+        hunksByTransition.push(parsed[0]?.hunks ?? []);
+      } catch (error) {
+        // One unreadable transition must not fail the whole review; the
+        // affected path degrades to uncertain downstream.
+        diagnostics.push(pathDiagnostic(path));
+        void error;
+        markPathUncertain(versions);
+        hunksByTransition.push([]);
+      }
+    }
+    if (abandoned) {
+      budgetExceeded = true;
+      break;
+    }
+    try {
+      const diff = diffShadowCommits(shadowDir, baseline.commitOid, final.commitOid, path);
+      const parsed = parseUnifiedDiffs(diff);
+      for (const hunk of parsed[0]?.hunks ?? []) {
+        hunks.push(hunkFromParsed(path, hunk));
+      }
+    } catch (error) {
+      diagnostics.push(pathDiagnostic(path));
+      void error;
+      markPathUncertain(versions);
+    }
+    // Attempt/origin tracing is pure CPU over this path's own complete data.
+    // A path this heavy already spent its git allowance above; if the clock
+    // ran out, keep the hunks and skip only the tracing for this path.
+    if (Date.now() > deadline) {
+      budgetExceeded = true;
+      continue;
+    }
+    const linksByTransition = versions.slice(1).map((version) => ({
+      eventId: version.eventId,
+      toolCallId: eventById.get(version.eventId ?? "")?.tool_call_id ?? null,
+      toolOutcome: null,
+      turnId: null,
+      batchId: null,
+    }));
+    attemptsByPath.set(
+      path,
+      buildFileAttempts({
+        path,
+        versions,
+        hunksByTransition,
+        linksByTransition,
+        finalText: versions[versions.length - 1]?.text ?? null,
+      }),
+    );
+    originsByPath.set(
+      path,
+      buildFinalLineOrigins({
+        versions,
+        hunksByTransition,
+        finalText: versions[versions.length - 1]?.text ?? "",
+      }),
+    );
+  }
+  const ranked = rankHunks(hunks.map(toHunkInput));
+  const riskByKey = new Map(
+    ranked.map((entry) => [
+      `${entry.hunk.path}:${entry.hunk.deletionStart}:${entry.hunk.deletionLines}:${entry.hunk.additionStart}:${entry.hunk.additionLines}`,
+      entry,
+    ]),
+  );
+  const scoredHunks = hunks.map((hunk) => {
+    const risk = riskByKey.get(
+      `${hunk.path}:${hunk.oldStart}:${hunk.oldLines}:${hunk.newStart}:${hunk.newLines}`,
+    );
+    return { ...hunk, riskScore: risk?.score ?? 0, riskReasons: risk?.reasons ?? [] };
+  });
+
   const attempts: FileAttempt[] = [];
   const evidenceByHunk: Record<string, HunkEvidence[]> = {};
   for (const path of changedPaths) {
-    const versions = versionsByPath.get(path) ?? [];
-    const hunksByTransition = diffsByTransition.get(path) ?? [];
-    const fileAttempts = buildFileAttempts({
-      path,
-      versions,
-      hunksByTransition,
-      linksByTransition: versions.slice(1).map((version) => ({
-        eventId: version.eventId,
-        toolCallId: eventById.get(version.eventId ?? "")?.tool_call_id ?? null,
-        toolOutcome: null,
-        turnId: null,
-        batchId: null,
-      })),
-      finalText: versions[versions.length - 1]?.text ?? null,
-    });
+    // Linking is pure CPU over one path's finished attribution; stop when
+    // the budget is gone. Unlinked hunks keep no evidence entry, which
+    // downstream reads as no evidence (uncertain), never as proof.
+    if (Date.now() > deadline) {
+      budgetExceeded = true;
+      break;
+    }
+    const fileAttempts = attemptsByPath.get(path) ?? [];
+    const origins = originsByPath.get(path) ?? [];
     attempts.push(...fileAttempts);
-    const origins = buildFinalLineOrigins({
-      versions,
-      hunksByTransition,
-      finalText: versions[versions.length - 1]?.text ?? "",
-    });
     for (const hunk of scoredHunks.filter((entry) => entry.path === path)) {
       evidenceByHunk[hunk.id] = linkHunkEvidence({
         hunk,
@@ -316,6 +371,8 @@ export async function buildSessionReview(
       });
     }
   }
+
+  if (budgetExceeded) diagnostics.push("review_budget_exceeded");
 
   return SessionReviewSchema.parse({
     sessionId,

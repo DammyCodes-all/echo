@@ -33,7 +33,7 @@ import { createMuseWatcher } from "./muse-watch";
 import { createProjectTechStackService } from "./project-tech-stack";
 import { buildSessionReview } from "./review-index";
 import { readSnapshotFile } from "./snapshot-view";
-import { createStoryService } from "./story";
+import { createStoryService, filterEmptySessions } from "./story";
 
 const VERSION = "0.1.0";
 const DEFAULT_PORT = 4783;
@@ -114,7 +114,9 @@ app.get<{ Params: { id: string } }>("/api/projects/:id", async (request, reply) 
 });
 
 app.get<{ Params: { id: string } }>("/api/projects/:id/sessions", async (request) =>
-  listSessions(db, request.params.id),
+  // Content-free skeletons ("no prompts, no changes") never reach the UI;
+  // recording sessions and unreadable artifacts stay visible.
+  filterEmptySessions(db, listSessions(db, request.params.id)),
 );
 
 app.get<{ Params: { id: string } }>("/api/projects/:id/files", async (request, reply) => {

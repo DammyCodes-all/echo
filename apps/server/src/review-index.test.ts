@@ -202,3 +202,93 @@ describe("buildSessionReview", () => {
     }
   });
 });
+
+describe("buildSessionReview budget", () => {
+  async function seedTwoSnapshots() {
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-review-budget-data-"));
+    const root = mkdtempSync(join(tmpdir(), "echo-review-budget-root-"));
+    const projectId = "prj_review_budget";
+    const sessionId = "ses_review_budget";
+    writeFileSync(join(root, "notes.txt"), "a\n");
+    const baseline = await takeSnapshot({
+      dataDir,
+      root,
+      sessionId,
+      projectId,
+      trigger: "baseline",
+      eventId: "evt_base",
+    });
+    writeFileSync(join(root, "notes.txt"), "a\nb\n");
+    const final = await takeSnapshot({
+      dataDir,
+      root,
+      sessionId,
+      projectId,
+      trigger: "final",
+      eventId: "evt_final",
+    });
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    upsertProject(db, { id: projectId, root, name: "review-budget" });
+    upsertSession(db, {
+      id: sessionId,
+      projectId,
+      agent: "opencode",
+      model: null,
+      directory: root,
+      title: "review budget",
+      startedAt: TAKEN_AT.toISOString(),
+      tapePath: join(dataDir, "tape.jsonl"),
+      captureQuality: "partial",
+    });
+    for (const snapshot of [baseline, final]) {
+      insertSnapshot(db, {
+        id: snapshot.commitOid,
+        sessionId,
+        commitOid: snapshot.commitOid,
+        parentOid: snapshot.parentOid,
+        trigger: snapshot.trigger,
+        eventId: snapshot.trigger === "baseline" ? "evt_base" : "evt_final",
+        takenAt: snapshot.takenAt,
+        fileCount: snapshot.fileCount,
+        totalBytes: snapshot.totalBytes,
+        status: snapshot.status,
+        diagnostics: snapshot.diagnostics,
+        files: snapshot.files.map((file) => ({
+          path: file.path,
+          mode: file.mode,
+          blobOid: file.blobOid,
+          size: file.size,
+          sha256: file.sha256,
+          captured: file.captured,
+          reason: file.reason,
+        })),
+      });
+    }
+    return { dataDir, db, sessionId };
+  }
+
+  it("finishes small sessions inside the default budget with no diagnostic", async () => {
+    const { dataDir, db, sessionId } = await seedTwoSnapshots();
+    try {
+      const review = await buildSessionReview(db, dataDir, sessionId);
+      expect(review.hunks).toHaveLength(1);
+      expect(review.diagnostics).not.toContain("review_budget_exceeded");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("degrades to a valid review with a diagnostic when the budget is already spent", async () => {
+    const { dataDir, db, sessionId } = await seedTwoSnapshots();
+    try {
+      // A negative budget puts the deadline in the past, so every loop
+      // trips deterministically on its first check.
+      const review = await buildSessionReview(db, dataDir, sessionId, { budgetMs: -1 });
+      expect(review.diagnostics).toContain("review_budget_exceeded");
+      expect(review.hunks).toEqual([]);
+      expect(review.attempts).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+});

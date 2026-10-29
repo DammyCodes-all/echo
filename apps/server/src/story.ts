@@ -21,6 +21,7 @@ import {
   getSession,
   getSessionSummary,
   readAllEvents,
+  type SessionSummary,
   setSessionCheckStatus,
   setSessionStoryState,
   upsertArtifactRef,
@@ -441,6 +442,45 @@ export function finalizeStory(args: {
     merged.push("intermediate states may not be captured");
   }
   return SessionStorySchema.parse({ ...dropped.story, blindSpots: merged });
+}
+
+/**
+ * Whether a session story carries anything worth showing: a model narration
+ * always counts, while a deterministic skeleton only counts when it found
+ * prompts or changes (cards, asked/delivered prompts, short version).
+ * Diagnostics alone (detours, loose ends, blind spots, gaps) are not content.
+ */
+export function storyHasContent(story: SessionStory): boolean {
+  if (!story.skeleton) return true;
+  if (story.cards.length > 0) return true;
+  if (story.shortVersion.length > 0) return true;
+  const asked = story.askVsResult;
+  return (
+    asked.asked.length > 0 ||
+    asked.delivered.length > 0 ||
+    asked.extras.length > 0 ||
+    asked.missing.length > 0
+  );
+}
+
+/**
+ * Drop sessions whose story is a content-free skeleton ("No prompts
+ * recorded, no file changes recorded.") from list responses. Sessions with
+ * no story yet (still recording) or an unreadable artifact are kept: absence
+ * of evidence is not evidence of emptiness.
+ */
+export function filterEmptySessions(db: EchoDb, sessions: SessionSummary[]): SessionSummary[] {
+  return sessions.filter((session) => {
+    const ref = getArtifactRef(db, session.id, "story");
+    if (!ref) return true;
+    try {
+      return storyHasContent(
+        SessionStorySchema.parse(JSON.parse(readFileSync(ref.path, "utf8")) as unknown),
+      );
+    } catch {
+      return true;
+    }
+  });
 }
 
 export function createStoryService(deps: StoryServiceDeps, options: StoryServiceOptions = {}) {
