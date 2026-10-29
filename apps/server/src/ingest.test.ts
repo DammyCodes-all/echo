@@ -211,7 +211,7 @@ describe("createIngest identity migration", () => {
   });
 
   it("a poison session does not starve the rest of the poll", async () => {
-    const { root, workDir } = await makeGitProject();
+    const { workDir } = await makeGitProject();
     const dataDir = mkdtempSync(join(tmpdir(), "echo-opencode-poison-data-"));
     const configDir = mkdtempSync(join(tmpdir(), "echo-opencode-poison-config-"));
     const source = makeTwoSessionSource([
