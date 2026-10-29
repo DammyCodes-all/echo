@@ -876,257 +876,199 @@ export function createMuseIngest(options: MuseIngestOptions) {
       if (!found.has(key)) stable.delete(key);
     }
     for (const sessionFile of found) {
-      result.scanned += 1;
-      let fingerprint: { size: number; ino: number };
       try {
-        const stat = statSync(sessionFile);
-        fingerprint = { size: stat.size, ino: stat.ino };
-      } catch (error) {
-        log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
-        continue;
-      }
-      if (fingerprint.size > MAX_LOG_BYTES) {
-        result.skipped += 1;
-        continue;
-      }
-      const sessionId = basename(dirname(sessionFile));
-      const childDir = join(dirname(sessionFile), "subagent");
-      const lanes: Array<{ lane: string; file: string }> = [{ lane: "", file: sessionFile }];
-      try {
-        for (const child of readdirSync(childDir).sort()) {
-          lanes.push({ lane: child, file: join(childDir, child, "session.jsonl") });
-        }
-      } catch {
-        // No child logs yet.
-      }
-      const sessionRow = getSession(db, sessionId);
-      const summary = sessionRow ? getSessionSummary(db, sessionId) : null;
-      const isNewSession = !sessionRow;
-      // Fast path: every lane already at EOF with a matching inode. Steady
-      // state is one stat plus one checkpoint select per lane per poll.
-      if (!isNewSession) {
-        let quiet = true;
-        for (const { lane, file } of lanes) {
-          let current: { size: number; ino: number } | null = null;
-          try {
-            const stat = statSync(file);
-            current = { size: stat.size, ino: stat.ino };
-          } catch {
-            current = null;
-          }
-          const checkpoint = getReaderCheckpoint(db, sessionId, lane);
-          if (
-            current === null ||
-            checkpoint === null ||
-            checkpoint.inode !== current.ino ||
-            current.size !== checkpoint.offset ||
-            current.size > MAX_LOG_BYTES
-          ) {
-            quiet = false;
-            break;
-          }
-        }
-        if (quiet) {
-          stable.set(sessionFile, (stable.get(sessionFile) ?? 0) + 1);
-          continue;
-        }
-      }
-      // Attribution without guessing: first-sight sessions probe the parent
-      // log once and resolve the repository identity (canonical root, remote);
-      // known sessions reuse their stored directory and re-resolve so moves
-      // and remote changes are picked up. Unattributed logs advance nothing,
-      // so a later project-enablement still ingests full history from offset
-      // zero.
-      let workspaceRoot: string | null = summary?.directory ?? null;
-      let identity: RepositoryIdentity | null = null;
-      let projectId: string | null = sessionRow?.projectId ?? null;
-      if (isNewSession) {
-        let probe: string;
+        result.scanned += 1;
+        let fingerprint: { size: number; ino: number };
         try {
-          probe = readFileSync(sessionFile, "utf8");
+          const stat = statSync(sessionFile);
+          fingerprint = { size: stat.size, ino: stat.ino };
         } catch (error) {
           log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
           continue;
         }
-        const foundWorkspace = extractWorkspaceRoot(probe);
-        if (!foundWorkspace) {
+        if (fingerprint.size > MAX_LOG_BYTES) {
           result.skipped += 1;
           continue;
         }
-        identity = await resolveEnabledIdentity(foundWorkspace, projects);
-        if (!identity) {
-          result.skipped += 1;
+        const sessionId = basename(dirname(sessionFile));
+        const childDir = join(dirname(sessionFile), "subagent");
+        const lanes: Array<{ lane: string; file: string }> = [{ lane: "", file: sessionFile }];
+        try {
+          for (const child of readdirSync(childDir).sort()) {
+            lanes.push({ lane: child, file: join(childDir, child, "session.jsonl") });
+          }
+        } catch {
+          // No child logs yet.
+        }
+        const sessionRow = getSession(db, sessionId);
+        const summary = sessionRow ? getSessionSummary(db, sessionId) : null;
+        const isNewSession = !sessionRow;
+        // Fast path: every lane already at EOF with a matching inode. Steady
+        // state is one stat plus one checkpoint select per lane per poll.
+        if (!isNewSession) {
+          let quiet = true;
+          for (const { lane, file } of lanes) {
+            let current: { size: number; ino: number } | null = null;
+            try {
+              const stat = statSync(file);
+              current = { size: stat.size, ino: stat.ino };
+            } catch {
+              current = null;
+            }
+            const checkpoint = getReaderCheckpoint(db, sessionId, lane);
+            if (
+              current === null ||
+              checkpoint === null ||
+              checkpoint.inode !== current.ino ||
+              current.size !== checkpoint.offset ||
+              current.size > MAX_LOG_BYTES
+            ) {
+              quiet = false;
+              break;
+            }
+          }
+          if (quiet) {
+            stable.set(sessionFile, (stable.get(sessionFile) ?? 0) + 1);
+            continue;
+          }
+        }
+        // Attribution without guessing: first-sight sessions probe the parent
+        // log once and resolve the repository identity (canonical root, remote);
+        // known sessions reuse their stored directory and re-resolve so moves
+        // and remote changes are picked up. Unattributed logs advance nothing,
+        // so a later project-enablement still ingests full history from offset
+        // zero.
+        let workspaceRoot: string | null = summary?.directory ?? null;
+        let identity: RepositoryIdentity | null = null;
+        let projectId: string | null = sessionRow?.projectId ?? null;
+        if (isNewSession) {
+          let probe: string;
+          try {
+            probe = readFileSync(sessionFile, "utf8");
+          } catch (error) {
+            log.error({ err: String(error), session_file: sessionFile }, "muse log unreadable");
+            continue;
+          }
+          const foundWorkspace = extractWorkspaceRoot(probe);
+          if (!foundWorkspace) {
+            result.skipped += 1;
+            continue;
+          }
+          identity = await resolveEnabledIdentity(foundWorkspace, projects);
+          if (!identity) {
+            result.skipped += 1;
+            continue;
+          }
+          workspaceRoot = foundWorkspace;
+          projectId = identity.projectId;
+        } else {
+          if (!workspaceRoot) {
+            result.skipped += 1;
+            continue;
+          }
+          identity = await resolveEnabledIdentity(workspaceRoot, projects);
+          if (!identity) {
+            // Project disabled since: hold every checkpoint, resume on re-enable.
+            result.skipped += 1;
+            continue;
+          }
+          projectId = sessionRow?.projectId ?? identity.projectId;
+        }
+        const startedFallback = hasEventKind(db, sessionId, "session.started");
+        const observedDate = new Date(observedAt);
+        const combined: TapeEvent[] = [];
+        const combinedDiagnostics: string[] = [];
+        let combinedPartial = false;
+        const referenced = new Map<string, number | null>();
+        const presentChildIds: string[] = [];
+        let parentGrew = false;
+        let laneFailed = false;
+        for (const { lane, file } of lanes) {
+          const outcome = tailLaneFile({
+            db,
+            log,
+            sessionId,
+            projectId,
+            lane,
+            file,
+            startedFallback:
+              startedFallback || combined.some((event) => event.kind === "session.started"),
+            observedAt: observedDate,
+            observedIso: observedAt,
+          });
+          if (outcome.status === "skipped") continue;
+          if (outcome.status === "failed") {
+            laneFailed = true;
+            continue;
+          }
+          if (lane === "") parentGrew = outcome.grew;
+          else presentChildIds.push(lane);
+          if (outcome.quality !== "full") combinedPartial = true;
+          combined.push(...outcome.events);
+          combinedDiagnostics.push(...outcome.diagnostics);
+          for (const [childId, recordedAtUs] of outcome.referenced) {
+            if (!referenced.has(childId)) referenced.set(childId, recordedAtUs);
+          }
+        }
+        // Referenced-but-absent child logs are gaps with subagent linkage,
+        // never invented actions. Same recordKeys as a full finalize.
+        for (const [childId, recordedAtUs] of referenced) {
+          if (presentChildIds.includes(childId)) continue;
+          if (getReaderCheckpoint(db, sessionId, childId)) continue;
+          combinedDiagnostics.push(`missing_child:${childId}`);
+          const { event } = buildTapeEvent({
+            kind: "capture.gap",
+            payload: { code: "missing_child", subagent_id: childId },
+            payloadType: null,
+            recordType: "gap",
+            sequence: null,
+            ts: isoFromUs(recordedAtUs),
+            recordKey: `muse:${sessionId}:gap:missing-child:${childId}`,
+            links: { ...emptyLinks(), subagent_id: childId, parent_session_id: sessionId },
+            diagnostics: ["missing_child"],
+            sessionId,
+            projectId,
+            build: null,
+            observedAt,
+            tapeSeq: combined.length,
+            schema: null,
+            origin: "live",
+          });
+          combined.push(event);
+        }
+        pruneReaderCheckpoints(db, sessionId, presentChildIds);
+        if (combined.length === 0 && !isNewSession) {
+          stable.set(sessionFile, laneFailed ? 0 : (stable.get(sessionFile) ?? 0) + 1);
           continue;
         }
-        workspaceRoot = foundWorkspace;
-        projectId = identity.projectId;
-      } else {
-        if (!workspaceRoot) {
-          result.skipped += 1;
-          continue;
+        // Quality is sticky: a partial tape never heals, but a degraded
+        // hook-only session adopts native capture once the log arrives.
+        let quality: CaptureQuality = combinedPartial ? "partial" : "full";
+        if (summary?.captureQuality === "partial") quality = "partial";
+        // Surface tail diagnostics in daemon logs: per-event diagnostics live
+        // on the tape and gaps get their own capture.gap events, but
+        // session-level notes would otherwise be invisible. Bounded: only logs
+        // when new bytes were ingested.
+        if (combinedDiagnostics.length > 0) {
+          log.info(
+            { session_id: sessionId, diagnostics: combinedDiagnostics },
+            "muse finalize diagnostics",
+          );
         }
-        identity = await resolveEnabledIdentity(workspaceRoot, projects);
-        if (!identity) {
-          // Project disabled since: hold every checkpoint, resume on re-enable.
-          result.skipped += 1;
-          continue;
-        }
-        projectId = sessionRow?.projectId ?? identity.projectId;
-      }
-      const startedFallback = hasEventKind(db, sessionId, "session.started");
-      const observedDate = new Date(observedAt);
-      const combined: TapeEvent[] = [];
-      const combinedDiagnostics: string[] = [];
-      let combinedPartial = false;
-      const referenced = new Map<string, number | null>();
-      const presentChildIds: string[] = [];
-      let parentGrew = false;
-      let laneFailed = false;
-      for (const { lane, file } of lanes) {
-        const outcome = tailLaneFile({
-          db,
-          log,
-          sessionId,
-          projectId,
-          lane,
-          file,
-          startedFallback:
-            startedFallback || combined.some((event) => event.kind === "session.started"),
-          observedAt: observedDate,
-          observedIso: observedAt,
+        // Same repo keeps its historic id across remote adds/removes and
+        // folder moves (one row per repository); sessions, tapes and the code
+        // index stay joined under it.
+        projectId = ensureIngestProject(db, {
+          id: projectId,
+          root: identity.canonicalRoot,
+          remoteUrl: identity.remoteUrl,
+          name: basename(identity.canonicalRoot),
         });
-        if (outcome.status === "skipped") continue;
-        if (outcome.status === "failed") {
-          laneFailed = true;
-          continue;
-        }
-        if (lane === "") parentGrew = outcome.grew;
-        else presentChildIds.push(lane);
-        if (outcome.quality !== "full") combinedPartial = true;
-        combined.push(...outcome.events);
-        combinedDiagnostics.push(...outcome.diagnostics);
-        for (const [childId, recordedAtUs] of outcome.referenced) {
-          if (!referenced.has(childId)) referenced.set(childId, recordedAtUs);
-        }
-      }
-      // Referenced-but-absent child logs are gaps with subagent linkage,
-      // never invented actions. Same recordKeys as a full finalize.
-      for (const [childId, recordedAtUs] of referenced) {
-        if (presentChildIds.includes(childId)) continue;
-        if (getReaderCheckpoint(db, sessionId, childId)) continue;
-        combinedDiagnostics.push(`missing_child:${childId}`);
-        const { event } = buildTapeEvent({
-          kind: "capture.gap",
-          payload: { code: "missing_child", subagent_id: childId },
-          payloadType: null,
-          recordType: "gap",
-          sequence: null,
-          ts: isoFromUs(recordedAtUs),
-          recordKey: `muse:${sessionId}:gap:missing-child:${childId}`,
-          links: { ...emptyLinks(), subagent_id: childId, parent_session_id: sessionId },
-          diagnostics: ["missing_child"],
-          sessionId,
-          projectId,
-          build: null,
-          observedAt,
-          tapeSeq: combined.length,
-          schema: null,
-          origin: "live",
-        });
-        combined.push(event);
-      }
-      pruneReaderCheckpoints(db, sessionId, presentChildIds);
-      if (combined.length === 0 && !isNewSession) {
-        stable.set(sessionFile, laneFailed ? 0 : (stable.get(sessionFile) ?? 0) + 1);
-        continue;
-      }
-      // Quality is sticky: a partial tape never heals, but a degraded
-      // hook-only session adopts native capture once the log arrives.
-      let quality: CaptureQuality = combinedPartial ? "partial" : "full";
-      if (summary?.captureQuality === "partial") quality = "partial";
-      // Surface tail diagnostics in daemon logs: per-event diagnostics live
-      // on the tape and gaps get their own capture.gap events, but
-      // session-level notes would otherwise be invisible. Bounded: only logs
-      // when new bytes were ingested.
-      if (combinedDiagnostics.length > 0) {
-        log.info(
-          { session_id: sessionId, diagnostics: combinedDiagnostics },
-          "muse finalize diagnostics",
-        );
-      }
-      const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
-      mkdirSync(dirname(tapePath), { recursive: true });
-      upsertProject(db, {
-        id: projectId,
-        root: identity.canonicalRoot,
-        remoteUrl: identity.remoteUrl,
-        name: basename(identity.canonicalRoot),
-      });
-      const snapshotRoot = findRepositoryRoot(workspaceRoot) ?? identity.canonicalRoot;
-      const preexisting = getSessionEventIds(db, sessionId);
-      let snapshotDegraded = false;
-      upsertSession(db, {
-        id: sessionId,
-        projectId,
-        agent: "muse",
-        model: null,
-        directory: workspaceRoot,
-        title: null,
-        startedAt: isNewSession
-          ? (combined[0]?.ts ?? null)
-          : (summary?.startedAt ?? combined[0]?.ts ?? null),
-        tapePath,
-        captureQuality: quality,
-      });
-      // Pin what produced this tape. The export schema version is filled in
-      // by the reconcile path; live polls preserve whatever is already there.
-      upsertSessionBuildPin(db, {
-        sessionId,
-        museVersion: currentMuseVersion(),
-        adapterVersion: ADAPTER_VERSION,
-        exportSchemaVersion: getSessionBuildPin(db, sessionId)?.exportSchemaVersion ?? null,
-        observedAt,
-      });
-      if (latestSnapshot(db, sessionId, "baseline") === null) {
-        const snap = await takeLiveSnapshot({
-          sessionId,
-          projectId,
-          tapePath,
-          root: snapshotRoot,
-          trigger: "baseline",
-          key: "initial",
-          observedAt,
-        });
-        result.eventsAdded += snap.added;
-        // A baseline taken after events already exist cannot recover the true
-        // pre-session state, so the session stays partial.
-        if (snap.failed || preexisting.size > 0) snapshotDegraded = true;
-      }
-      const existing = getSessionEventIds(db, sessionId);
-      const fresh = combined.filter((event: TapeEvent) => !existing.has(event.event_id));
-      if (fresh.length > 0) {
-        result.eventsAdded += persistFresh(sessionId, tapePath, fresh);
-        result.capturedSessions += 1;
-      }
-      const latestTool = [...fresh]
-        .reverse()
-        .find((event) => event.kind === "tool.completed" || event.kind === "tool.failed");
-      if (latestTool) {
-        const snap = await takeLiveSnapshot({
-          sessionId,
-          projectId,
-          tapePath,
-          root: snapshotRoot,
-          trigger: "tool.post",
-          key: latestTool.event_id,
-          observedAt,
-        });
-        result.eventsAdded += snap.added;
-        if (snap.failed) snapshotDegraded = true;
-      }
-      const sessionQuality: CaptureQuality =
-        quality === "full" && !snapshotDegraded ? "full" : "partial";
-      if (sessionQuality !== quality) {
+        const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
+        mkdirSync(dirname(tapePath), { recursive: true });
+        const snapshotRoot = findRepositoryRoot(workspaceRoot) ?? identity.canonicalRoot;
+        const preexisting = getSessionEventIds(db, sessionId);
+        let snapshotDegraded = false;
         upsertSession(db, {
           id: sessionId,
           projectId,
@@ -1134,12 +1076,81 @@ export function createMuseIngest(options: MuseIngestOptions) {
           model: null,
           directory: workspaceRoot,
           title: null,
-          startedAt: combined[0]?.ts ?? null,
+          startedAt: isNewSession
+            ? (combined[0]?.ts ?? null)
+            : (summary?.startedAt ?? combined[0]?.ts ?? null),
           tapePath,
-          captureQuality: sessionQuality,
+          captureQuality: quality,
         });
+        // Pin what produced this tape. The export schema version is filled in
+        // by the reconcile path; live polls preserve whatever is already there.
+        upsertSessionBuildPin(db, {
+          sessionId,
+          museVersion: currentMuseVersion(),
+          adapterVersion: ADAPTER_VERSION,
+          exportSchemaVersion: getSessionBuildPin(db, sessionId)?.exportSchemaVersion ?? null,
+          observedAt,
+        });
+        if (latestSnapshot(db, sessionId, "baseline") === null) {
+          const snap = await takeLiveSnapshot({
+            sessionId,
+            projectId,
+            tapePath,
+            root: snapshotRoot,
+            trigger: "baseline",
+            key: "initial",
+            observedAt,
+          });
+          result.eventsAdded += snap.added;
+          // A baseline taken after events already exist cannot recover the true
+          // pre-session state, so the session stays partial.
+          if (snap.failed || preexisting.size > 0) snapshotDegraded = true;
+        }
+        const existing = getSessionEventIds(db, sessionId);
+        const fresh = combined.filter((event: TapeEvent) => !existing.has(event.event_id));
+        if (fresh.length > 0) {
+          result.eventsAdded += persistFresh(sessionId, tapePath, fresh);
+          result.capturedSessions += 1;
+        }
+        const latestTool = [...fresh]
+          .reverse()
+          .find((event) => event.kind === "tool.completed" || event.kind === "tool.failed");
+        if (latestTool) {
+          const snap = await takeLiveSnapshot({
+            sessionId,
+            projectId,
+            tapePath,
+            root: snapshotRoot,
+            trigger: "tool.post",
+            key: latestTool.event_id,
+            observedAt,
+          });
+          result.eventsAdded += snap.added;
+          if (snap.failed) snapshotDegraded = true;
+        }
+        const sessionQuality: CaptureQuality =
+          quality === "full" && !snapshotDegraded ? "full" : "partial";
+        if (sessionQuality !== quality) {
+          upsertSession(db, {
+            id: sessionId,
+            projectId,
+            agent: "muse",
+            model: null,
+            directory: workspaceRoot,
+            title: null,
+            startedAt: combined[0]?.ts ?? null,
+            tapePath,
+            captureQuality: sessionQuality,
+          });
+        }
+        stable.set(sessionFile, laneFailed || parentGrew ? 0 : (stable.get(sessionFile) ?? 0) + 1);
+      } catch (error) {
+        // One poison log must not starve the rest of the poll.
+        log.error(
+          { err: String(error), session_file: sessionFile },
+          "muse session ingest failed, skipping",
+        );
       }
-      stable.set(sessionFile, laneFailed || parentGrew ? 0 : (stable.get(sessionFile) ?? 0) + 1);
     }
     await exportOnce(result, observedAt, found);
     return result;
