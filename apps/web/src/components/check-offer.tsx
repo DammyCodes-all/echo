@@ -37,13 +37,20 @@ export function CheckOffer({
 
   if (starting) {
     return (
-      <div className="flex flex-wrap items-center gap-4 rounded-dusk-card bg-dusk-surface px-6 py-5">
-        <p className="text-sm text-dusk-muted tabular-nums" aria-live="polite">
-          Starting… {elapsed}s — writing questions from the session.
-        </p>
-        <button type="button" onClick={onCancel} className={SECONDARY}>
-          Cancel
-        </button>
+      <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-5">
+        <div aria-hidden className="space-y-3 motion-safe:animate-pulse">
+          <div className="h-5 w-2/3 rounded-dusk-code bg-dusk-pill" />
+          <div className="h-9 w-full rounded-dusk-code bg-dusk-pill" />
+          <div className="h-9 w-5/6 rounded-dusk-code bg-dusk-pill" />
+        </div>
+        <div className="flex flex-wrap items-center gap-4">
+          <p className="text-sm text-dusk-muted tabular-nums" aria-live="polite">
+            Starting… {elapsed}s — writing questions from the session.
+          </p>
+          <button type="button" onClick={onCancel} className={SECONDARY}>
+            Cancel
+          </button>
+        </div>
       </div>
     );
   }

@@ -651,3 +651,10 @@ notes.
 - status: done
 - evidence: `pnpm exec vitest run packages/db` → 3 files / 25 passed; full `pnpm test` → 54 files / 443 passed; `tsc` clean; `biome` clean; `pnpm build` ok
 - notes: Root cause of the tech-stack 503s on existing projects, found by curling the endpoint (`code_index_missing`) then the reindex route (500 `no column named id`) and confirming via PRAGMA table_info. Daemon was down at diagnosis end — owner restarts it; v9 applies on boot.
+
+## 2026-10-29 — Web loading states → skeleton loaders
+
+- item: shared `Skeleton`/`SkeletonLines`/`SkeletonCard` (`apps/web/src/components/skeleton.tsx`); skeleton replacements for projects grid, architecture table, project-overview sessions grid + project-location bar, project-layout title, story page + check section, ask-thread bubbles, check-offer generating state; check-runner/verification-panel button texts kept as pending affordances
+- status: done
+- evidence: `pnpm typecheck` clean; `pnpm lint` clean on touched web files (1 pre-existing warning in server tech-stack test, untouched); `pnpm test` → 54 files / 443 passed; `pnpm build` ok; grep-clean of plain "Loading…" page states (4 remaining hits are button/progress texts: Asking…/Checking…/Starting…)
+- notes: Three parallel subagents with disjoint files (skeleton+projects+architecture / overview+layout / story+ask+check-offer); overview+layout and story slices inlined skeleton divs instead of importing the in-flight shared component — follow-up could migrate them to `Skeleton*` imports. No browser pass (same constraint as prior web entries); verified via bundle build + source grep. Stage and commit nothing.
