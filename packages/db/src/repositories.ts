@@ -438,6 +438,79 @@ export function listProjects(db: EchoDb): ProjectSummary[] {
   }));
 }
 
+export function getProject(db: EchoDb, projectId: string): ProjectSummary | null {
+  const row = db
+    .prepare(
+      `SELECT p.id, p.canonical_root AS root, p.remote_url AS remote_url, p.name,
+              COUNT(s.id) AS session_count, MAX(s.updated_at) AS last_activity
+       FROM projects p LEFT JOIN sessions s ON s.project_id = p.id
+       WHERE p.id = ? GROUP BY p.id`,
+    )
+    .get(projectId) as
+    | {
+        id: string;
+        root: string;
+        remote_url: string | null;
+        name: string | null;
+        session_count: number;
+        last_activity: string | null;
+      }
+    | undefined;
+  if (!row) return null;
+  return {
+    id: row.id,
+    root: row.root,
+    remoteUrl: row.remote_url,
+    name: row.name,
+    sessionCount: Number(row.session_count),
+    lastActivity: row.last_activity,
+  };
+}
+
+export interface ProjectFileTouch {
+  path: string;
+  sessionCount: number;
+  lastTouched: string;
+}
+
+// Agent-touched overlay (ARCHITECTURE §16): aggregate snapshot_files per
+// project. Deterministic, no model input. Capped with truncation flag so the
+// Architecture tab stays fast on large repos.
+export function listProjectTouchedFiles(
+  db: EchoDb,
+  projectId: string,
+  limit = 500,
+): { files: ProjectFileTouch[]; truncated: boolean } {
+  const bounded = Math.min(Math.max(limit, 1), 2000);
+  const rows = db
+    .prepare(
+      `SELECT sf.path AS path,
+              COUNT(DISTINCT s.id) AS session_count,
+              MAX(sn.taken_at) AS last_touched
+       FROM snapshot_files sf
+       JOIN snapshots sn ON sn.id = sf.snapshot_id
+       JOIN sessions s ON s.id = sn.session_id
+       WHERE s.project_id = ?
+       GROUP BY sf.path
+       ORDER BY session_count DESC, last_touched DESC
+       LIMIT ?`,
+    )
+    .all(projectId, bounded + 1) as Array<{
+    path: string;
+    session_count: number;
+    last_touched: string;
+  }>;
+  const truncated = rows.length > bounded;
+  return {
+    files: rows.slice(0, bounded).map((row) => ({
+      path: row.path,
+      sessionCount: Number(row.session_count),
+      lastTouched: row.last_touched,
+    })),
+    truncated,
+  };
+}
+
 export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
   const rows = db
     .prepare(

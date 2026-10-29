@@ -44,6 +44,20 @@ export const ProjectSummarySchema = z.object({
 });
 export type ProjectSummary = z.infer<typeof ProjectSummarySchema>;
 
+export const ProjectFileTouchSchema = z.object({
+  path: z.string().min(1),
+  sessionCount: z.number().int().nonnegative(),
+  lastTouched: z.string(),
+});
+export type ProjectFileTouch = z.infer<typeof ProjectFileTouchSchema>;
+
+export const ProjectFilesResponseSchema = z.object({
+  projectId: z.string().min(1),
+  files: z.array(ProjectFileTouchSchema),
+  truncated: z.boolean(),
+});
+export type ProjectFilesResponse = z.infer<typeof ProjectFilesResponseSchema>;
+
 export const SessionCheckStatusSchema = z.enum(["not_checked", "checked", "skipped"]);
 export type SessionCheckStatus = z.infer<typeof SessionCheckStatusSchema>;
 
