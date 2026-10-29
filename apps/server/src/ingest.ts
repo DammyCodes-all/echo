@@ -1,17 +1,20 @@
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
   importOpenCodeSession,
   listOpenCodeSessions,
+  type OpenCodeSessionSummary,
   readOpenCodeSession,
   sessionModelLabel,
 } from "@echo/capture-opencode";
 import { loadEchoConfig } from "@echo/config";
 import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import {
+  deleteEchoSession,
   type EchoDb,
   ensureIngestProject,
+  getSession,
   getSessionEventIds,
   getSessionRecordKeys,
   insertSnapshot,
@@ -20,6 +23,7 @@ import {
   maxSourceSequence,
   maxTapeSeq,
   type SnapshotInsert,
+  sessionHasUserData,
   upsertSession,
 } from "@echo/db";
 import {
@@ -89,12 +93,110 @@ export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOpt
     if (!config.opencode_db || !existsSync(config.opencode_db)) return result;
 
     const store = new DatabaseSync(config.opencode_db, { readOnly: true });
+
+    // Fold one Task-spawned child into its parent's tape. No session row,
+    // no snapshots: the parent's triggers cover the shared tree, and the
+    // lane keys dedupe against the parent tape across polls.
+    function ingestSubagentLane(child: OpenCodeSessionSummary): void {
+      if (!child.directory || !child.parentId) return;
+      if (!projectEnabled(child.directory, config.projects)) return;
+      const parentId = child.parentId;
+      const parentRow = getSession(db, parentId);
+      if (!parentRow) {
+        // Parent filtered out (disabled project) or not yet ingested: never
+        // invent a session for the child. It retries once the parent lands.
+        log.info(
+          { session_id: child.id, parent_session_id: parentId },
+          "opencode subagent without ingested parent, skipping",
+        );
+        return;
+      }
+      // Pre-lane orphans: rows minted for children before lane ingest
+      // existed. The import below restores their history on the parent
+      // lane; remove the row only when the user never touched it. Touched
+      // orphans stay as their own cards and skip the lane to avoid showing
+      // the same evidence twice.
+      if (getSession(db, child.id)) {
+        if (sessionHasUserData(db, child.id)) {
+          log.info(
+            { session_id: child.id },
+            "opencode subagent row has user data, keeping card and skipping lane",
+          );
+          return;
+        }
+        deleteEchoSession(db, child.id);
+        try {
+          rmSync(join(dataDir, "projects", parentRow.projectId, "sessions", child.id), {
+            recursive: true,
+            force: true,
+          });
+        } catch (error) {
+          log.error(
+            { err: String(error), session_id: child.id },
+            "orphan subagent dir not removed",
+          );
+        }
+      }
+      const imported = importOpenCodeSession(store, child, new Date(), {
+        projectId: parentRow.projectId,
+        lane: { parentSessionId: parentId, subagentId: child.id },
+      });
+      const tapePath = join(
+        dataDir,
+        "projects",
+        parentRow.projectId,
+        "sessions",
+        parentId,
+        "tape.jsonl",
+      );
+      mkdirSync(dirname(tapePath), { recursive: true });
+      // No sequence-reset/vanished checks here: child message seqs restart
+      // at 1 and lane keys are namespaced, so parent-domain comparisons
+      // would false-positive on every poll.
+      const existing = getSessionEventIds(db, parentId);
+      const fresh = imported.events.filter((event) => !existing.has(event.event_id));
+      if (fresh.length > 0) {
+        let seq = maxTapeSeq(db, parentId);
+        const writer = new TapeWriter(tapePath);
+        try {
+          for (const event of fresh) {
+            seq += 1;
+            event.tape_seq = seq;
+            writer.append(event);
+          }
+          writer.flush();
+        } finally {
+          writer.close();
+        }
+        result.eventsAdded += insertStampedEvents(db, parentId, fresh);
+        if (onSessionQuiescent) {
+          try {
+            onSessionQuiescent(parentId);
+          } catch (error) {
+            log.error({ err: String(error), session_id: parentId }, "story hook failed");
+          }
+        }
+      }
+    }
+
     try {
       const listed = listOpenCodeSessions(store);
       result.scanned = listed.length;
-      for (const summary of listed) {
+      // Subagent sessions (Task-spawned children) are folded into their
+      // parent's tape as a subagent lane, never as their own cards. Parents
+      // may sort after their children (time_created DESC), so ingest roots
+      // first, then children oldest-first so nested lanes resolve bottom-up.
+      const roots = listed.filter((summary) => !summary.parentId);
+      const lanes = listed
+        .filter((summary) => summary.parentId)
+        .sort((a, b) => (a.timeCreated ?? 0) - (b.timeCreated ?? 0));
+      for (const summary of [...roots, ...lanes]) {
         try {
           if (!summary.directory) continue;
+          if (summary.parentId) {
+            ingestSubagentLane(summary);
+            continue;
+          }
           const directory = summary.directory;
           const identity = await resolveRepositoryIdentity(directory);
           if (!projectEnabled(directory, config.projects)) continue;
