@@ -86,6 +86,7 @@ function learnBase() {
       wrong_and_knew_it: 0,
       never_looked: 0,
     },
+    nextUp: [],
     weakAreas: [{ file: "billing/retry.ts", confidentWrong: 1, total: 1 }],
     sessions: [
       {
@@ -339,5 +340,20 @@ describe("story-first contracts", () => {
     expect(
       ProjectLearnResponseSchema.safeParse({ ...learnBase(), bucketTotals: { solid: 1 } }).success,
     ).toBe(false);
+    expect(
+      ProjectLearnResponseSchema.safeParse({
+        ...learnBase(),
+        nextUp: [
+          {
+            sessionId: "ses_1",
+            title: null,
+            reason: "2 high-risk cards with no check yet",
+            highRiskUnpictured: 2,
+            neverLooked: 0,
+            lastActivity: "2026-10-29T00:00:00.000Z",
+          },
+        ],
+      }).success,
+    ).toBe(true);
   });
 });

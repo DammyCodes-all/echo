@@ -140,6 +140,14 @@ export function createLearnService(deps: { db: EchoDb; dataDir: string }): {
       checksStatus: ChecksLoad["status"];
       picture: CardPicture[];
     }> = [];
+    const candidates: Array<{
+      sessionId: string;
+      title: string | null;
+      reason: string;
+      highRiskUnpictured: number;
+      neverLooked: number;
+      lastActivity: string;
+    }> = [];
     let checkedCount = 0;
     let skippedCount = 0;
 
@@ -152,8 +160,11 @@ export function createLearnService(deps: { db: EchoDb; dataDir: string }): {
       if (story) {
         for (const card of story.cards) touchesByCard.set(card.id, card.touches);
       }
+      const pictured = new Set(checks.picture.map((entry) => entry.cardId));
+      let neverLooked = 0;
       for (const entry of checks.picture) {
         bucketTotals[entry.bucket] += 1;
+        if (entry.bucket === "never_looked") neverLooked += 1;
         const touches = touchesByCard.get(entry.cardId) ?? [];
         const bad = entry.bucket === "confident_but_wrong" || entry.bucket === "wrong_and_knew_it";
         for (const file of touches) {
@@ -161,6 +172,29 @@ export function createLearnService(deps: { db: EchoDb; dataDir: string }): {
           slot.total += 1;
           if (bad) slot.confidentWrong += 1;
           perFile.set(file, slot);
+        }
+      }
+      // Next-up queue: only sessions still awaiting a check. Checked and
+      // explicitly skipped sessions never queue; story-less sessions have no
+      // cards to ask about, so they stay out too.
+      if (session.checkStatus === "not_checked" && story && story.cards.length > 0) {
+        let highRiskUnpictured = 0;
+        for (const card of story.cards) {
+          if (card.highRisk && !pictured.has(card.id)) highRiskUnpictured += 1;
+        }
+        if (highRiskUnpictured > 0 || neverLooked > 0) {
+          const reason =
+            highRiskUnpictured > 0
+              ? `${highRiskUnpictured} high-risk card${highRiskUnpictured === 1 ? "" : "s"} with no check yet`
+              : `${neverLooked} card${neverLooked === 1 ? "" : "s"} never looked at`;
+          candidates.push({
+            sessionId: session.id,
+            title: session.title,
+            reason,
+            highRiskUnpictured,
+            neverLooked,
+            lastActivity: session.lastActivity,
+          });
         }
       }
       entries.push({
@@ -189,6 +223,16 @@ export function createLearnService(deps: { db: EchoDb; dataDir: string }): {
         total: counts.total,
       }));
 
+    const nextUp = candidates
+      .sort(
+        (a, b) =>
+          b.highRiskUnpictured - a.highRiskUnpictured ||
+          b.neverLooked - a.neverLooked ||
+          (a.lastActivity < b.lastActivity ? 1 : a.lastActivity > b.lastActivity ? -1 : 0) ||
+          (a.sessionId < b.sessionId ? -1 : 1),
+      )
+      .slice(0, 5);
+
     const body = {
       projectId,
       sessionCount: sessions.length,
@@ -197,6 +241,7 @@ export function createLearnService(deps: { db: EchoDb; dataDir: string }): {
       notCheckedCount: sessions.length - checkedCount - skippedCount,
       bucketTotals,
       weakAreas,
+      nextUp,
       sessions: entries,
     };
     // Fail fast if the response ever drifts from the contract.

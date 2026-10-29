@@ -676,6 +676,16 @@ export const LearnWeakAreaSchema = z.object({
 });
 export type LearnWeakArea = z.infer<typeof LearnWeakAreaSchema>;
 
+export const LearnNextUpEntrySchema = z.object({
+  sessionId: z.string().min(1),
+  title: z.string().nullable(),
+  reason: z.string().min(1),
+  highRiskUnpictured: z.number().int().nonnegative(),
+  neverLooked: z.number().int().nonnegative(),
+  lastActivity: z.string().min(1),
+});
+export type LearnNextUpEntry = z.infer<typeof LearnNextUpEntrySchema>;
+
 export const ProjectLearnResponseSchema = z.object({
   projectId: z.string().min(1),
   sessionCount: z.number().int().nonnegative(),
@@ -684,6 +694,7 @@ export const ProjectLearnResponseSchema = z.object({
   notCheckedCount: z.number().int().nonnegative(),
   bucketTotals: LearnBucketTotalsSchema,
   weakAreas: z.array(LearnWeakAreaSchema),
+  nextUp: z.array(LearnNextUpEntrySchema),
   sessions: z.array(LearnSessionEntrySchema),
 });
 export type ProjectLearnResponse = z.infer<typeof ProjectLearnResponseSchema>;

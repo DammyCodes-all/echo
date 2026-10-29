@@ -51,7 +51,7 @@ export function ProjectLearnPage() {
   }
 
   const data = learn.data;
-  if (data.checkedCount === 0) {
+  if (data.checkedCount === 0 && data.nextUp.length === 0) {
     return (
       <div className="rounded-dusk-card bg-dusk-surface p-8">
         <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Learn</p>
@@ -73,25 +73,55 @@ export function ProjectLearnPage() {
 
   return (
     <div className="space-y-6">
-      <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-        <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-          Calibration picture
-        </p>
-        <p className="mt-2 text-sm leading-6 text-dusk-ink">
-          {data.checkedCount} checked · {data.skippedCount} skipped · {data.notCheckedCount} not
-          checked · {totalCards} cards pictured
-        </p>
-        <dl className="mt-4 grid gap-3 sm:grid-cols-2">
-          {BUCKET_ORDER.map((bucket) => (
-            <div key={bucket} className="flex items-baseline justify-between gap-4 text-sm">
-              <dt className="text-dusk-muted">{BUCKET_LABELS[bucket]}</dt>
-              <dd className="font-semibold tabular-nums text-dusk-ink">
-                {data.bucketTotals[bucket as keyof typeof data.bucketTotals] ?? 0}
-              </dd>
-            </div>
-          ))}
-        </dl>
-      </div>
+      {data.nextUp.length > 0 ? (
+        <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
+          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Next up</p>
+          <ul className="mt-3 space-y-2 text-sm">
+            {data.nextUp.map((entry) => (
+              <li key={entry.sessionId}>
+                <Link
+                  to={`/sessions/${encodeURIComponent(entry.sessionId)}`}
+                  className="flex items-baseline justify-between gap-4 rounded-dusk-code px-2 py-1.5 transition-colors hover:bg-dusk-pill"
+                >
+                  <span className="truncate text-dusk-ink">
+                    {entry.title ?? "Untitled session"}
+                  </span>
+                  <span className="shrink-0 text-xs text-dusk-muted">{entry.reason}</span>
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      {data.checkedCount === 0 ? (
+        <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
+          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Learn</p>
+          <p className="mt-2 text-sm leading-6 text-dusk-muted">
+            No checks yet — the picture collects here once checks land. Start above.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
+          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+            Calibration picture
+          </p>
+          <p className="mt-2 text-sm leading-6 text-dusk-ink">
+            {data.checkedCount} checked · {data.skippedCount} skipped · {data.notCheckedCount} not
+            checked · {totalCards} cards pictured
+          </p>
+          <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+            {BUCKET_ORDER.map((bucket) => (
+              <div key={bucket} className="flex items-baseline justify-between gap-4 text-sm">
+                <dt className="text-dusk-muted">{BUCKET_LABELS[bucket]}</dt>
+                <dd className="font-semibold tabular-nums text-dusk-ink">
+                  {data.bucketTotals[bucket as keyof typeof data.bucketTotals] ?? 0}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      )}
 
       {data.weakAreas.length > 0 ? (
         <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">

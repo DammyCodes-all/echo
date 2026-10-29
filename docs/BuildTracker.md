@@ -852,3 +852,10 @@ notes.
 - status: done
 - evidence: `tsc` clean; `biome` clean on touched files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`); `pnpm exec vitest run packages/contracts apps/server/src/learn.test.ts apps/server/src/checks-v2.test.ts apps/server/src/story.test.ts` → 5 files / 63 passed; `pnpm build` exit 0; built web bundle carries the new copy. Full `pnpm test` shows 2 failures that reproduce on clean HEAD `5a587d8` in an isolated worktree (ingest identity-migration + eval harness ENOENT) — pre-existing, untouched by this slice
 - notes: Totals count picture entries across sessions that have a checks artifact; weak areas count confident_but_wrong/wrong_and_knew_it per story-card touch file (top 8). Corrupt/missing artifacts read as empty picture, never 500. User call honored: no next-up queue, empty-state only. pnpm-lock.yaml drift in the tree is environmental (packageManager `@pnpm/exe` entry), not mine. Nothing staged or committed.
+
+## 2026-10-29 — Learn v2: Next-up queue (deterministic, no model calls)
+
+- item: ranked `nextUp` (top 5) on `GET /api/projects/:id/learn` + `ProjectLearnPage` "Next up" section — not-checked sessions with high-risk cards lacking picture first, then never-looked counts, then recency; checked/skipped/story-less sessions never queue
+- status: done
+- evidence: `tsc` clean; `biome` clean on touched files (4 pre-existing infos in untouched `checks-v2.test.ts`); targeted `packages/contracts/src/api.test.ts + apps/server/src/learn.test.ts` → 19 passed; `pnpm build` exit 0 with "Next up" in the web bundle; full `pnpm test` → 464 passed + same 2 pre-existing failures verified on clean HEAD `5a587d8` (ingest identity-migration, eval harness ENOENT)
+- notes: Contracts gain `LearnNextUpEntry` + required `nextUp` on `ProjectLearnResponse` (total record, matching the v1 bucket-totals lesson). Reasons are plain counts ("N high-risk cards with no check yet" / "N cards never looked at"). Empty-state rule updated: the no-checks card shows only when the queue is also empty; with queue entries but zero checks, a slim "start above" note replaces the picture. Nothing staged or committed.

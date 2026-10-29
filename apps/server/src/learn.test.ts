@@ -37,7 +37,7 @@ function addSession(db: EchoDb, dataDir: string, sessionId: string): void {
   });
 }
 
-function makeCard(id: string, touches: string[]): ChangeCard {
+function makeCard(id: string, touches: string[], highRisk = false): ChangeCard {
   return {
     id,
     headline: `Change ${id}.`,
@@ -45,7 +45,7 @@ function makeCard(id: string, touches: string[]): ChangeCard {
     constituentActionIds: [],
     rank: 1,
     sessionOrder: 0,
-    highRisk: false,
+    highRisk,
     riskReasons: [],
     verification: "observed",
     why: [],
@@ -224,6 +224,62 @@ describe("learn service", () => {
       expect(outcome.status).toBe(200);
       const parsed = ProjectLearnResponseSchema.parse(outcome.body);
       expect(parsed.sessions[0]?.picture).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("queues not-checked high-risk sessions first, capped at 5", () => {
+    const { db, dataDir } = seedDb();
+    try {
+      for (let i = 0; i < 7; i += 1) addSession(db, dataDir, `ses_q${i}`);
+      for (let i = 0; i < 7; i += 1) {
+        writeStory(db, dataDir, `ses_q${i}`, [
+          makeCard("h_aaaaaaaaaaaaaaaa", ["billing/retry.ts"], true),
+        ]);
+      }
+      // Checked and skipped sessions never queue, even with risky cards.
+      setSessionCheckStatus(db, "ses_q5", "checked");
+      setSessionCheckStatus(db, "ses_q6", "skipped");
+
+      const outcome = createLearnService({ db, dataDir }).summary(PROJECT_ID);
+      expect(outcome.status).toBe(200);
+      const parsed = ProjectLearnResponseSchema.parse(outcome.body);
+      expect(parsed.nextUp).toHaveLength(5);
+      expect([...parsed.nextUp.map((entry) => entry.sessionId)].sort()).toEqual([
+        "ses_q0",
+        "ses_q1",
+        "ses_q2",
+        "ses_q3",
+        "ses_q4",
+      ]);
+      expect(parsed.nextUp[0]).toMatchObject({
+        highRiskUnpictured: 1,
+        reason: "1 high-risk card with no check yet",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("queues never-looked sessions behind unpictured high-risk ones", () => {
+    const { db, dataDir } = seedDb();
+    try {
+      addSession(db, dataDir, "ses_risk");
+      addSession(db, dataDir, "ses_seen");
+      writeStory(db, dataDir, "ses_risk", [
+        makeCard("h_aaaaaaaaaaaaaaaa", ["billing/retry.ts"], true),
+      ]);
+      writeStory(db, dataDir, "ses_seen", [makeCard("h_bbbbbbbbbbbbbbbb", ["docs/readme.md"])]);
+      writeChecks(db, dataDir, "ses_seen", "in_progress", [
+        { cardId: "h_bbbbbbbbbbbbbbbb", bucket: "never_looked", questionId: null },
+      ]);
+
+      const outcome = createLearnService({ db, dataDir }).summary(PROJECT_ID);
+      expect(outcome.status).toBe(200);
+      const parsed = ProjectLearnResponseSchema.parse(outcome.body);
+      expect(parsed.nextUp.map((entry) => entry.sessionId)).toEqual(["ses_risk", "ses_seen"]);
+      expect(parsed.nextUp[1]?.reason).toBe("1 card never looked at");
     } finally {
       db.close();
     }
