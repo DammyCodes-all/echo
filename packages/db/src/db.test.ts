@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendEvents,
   deriveEngagementTiers,
+  ensureIngestProject,
   getArtifactRef,
   getReaderCheckpoint,
   getSession,
@@ -607,5 +608,81 @@ describe("repositories", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: "ses_1", eventCount: 3, captureState: "recording" });
     db.close();
+  });
+});
+
+describe("ensureIngestProject", () => {
+  it("keeps the historic id when a remote appears on the same root", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_root", root: "/repo", remoteUrl: null, name: "repo" });
+      upsertSession(db, {
+        id: "ses_old",
+        projectId: "prj_root",
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: null,
+        startedAt: null,
+        tapePath: "/data/tape.jsonl",
+        captureQuality: "import_only",
+      });
+      // Remote added later: derived id changes, but the row (and its
+      // sessions) must stay joined instead of throwing UNIQUE(canonical_root).
+      const effective = ensureIngestProject(db, {
+        id: "prj_remote",
+        root: "/repo",
+        remoteUrl: "github.com/example/echo",
+        name: "repo",
+      });
+      expect(effective).toBe("prj_root");
+      const projects = listProjects(db);
+      expect(projects).toHaveLength(1);
+      expect(projects[0]).toMatchObject({
+        id: "prj_root",
+        remoteUrl: "github.com/example/echo",
+      });
+      expect(listSessions(db, "prj_root")).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("adopts a moved root when the remote matches", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, {
+        id: "prj_remote",
+        root: "/old/repo",
+        remoteUrl: "github.com/example/echo",
+        name: "repo",
+      });
+      const effective = ensureIngestProject(db, {
+        id: "prj_remote",
+        root: "/new/repo",
+        remoteUrl: "github.com/example/echo",
+        name: "repo",
+      });
+      expect(effective).toBe("prj_remote");
+      expect(listProjects(db)[0]).toMatchObject({ id: "prj_remote", root: "/new/repo" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("inserts truly new repositories", () => {
+    const db = openTestDb();
+    try {
+      const effective = ensureIngestProject(db, {
+        id: "prj_new",
+        root: "/other",
+        remoteUrl: null,
+        name: "other",
+      });
+      expect(effective).toBe("prj_new");
+      expect(listProjects(db)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
   });
 });
