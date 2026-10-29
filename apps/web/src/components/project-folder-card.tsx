@@ -42,7 +42,7 @@ function captureLine(session: SessionSummary): string | null {
 }
 
 function sessionFile(session: SessionSummary): FolderFile {
-  const when = shortTime(session.startedAt);
+  const when = shortTime(session.lastActivity);
   const first = session.model && when ? `${when} · ${session.model}` : (when ?? session.model);
   const captured = captureLine(session);
   return {
