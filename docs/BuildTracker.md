@@ -638,6 +638,72 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 54 files / 443 passed, `pnpm build` ok; new service tests 7/7, contract schema bounds test, db migration version list updated to v8
 - notes: Model drafts must trace every item to detected signals (frameworks/languages/top imports) or they are dropped; empty/invented drafts fall back to skeleton. First Overview visit on an unindexed project pays one local tree walk, then caches on the code-index files hash. No capture changes.
+## 2026-10-29 — Muse sessions missing: root/remote identity split + stranded checkpoints
+
+- item: `upsertProject` now converges on one row per repo (`packages/db/src/repositories.ts` returns the canonical id: existing `canonical_root` wins and absorbs the remote, else existing `remote_url` wins on folder moves, else insert; id-conflict path preserves a stored remote when the new write omits it) and all ingest call sites use the resolved id for sessions/tapes/shadow paths (`apps/server/src/ingest.ts`, `apps/server/src/muse-ingest.ts` spool + scan, `packages/capture-muse/src/import.ts`); archived the orphan `projects/prj_57257f…` dir to `/tmp/opencode/echo-orphan-prj_57257f-backup`
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 207 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 54 files / 437 passed + 8 skipped, `pnpm build` ok, `eval/muse-fixture` green; live DB: 0 → 9 muse rows under `prj_6e4d…` (echo 13 → 48 sessions), echo row gained `remote_url=github.com/DammyCodes-all/echo`; `GET /api/projects/<echo>/sessions` 200 with muse ids; headless Chrome: Echo folder hover opens with 3 real session sheets, Portfolio opens likewise
+- notes: Root cause was a mid-life remote appearance: repo gained `origin https://github.com/DammyCodes-all/echo` so identity flipped root-hash `prj_6e4d…` → remote-hash `prj_57257f…`; `upsertProject` only handled `ON CONFLICT(id)`, so the `canonical_root` UNIQUE throw aborted every ingest poll *after* reader checkpoints advanced — 7 sessions sat at EOF with no session/event rows and never retried, and opencode ingest was silently broken the same way (15 → 31+ sessions after the fix). No checkpoint reset was needed: the live daemon picked up the fix via tsx watch and re-ingested on the next polls. Drive-by: one-line `_service` rename for a committed unused binding in `apps/server/src/project-tech-stack.test.ts` (another author's file, zero behavior change) so the gate passes; formatter-only pass on the 5 touched files. Uncommitted web restyle in the tree (`REST_PEEK`, rest-lift CSS, grid) is not mine and untouched. Low-count sessions (0–2 events on some fresh muse logs) are parser coverage, out of scope.
+## 2026-10-29 — Header top margin
+
+- item: app header (`apps/web/src/layout.tsx`) gets `mt-4` so the Echo wordmark and settings gear sit 16px below the viewport top
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 208 files (4 pre-existing `useLiteralKeys` infos), `pnpm test` → 54 files / 437 passed + 8 skipped, web build ok; headless Chrome: `header.getBoundingClientRect().top` = 16, computed `margin-top` = 16px
+- notes: UI-only, single Tailwind class. HMR picked it up on the running dev server; no other layout touched.
+## 2026-10-29 — Header settings menu (glass, Echo-scoped)
+
+- item: settings entry in `AppLayout` header (`apps/web/src/layout.tsx` + new `apps/web/src/components/settings/settings-sheet.tsx`): gear trigger (`Settings01Icon` via `@hugeicons/react`, no new deps) opening a Dusk-glass dropdown (`blur(22px) saturate(1.5)`, `rounded-dusk-card`, hairline border) that degrades to a bottom sheet with scrim under 640px; contents filtered to real Echo settings — daemon status dot (ready/degraded/offline from `GET /api/health`), captured-repositories row (live `GET /api/projects`), copy-enable-command, Motion Full/Reduced segmented control (localStorage `echo-motion`, defaults to media query, sets `data-echo-motion` kill-switch), copy-support-info (version/mode/repo count, no secrets); dropped from the paste: Profile/Billing/plan/avatar, light/dark/system theme (Dusk is dark-only), presence statuses, Sign out. Full menu keyboard pattern (ArrowUp/Down/Home/End, Left/Right in group, wrap-around, Escape/Tab close + focus return, focus-in only on user intent, outside-pointerdown close, scroll lock for sheet).
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 208 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 54 files / 437 passed + 8 skipped, `pnpm build` ok; browser pass (playwright-core + system Chrome, user's live dev stack — HMR served the new code, no user processes touched): click opens panel, ArrowDown focuses Repositories, Escape closes + focus returns to trigger, wrap-around nav, Reduced radio persists `echo-motion=reduced`, zero page errors; 360px viewport renders bottom sheet, scrim tap closes; screenshots `/tmp/opencode/settings-desktop-open.png`, `/tmp/opencode/settings-mobile-sheet.png`
+- notes: No `motion`/`lucide-react` install (CSS transitions + existing HugeIcons); missing `user-menu.module.css` from the paste recreated as Dusk tokens, not ported; web-only, no API/capture/contract changes; UI exempt from vitest by repo rule. Concurrent session added header `mt-4` on top of this unit's `layout.tsx` edit — no conflict, both kept. Playwright-core lives in `/tmp/opencode/pw` (repo untouched); daemon port was held by the user's own daemon so the temp-dir daemon exited EADDRINUSE and the pass ran against real data.
+## 2026-10-29 — Header top margin mt-4 → mt-5
+
+- item: app header (`apps/web/src/layout.tsx`) bumped to `mt-5` per user request
+- status: done
+- evidence: `tsc` clean, `biome` 208 files (4 pre-existing infos), `pnpm test` → 54 files / 437 passed + 8 skipped; headless Chrome: header top = 20px
+- notes: Single-class follow-up to the mt-4 entry above.
+## 2026-10-29 — Settings pointer cursors
+
+- item: `cursor-pointer` on the settings gear trigger (`apps/web/src/components/settings/settings-sheet.tsx`) + pointer rule for menu rows and Motion radios in both panel and sheet variants
+- status: done
+- evidence: `biome` clean on the file, `tsc` clean; headless-Chrome computed-style check: trigger `pointer`, row `pointer`, radio `pointer`
+- notes: Class/CSS-only. Nothing staged or committed.
+## 2026-10-29 — Settings popover open animation
+
+- item: settings dropdown open motion switched to popover-style (`apps/web/src/components/settings/settings-sheet.tsx`, CSS-only): 150ms ease-out fade + zoom from 95% + 4px slide down from the trigger edge, origin top-right — matching the Radix/Animate-UI popover feel from the pasted reference (Vue + Animate-UI pastes not portable: React codebase, no `@animate-ui/react`/`cn`/shadcn deps installed); spring overshoot removed; mobile sheet keeps its own rise
+- status: done
+- evidence: `biome` clean on the file, `tsc` clean; headless-Chrome computed style confirms `echo-settings-in` at 0.15s, settled panel screenshot clean, zero page errors
+- notes: Nothing staged or committed.
+## 2026-10-29 — Settings leave animation
+
+- item: settings dropdown/sheet now animates closed as well as open (`apps/web/src/components/settings/settings-sheet.tsx`): `leaving` state holds the panel 140ms while `echo-settings-out` (fade + zoom to 95% + rise 4px) / `echo-settings-sheet-out` (fade + slide down 12px) / scrim fade-out play, then unmounts and returns focus; every dismiss path (Escape/Tab, scrim, outside press, trigger toggle, Repositories navigate-after-close) goes through `requestClose`, instant when reduced-motion is preferred, second close skips ahead, trigger click mid-leave cancels the exit and stays open
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 210 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 55 files / 439 passed + 8 skipped, `pnpm build` ok; browser pass (playwright-core + system Chrome, live dev stack): Escape/outside/scrim dismissals all show `data-leaving` + exit keyframes with unmount at ~150–170ms and focus back on the trigger, mid-leave trigger click stays open; zero page errors
+- notes: Mechanical `biome check --write` import-sorts on two concurrent-session files (`apps/server/src/index.ts`, `apps/server/src/muse-ingest.ts`) to restore the green gate — ordering only, their `ensureEnabledProjects` logic untouched. Probe scripts in `/tmp/opencode/pw` (`leave_verify*.mjs`, `leave_debug*.mjs`). Nothing staged or committed.
+## 2026-10-29 — Empty projects get folders (allowlist reconcile + no-sessions note)
+
+- item: new `ensureEnabledProjects` (`apps/server/src/enabled-projects.ts` + colocated test) materializes every enabled repo as a project row; wired into daemon boot (`index.ts`), each opencode poll (`ingest.ts`) and each muse poll with a fresh allowlist read (`muse-ingest.ts`, which previously pinned the boot-time list); `ProjectFolderCard` shows "No sessions yet — run a Muse or OpenCode session in this repo to capture one." when open with zero files and hides the "View all 0 sessions" link
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 210 files (4 pre-existing `useLiteralKeys` infos), `pnpm test` → 55 files / 439 passed + 8 skipped (incl. 2 new reconcile tests), `pnpm build` ok; live probe with throwaway `/tmp/echo-empty-probe` repo: `GET /api/projects` returned it with `sessionCount 0`, browser showed its card ("0 sessions") and hover opened it with the note visible; probe row + config entry fully reverted afterwards (config byte-identical, whitespace entry the user enabled kept)
+- notes: Side effect proving the earlier identity fix: the user's newly enabled `whitespace` repo materialized on the next poll as `prj_276624f…` with its remote filled and `0 sessions`, and Portfolio backfilled its remote (2 → 7 sessions as opencode ingest recovered). Muse sessions in a brand-new repo still need a daemon restart (muse scan's ingestion allowlist is boot-time; only the folder row is restart-free) — noted, not changed. Drive-by kept to the earlier `_service` rename; uncommitted web restyle in the tree is another author's and untouched.
+## 2026-10-29 — Project grid 3-up + folder peek sliver
+
+- item: projects grid is 3-up at xl / 2-up at md / 1-up base with `justify-between` (`apps/web/src/routes/projects.tsx`); closed folders peek one blank sheet above the pocket (`--gf-lift` rest value in `glass-folder-cards.tsx`, `REST_PEEK` pre-load sheet in `project-folder-card.tsx` when `total > 0`) with head/detail/lines faded to opacity 0 until open (new rest-fade CSS rule)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 210 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 55 files / 439 passed + 8 skipped, `pnpm build` ok; headless-Chrome probes (playwright-core + system Chrome, user's live dev stack, only the headless-false hover media query stubbed): grid tracks 3/2/1 at 1440/800/390px with space-between/center justification, 3-folder row screenshot (Echo/Portfolio/Whitespace), peek measured +8.4px above the front rim with head opacity 0, zoomed A/B (sheet forced hidden vs rest) proves the sliver reads as its own edge, 0-session folder renders 0 sheets (no peek), hover fans 3 sheets with real detail + 1 API call, leave closes, front click and keyboard Enter both reach `/projects/:id/overview`, focus previews with 3 sheets, zero page errors throughout
+- notes: Resumed from session `01a187c9` (died on a provider network failure mid-verification; todo + probe state recovered from its log). Two user steers honored en route ("a little too high", "just a small part visible"): the inherited `-6px` measured 12.3px *below* the rim (invisible — the trim had overshot), `-20px` gave a 1px hairline lost at 3x zoom, shipped `-28px` (+8.4px sliver, crisp edge, no detail). Concurrent session committed this unit's files as they landed (`aabd620` grid, `e3a0d72` REST_PEEK, `5bd1469` lift) plus their own staged empty-state note on the same card (verified untouched by this unit). One transient `tsc` red mid-gate was concurrent-edit churn (clean before and after; this unit's final edit is a CSS string literal). Probe scripts + screenshots under `/tmp/echo-grid2` and `/tmp/opencode/pw` (`grid-probe`, `rim`, `rim-ab`, `final`); temp sqlite snapshot `/tmp/echo-grid2/eda` unused after the user's own stack came up (their processes never touched; my stillborn daemon reaped). Nothing staged or committed by this session.
+## 2026-10-29 — Constrain empty-folder note width
+
+- item: "No sessions yet" note in `ProjectFolderCard` gets `max-w-80 text-center` so it wraps inside its own grid column instead of stretching the row and displacing sibling folders
+- status: done
+- evidence: `tsc` clean, `biome` 210 files (4 pre-existing infos), `pnpm test` → 55 files / 439 passed + 8 skipped, web build ok; headless Chrome at 1600px: folders at x=184/640/1096 (uniform pitch, whitespace open), screenshot shows the note wrapped in two centered lines under its folder
+- notes: Single-class follow-up; no behavior change.
+## 2026-10-29 — Settings trigger debadged
+
+- item: settings gear is now a bare icon button — removed the `bg-dusk-secondary` pill + hairline border from the trigger in `apps/web/src/components/settings/settings-sheet.tsx`; icon sits directly on the header in `dusk-muted`, brightening to `dusk-ink` on hover, focus ring unchanged
+- status: done
+- evidence: `biome` clean on the file, `tsc` clean; headless-Chrome close-up screenshot confirms gear with no background
+- notes: Class-only. Nothing staged or committed.
 ## 2026-10-29 — Overview sessions as individual cards (folder-item shape, dusk surface)
 
 - item: project overview "Agent sessions" list restyled from a divided row list to a 2-up grid of standalone `SessionCard`s (`apps/web/src/components/session-card.tsx`, new; `apps/web/src/routes/project-overview.tsx` rewired) — title (2-line clamp) + short-time · events meta + the existing check/high-risk/capture pills; first pass copied the folder sheet's neutral-gray gradient verbatim and clashed with the dusk surfaces, so the landed card keeps the folder item's shape on `bg-dusk-surface` with a 20px radius, drops the noisy full model string from the meta line, and pins badges to the card bottom
@@ -708,3 +774,9 @@ notes.
 - status: done
 - evidence: `tsc` clean, `biome` clean on the file, `pnpm build` ok; test evidence is the same window's 459/459 run (delta since is this web-only file, vitest-exempt)
 - notes: Poll stays 5s (recording→story freshness); not done: FLIP reorder animation, pagination/cap for large lists — offered as follow-ups if motion persists. No browser here; user confirms visually.
+## 2026-10-29 — Remote sync (merge origin/main, ingest identity + skeletons + search)
+
+- item: merged `origin/main` (`add2c5f`, 7 commits: `Skeleton` shared component + skeleton loaders across projects/architecture/overview/layout/story/ask/check-offer, `SessionCard` overview restyle, code_edges.id v9 heal) into local (16 commits); conflicts resolved — `ingest.ts` takes origin's `ensureIngestProject` mechanism over local's `upsertProject`-adopt (import block already expected it; merged `db` exports both) while keeping local's `ensureEnabledProjects` boot call and both sides' per-session poison guard (origin's try-wrap); `projects.tsx` keeps both remote skeleton loading and the stashed local search/sort toolbar (stash popped + dropped after resolution); `BuildTracker.md` concatenated; eval stamps taken from ours then regenerated by the suite
+- status: done
+- evidence: post-merge gate green — `tsc` clean, `biome` 211 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 55 files / 439 passed + 8 skipped, `pnpm build` ok
+- notes: Merge was blocked by an uncommitted in-flight search/sort edit on `projects.tsx` (another author's) — stashed before merging, popped and resolved after, stash dropped. One `--write` import-sort on the merged `projects.tsx`; earlier `--write` sorts on concurrent `index.ts`/`muse-ingest.ts` are ordering-only. Merge left open (staged, uncommitted) per user-owns-history; regenerated eval stamps left unstaged.

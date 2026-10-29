@@ -23,6 +23,7 @@ import Fastify, { type FastifyReply } from "fastify";
 import { createAskService } from "./ask";
 import { createChecksV2Service } from "./checks-v2";
 import { createCodeIndexService } from "./code-index";
+import { ensureEnabledProjects } from "./enabled-projects";
 import { createEngagementService } from "./engagement";
 import { loadLocalEnv } from "./env";
 import { createHistoryService } from "./history";
@@ -496,6 +497,8 @@ let museWatcher: { start: () => void; stop: () => void } | null = null;
 
 try {
   await app.listen({ host: HOST, port: resolvePort() });
+  // Enabled but sessionless repos get their folder (empty state) from boot.
+  await ensureEnabledProjects(db, config.projects, app.log);
   ingest.start();
   museIngest.start(config.poll_interval_ms);
   // The watcher only shortens poll latency: every event it reports also

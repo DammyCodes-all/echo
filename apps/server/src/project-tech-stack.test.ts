@@ -108,7 +108,7 @@ describe("project tech stack", () => {
   it("reports unknown projects without touching the model", () => {
     const { db, dataDir } = seedDb();
     try {
-      const service = createProjectTechStackService(
+      const _service = createProjectTechStackService(
         { db, dataDir, log: silentLog },
         { env: OFF_ENV },
       );

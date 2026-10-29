@@ -67,6 +67,9 @@ function canHover(): boolean {
 
 const HOVER_OPEN_DELAY_MS = 150;
 
+/** Pre-load peek: one blank sheet so the resting pocket isn't empty; the load remount swaps in real files. */
+const REST_PEEK: FolderFile[] = [{ name: "Loading sessions…" }];
+
 export function ProjectFolderCard({ project, index }: { project: ProjectSummary; index: number }) {
   const navigate = useNavigate();
   const [files, setFiles] = useState<FolderFile[] | null>(null);
@@ -198,7 +201,7 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
         tone="dark"
         art={DUSK_ART}
         seed={hashString(project.id)}
-        files={files ?? []}
+        files={files ?? (total > 0 ? REST_PEEK : [])}
         action="more"
         menu={[{ label: "Open project", onSelect: openProject }]}
         open={open}
@@ -211,7 +214,11 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
       {open ? (
         failed ? (
           <p className="text-sm text-dusk-muted">Could not load sessions.</p>
-        ) : (
+        ) : files !== null && files.length === 0 ? (
+          <p className="max-w-80 text-center text-sm text-dusk-muted">
+            No sessions yet — run a Muse or OpenCode session in this repo to capture one.
+          </p>
+        ) : total > 0 ? (
           <Link
             to={`/projects/${project.id}`}
             className="text-sm text-dusk-muted underline underline-offset-4 hover:text-dusk-ink"
@@ -221,7 +228,7 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
           >
             View all {total} session{total === 1 ? "" : "s"} →
           </Link>
-        )
+        ) : null
       ) : null}
     </div>
   );

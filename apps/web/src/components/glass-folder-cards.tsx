@@ -1021,10 +1021,10 @@ const GF_CSS = `
   --gf-ease: cubic-bezier(.2, .8, .2, 1);
   --gf-spring: cubic-bezier(.34, 1.36, .5, 1);
   --gf-hinge: 0deg;
-  --gf-lift: 42px;
+  --gf-lift: -28px;
   --gf-spread: 0px;
   --gf-fan: 0deg;
-  --gf-stack: 15px;
+  --gf-stack: 3px;
   --gf-ink: #141416;
   --gf-ink-soft: rgba(20, 20, 22, .55);
   position: relative;
@@ -1037,7 +1037,7 @@ const GF_CSS = `
   isolation: isolate;
 }
 .gf-root[data-tone="dark"] { --gf-ink: #f5f5f7; --gf-ink-soft: rgba(245, 245, 247, .58); }
-.gf-root:hover, .gf-root:focus-within { --gf-hinge: -11deg; --gf-lift: -34px; --gf-spread: 8px; --gf-fan: 1.4deg; --gf-stack: 10px; }
+.gf-root:hover, .gf-root:focus-within { --gf-hinge: -11deg; --gf-lift: -72px; --gf-spread: 8px; --gf-fan: 1.4deg; --gf-stack: 10px; }
 .gf-root[data-open] { --gf-hinge: -24deg; --gf-lift: -96px; --gf-spread: 40px; --gf-fan: 5deg; --gf-stack: 30px; }
 
 .gf-stage {
@@ -1247,6 +1247,9 @@ canvas.gf-sheet-art[data-ready] { opacity: 1; filter: none; }
   color: rgba(24, 24, 27, .62);
 }
 .gf-root[data-tone="dark"] .gf-sheet-detail-line { color: rgba(250, 250, 250, .66); }
+/* Rest shows blank paper above the glass; text belongs to the open fan. */
+.gf-sheet-head, .gf-sheet-detail, .gf-lines { transition: opacity .45s var(--gf-ease); }
+.gf-root:not([data-open]) .gf-sheet-head, .gf-root:not([data-open]) .gf-sheet-detail, .gf-root:not([data-open]) .gf-lines { opacity: 0; }
 
 .gf-sheet--drop { animation: gf-drop .85s var(--gf-ease) both; }
 @keyframes gf-drop {
