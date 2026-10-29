@@ -251,8 +251,17 @@ export async function importMuseSession(request: MuseImportRequest): Promise<Mus
     }
   }
 
-  const projectId = projectIdForDirectory(resolve(projectRoot));
+  let projectId = projectIdForDirectory(resolve(projectRoot));
   const observedIso = (request.observedAt ?? new Date()).toISOString();
+
+  const db = openEchoDb(join(request.dataDir, "echo.sqlite"));
+  // Adopt the canonical row for this root (a live adapter may have already
+  // claimed it under a remote-based id) before any tape path is computed.
+  projectId = upsertProject(db, {
+    id: projectId,
+    root: resolve(projectRoot),
+    name: basename(projectRoot),
+  });
   const shadowDir = join(request.dataDir, "projects", projectId, "shadow.git");
   const tapePath = join(
     request.dataDir,
@@ -263,10 +272,8 @@ export async function importMuseSession(request: MuseImportRequest): Promise<Mus
     "tape.jsonl",
   );
 
-  const db = openEchoDb(join(request.dataDir, "echo.sqlite"));
   try {
     mkdirSync(dirname(tapePath), { recursive: true });
-    upsertProject(db, { id: projectId, root: resolve(projectRoot), name: basename(projectRoot) });
     // Session row first: snapshots and events both reference it.
     upsertSession(db, {
       id: sessionId,
