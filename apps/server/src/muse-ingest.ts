@@ -559,7 +559,14 @@ export function createMuseIngest(options: MuseIngestOptions) {
         // Budget covers only entries that reach ingestion: files that can
         // never drain must not starve drainable ones behind the cap.
         processed += 1;
-        const projectId = identity.projectId;
+        // Same convergence as the scan path: adopt the canonical row before
+        // any tape path is computed so spool tapes land with the session row.
+        const projectId = upsertProject(db, {
+          id: identity.projectId,
+          root: identity.canonicalRoot,
+          remoteUrl: identity.remoteUrl,
+          name: basename(identity.canonicalRoot),
+        });
         const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
         const snapshotRoot = findRepositoryRoot(projectRoot) ?? identity.canonicalRoot;
         try {
@@ -584,12 +591,6 @@ export function createMuseIngest(options: MuseIngestOptions) {
           const isNewSession = !getSession(db, sessionId);
           if (isNewSession) {
             mkdirSync(dirname(tapePath), { recursive: true });
-            upsertProject(db, {
-              id: projectId,
-              root: identity.canonicalRoot,
-              remoteUrl: identity.remoteUrl,
-              name: basename(identity.canonicalRoot),
-            });
             // Hook-only bootstrap quality comes from the same function as
             // every other quality value: no native log was seen, so the
             // hookOnly floor (degraded) applies. Ingest persists, never decides.
@@ -970,6 +971,15 @@ export function createMuseIngest(options: MuseIngestOptions) {
         }
         projectId = sessionRow?.projectId ?? identity.projectId;
       }
+      // Converge on the canonical project row before tailing: a remote that
+      // appeared after the row was created must not split the repo in two or
+      // throw on the UNIQUE root and strand the session with no row.
+      projectId = upsertProject(db, {
+        id: projectId ?? identity.projectId,
+        root: identity.canonicalRoot,
+        remoteUrl: identity.remoteUrl,
+        name: basename(identity.canonicalRoot),
+      });
       const startedFallback = hasEventKind(db, sessionId, "session.started");
       const observedDate = new Date(observedAt);
       const combined: TapeEvent[] = [];
@@ -1053,12 +1063,6 @@ export function createMuseIngest(options: MuseIngestOptions) {
       }
       const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
       mkdirSync(dirname(tapePath), { recursive: true });
-      upsertProject(db, {
-        id: projectId,
-        root: identity.canonicalRoot,
-        remoteUrl: identity.remoteUrl,
-        name: basename(identity.canonicalRoot),
-      });
       const snapshotRoot = findRepositoryRoot(workspaceRoot) ?? identity.canonicalRoot;
       const preexisting = getSessionEventIds(db, sessionId);
       let snapshotDegraded = false;
