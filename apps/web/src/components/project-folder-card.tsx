@@ -87,6 +87,7 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
   const handleOpenChange = useCallback(
     (next: boolean) => {
       wantOpen.current = next;
+      if (!next) refocusOnLoad.current = false;
       if (next && !loadedRef.current) {
         // A second open while the fetch is in flight opens via the resolver below.
         if (!fetching.current) {
@@ -104,7 +105,14 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
               setTotal(sessions.length);
               setFiles(sessions.slice(0, 3).map(sessionFile));
               setFailed(false);
-              if (wantOpen.current) setOpen(true);
+              // The ready folder remounts closed (appear={false} below); flip
+              // to open over two frames so the first preview lifts from inside
+              // instead of dropping in or snapping open.
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  if (wantOpen.current) setOpen(true);
+                });
+              });
             },
             () => {
               fetching.current = false;
@@ -121,9 +129,8 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
   );
 
   useEffect(() => {
-    const should = files !== null && refocusOnLoad.current && open;
-    refocusOnLoad.current = false;
-    if (should) {
+    if (files !== null && open && refocusOnLoad.current) {
+      refocusOnLoad.current = false;
       wrapRef.current?.querySelector<HTMLElement>(".gf-hit")?.focus({ preventScroll: true });
     }
   }, [files, open]);
@@ -197,8 +204,8 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
         onOpenChange={handleOpenChange}
         onHitActivate={openProject}
         width={320}
-        appear
-        appearDelay={index * 120}
+        appear={files === null}
+        appearDelay={files === null ? index * 120 : 0}
       />
       {open ? (
         failed ? (
