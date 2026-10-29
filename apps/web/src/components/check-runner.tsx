@@ -181,7 +181,7 @@ export function CheckRunner({
           <button
             type="button"
             onClick={() => setRevealedId(null)}
-            className="rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white"
+            className="rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
           >
             {unanswered.length > 0 ? "Next" : "See your picture"}
           </button>
@@ -206,7 +206,7 @@ export function CheckRunner({
         <button
           type="button"
           onClick={onDone}
-          className="rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white"
+          className="rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
         >
           See your picture
         </button>
@@ -249,10 +249,10 @@ export function CheckRunner({
                 setError(null);
               }}
               disabled={pending}
-              className={`rounded-dusk-code px-3 py-2 text-sm disabled:opacity-40 ${
+              className={`rounded-dusk-code px-3 py-2 text-sm disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent ${
                 confidence === option.value
-                  ? "bg-dusk-ink text-white"
-                  : "bg-dusk-pill text-dusk-ink"
+                  ? "bg-dusk-accent font-semibold text-dusk-base"
+                  : "bg-dusk-pill text-dusk-muted hover:text-dusk-ink"
               }`}
             >
               {option.label}
@@ -313,7 +313,7 @@ export function CheckRunner({
             type="button"
             onClick={submit}
             disabled={!canSubmit}
-            className="rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white disabled:opacity-40"
+            className="rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40"
           >
             {pending ? "Checking…" : "Submit answer"}
           </button>
