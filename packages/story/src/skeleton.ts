@@ -194,7 +194,11 @@ export function buildSkeletonStory(facts: FactSet, meta: SkeletonMeta): Skeleton
   const prompts = facts.facts.filter((fact): fact is PromptFact => fact.kind === "prompt");
   const gaps = facts.facts.filter((fact): fact is GapFact => fact.kind === "gap");
 
-  const shortVersion: StoryClaim[] = prompts.map((prompt) => ({
+  // Short version carries what was delivered, not what was asked: the
+  // skeleton has no delivered evidence, so it stays empty (the UI hides the
+  // section) instead of echoing prompts that askVsResult.asked already shows.
+  const shortVersion: StoryClaim[] = [];
+  const asked: StoryClaim[] = prompts.map((prompt) => ({
     text: prompt.text,
     label: "observed",
     factIds: [prompt.id],
@@ -274,7 +278,7 @@ export function buildSkeletonStory(facts: FactSet, meta: SkeletonMeta): Skeleton
     summary: `${promptPart}, ${changePart}.`,
     skeleton: true,
     shortVersion,
-    askVsResult: { asked: [...shortVersion], delivered: [], extras: [], missing: [] },
+    askVsResult: { asked, delivered: [], extras: [], missing: [] },
     cards,
     routineSummary,
     detours,
