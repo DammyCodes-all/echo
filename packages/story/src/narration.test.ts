@@ -1,3 +1,4 @@
+import { STORY_SUMMARY_MAX_CHARS, STORY_SUMMARY_MAX_SENTENCES } from "@echo/contracts";
 import { buildAllStorySessions } from "@echo/fixtures";
 import { describe, expect, it } from "vitest";
 import { extractFacts, type FactSet } from "./facts";
@@ -38,6 +39,15 @@ describe("buildNarrationMessages", () => {
     expect(messages.system).toContain("fact IDs");
     expect(messages.system).toContain("server recomputes");
     expect(messages.system).toContain("h_");
+  });
+
+  it("caps the summary to a one-sentence card headline", () => {
+    // The prompt line is worded singular; reword it if the enforcer changes.
+    expect(STORY_SUMMARY_MAX_SENTENCES).toBe(1);
+    const facts = factsFor("research");
+    const messages = buildNarrationMessages(facts, "ses_test");
+    expect(messages.system).toContain("one short plain sentence");
+    expect(messages.system).toContain(String(STORY_SUMMARY_MAX_CHARS));
   });
 
   it("renders hunks with risk signals and code sides", () => {

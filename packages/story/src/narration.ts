@@ -1,3 +1,4 @@
+import { STORY_SUMMARY_MAX_CHARS } from "@echo/contracts";
 import type { Fact, FactSet } from "./facts";
 
 /**
@@ -77,9 +78,10 @@ const SYSTEM_PROMPT = [
   "capture gaps only; routineSummary is set only when every hunk is mechanical, else null.",
   "Set verification to nothing, highRisk to false, riskReasons to [] and verifiedCounts",
   "to zeros — the server recomputes them deterministically. Set skeleton to false and echo",
-  "the session id and watermark; the server restamps them. shortVersion holds 2-3",
-  "delivered outcomes only (what changed or shipped), never prompt echoes; leave it",
-  "empty when no delivery is evidenced.",
+  "the session id and watermark; the server restamps them.",
+  `summary is a card headline: one short plain sentence, at most ${STORY_SUMMARY_MAX_CHARS} characters total.`,
+  "shortVersion holds 2-3 delivered outcomes only (what changed or shipped),",
+  "never prompt echoes; leave it empty when no delivery is evidenced.",
   "Shape: {schemaVersion: 1, sessionId, generatedAt, generator: {kind: model, model,",
   "promptVersion}, tapeWatermark: {eventCount, sha256}, summary, skeleton, shortVersion:",
   "claim[], askVsResult: {asked, delivered, extras, missing}, cards: [{id, headline,",
