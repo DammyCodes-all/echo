@@ -3,7 +3,7 @@ import type { ReactNode } from "react";
 type ScaffoldPageProps = {
   eyebrow: string;
   title: string;
-  description: string;
+  description: ReactNode;
   children?: ReactNode;
 };
 
