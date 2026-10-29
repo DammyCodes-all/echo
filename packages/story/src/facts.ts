@@ -382,7 +382,7 @@ const PATH_FLAGS: Array<{ flag: BlastFlagName; pattern: RegExp; boundary: string
 ];
 
 const DESTRUCTIVE_PATTERN =
-  /rm\s+-rf?\s+[\/~.]|git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f[a-z]*d[a-z]*|DROP\s+(TABLE|DATABASE)|TRUNCATE\s+TABLE|deleteMany\s*\(|deleteFrom\s*\(|mkfs\b|:\(\)\s*\{/i;
+  /rm\s+-rf?\s+[/~.]|git\s+reset\s+--hard|git\s+clean\s+-[a-z]*f[a-z]*d[a-z]*|DROP\s+(TABLE|DATABASE)|TRUNCATE\s+TABLE|deleteMany\s*\(|deleteFrom\s*\(|mkfs\b|:\(\)\s*\{/i;
 const PRODUCTION_COMMAND = /deploy|release|prod/i;
 
 // Large-mechanical-diff boost threshold (lines). Provisional until the
