@@ -5,4 +5,5 @@ export * from "./config";
 export * from "./evidence";
 export * from "./snapshot";
 export * from "./source";
+export * from "./summary";
 export * from "./tape";
