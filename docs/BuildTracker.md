@@ -497,3 +497,16 @@ notes.
 - status: done
 - evidence: previewed read-only (7 conflict files: 4 code + tracker + 2 eval); resolved: adopted remote's shared PRIMARY/SECONDARY pill constants everywhere (adding the missing focus-visible rings), remote's selected-option wash style, remote's AbortController cancel wiring (refs, signal plumbing, onCancel) into the merged CheckOffer call; kept local UX structure (tabClass tabs, panel/aside/ids, ask rows, destructive pin/dismiss, ShortVersion guard); BuildTracker concatenated; eval files from ours then regenerated; post-merge gate green — `tsc` clean, `biome` 187 files (4 pre-existing-pattern infos), `pnpm test` → 48 files / 404 passed + 8 skipped, `pnpm build` ok; headless-browser render check of the merged story page (panel, tabs, delivered Short version, ask rows, untested ends all correct)
 - notes: Both sides independently fixed the same white-on-white button bug with the same colors — took remote's canonical constants as the system. Remote's `onCancel`/abort path is adopted unwired-tested (no live cancel click headless); typecheck + build cover the wiring. Merge left open (uncommitted) per user-owns-history; regenerated eval stamps left unstaged.
+## 2026-10-29 — Project tabs: Overview / Learn / Architecture
+
+- item: project shell with tab nav (`overview`/`learn`/`architecture`, index redirects to overview); Overview = purpose + current-state stats + tech-stack line + agent sessions list; Learn = empty placeholder; Architecture = agent-touched file overlay (`GET /api/projects/:id`, `GET /api/projects/:id/files`, `listProjectTouchedFiles` + `getProject`, contracts `ProjectFileTouch/FilesResponse`)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 190 files clean (infos only), `pnpm test` → 49 files / 411 passed, `pnpm build` ok; built web bundle contains Overview/Learn/Architecture copy and new project/files fetchers
+- notes: Full ts-morph import graph stays cut — Architecture labels itself as snapshot overlay only, no model summary. Old `ProjectPage` route removed; `/projects/:id` redirects to `overview`. No capture changes; DB addition covered by `project-overview.test.ts`.
+
+## 2026-10-29 — Full-width layout, chrome trim
+
+- item: removed `max-w-6xl` page constraint (header/main/footer now full-width `px-6`); removed header bottom border + Projects/Demo nav; removed footer
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 190 files clean (4 pre-existing infos), `pnpm test` → 49 files / 411 passed, `pnpm build` ok; built web bundle no longer contains footer copy
+- notes: UI-only (`apps/web/src/layout.tsx`). ScaffoldPage `max-w-2xl` header text kept for readability; page body is full width.
