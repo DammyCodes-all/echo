@@ -1,6 +1,7 @@
 import type { ProjectSummary } from "@echo/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import { api } from "../api";
 import { ProjectFolderCard } from "../components/project-folder-card";
 import { ScaffoldPage } from "../components/scaffold-page";
@@ -38,8 +39,21 @@ export function ProjectsPage() {
     queryFn: api.projects,
     refetchInterval: 5000,
   });
-  const [query, setQuery] = useState("");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [query, setQuery] = useState(() => searchParams.get("q") ?? "");
   const [sort, setSort] = useState<SortKey>("activity");
+
+  // The header search drives the filter through `?q=`; stay in sync when it
+  // (or history navigation) changes the param under us.
+  useEffect(() => {
+    const q = searchParams.get("q") ?? "";
+    setQuery((prev) => (prev === q ? prev : q));
+  }, [searchParams]);
+
+  function changeQuery(next: string): void {
+    setQuery(next);
+    setSearchParams(next === "" ? {} : { q: next }, { replace: true });
+  }
 
   const visible = useMemo(() => {
     const list = (projects.data ?? []).filter((project) => matchesQuery(project, query));
@@ -105,7 +119,7 @@ export function ProjectsPage() {
             id="project-search"
             type="search"
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => changeQuery(event.target.value)}
             placeholder="Search by name, path, or remote…"
             autoComplete="off"
             className="min-w-0 flex-1 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink outline-none placeholder:text-dusk-muted"
@@ -149,7 +163,7 @@ export function ProjectsPage() {
           <p className="text-sm text-dusk-muted">No projects match “{query.trim()}”.</p>
           <button
             type="button"
-            onClick={() => setQuery("")}
+            onClick={() => changeQuery("")}
             className="mt-3 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm font-semibold text-dusk-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
           >
             Clear search
