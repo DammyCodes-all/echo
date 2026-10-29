@@ -170,22 +170,69 @@ export function gradeRubric(check: Check, answerText: string, hits: RubricHit[])
 // `demonstration` is always null.
 
 /**
- * Pick target card ids for a check set: riskiest first (highRisk desc, then
- * rank asc), capped at `limit` — and never padded (small sessions yield
- * fewer targets; zero cards yields none). Then one engaged spot-check: if no
- * pick is `engaged` but some card is, swap the lowest-priority non-highRisk
- * pick for the best-ranked engaged card. Single swap max; all-highRisk picks
- * never swap (risk outranks the nudge).
+ * Weak picture buckets: the card was answered wrong. Learn's weak-area rule
+ * and check targeting share this predicate so display and selection never
+ * drift apart.
+ */
+export function isWeakPictureBucket(bucket: PictureBucket): boolean {
+  return bucket === "confident_but_wrong" || bucket === "wrong_and_knew_it";
+}
+
+/**
+ * Per-file touch counts split by weak picture entries. One entry per
+ * pictured card: the card's story touches plus whether its bucket is weak.
+ * Weak files are keys with confidentWrong > 0.
+ */
+export function weakFileCounts(
+  entries: Array<{ touches: string[]; weak: boolean }>,
+): Map<string, { confidentWrong: number; total: number }> {
+  const counts = new Map<string, { confidentWrong: number; total: number }>();
+  for (const entry of entries) {
+    for (const file of entry.touches) {
+      const slot = counts.get(file) ?? { confidentWrong: 0, total: 0 };
+      slot.total += 1;
+      if (entry.weak) slot.confidentWrong += 1;
+      counts.set(file, slot);
+    }
+  }
+  return counts;
+}
+
+/** Files with at least one weak picture entry (confidentWrong > 0). */
+export function weakFiles(entries: Array<{ touches: string[]; weak: boolean }>): Set<string> {
+  const weak = new Set<string>();
+  for (const [file, counts] of weakFileCounts(entries)) {
+    if (counts.confidentWrong > 0) weak.add(file);
+  }
+  return weak;
+}
+
+/**
+ * Pick target card ids for a check set: riskiest first (highRisk desc), then
+ * cross-session weak touches (cards touching files the project got wrong
+ * before rank above same-risk cards touching only fresh files), then rank
+ * asc — capped at `limit`, never padded (small sessions yield fewer targets;
+ * zero cards yields none). Then one engaged spot-check: if no pick is
+ * `engaged` but some card is, swap the lowest-priority non-highRisk pick for
+ * the best-ranked engaged card. Single swap max; all-highRisk picks never
+ * swap (risk outranks the nudge). The weak signal never outranks highRisk
+ * either: it reorders within a risk tier only.
  */
 export function selectTargets(
   cards: ChangeCard[],
   tiers: Record<string, EngagementTier>,
   limit = 5,
+  weakFiles?: ReadonlySet<string>,
 ): string[] {
   if (cards.length === 0) return [];
+  const weakTouches = (card: ChangeCard): number =>
+    weakFiles === undefined ? 0 : card.touches.filter((file) => weakFiles.has(file)).length;
   const ordered = [...cards].sort(
     (a, b) =>
-      Number(b.highRisk) - Number(a.highRisk) || a.rank - b.rank || a.id.localeCompare(b.id),
+      Number(b.highRisk) - Number(a.highRisk) ||
+      weakTouches(b) - weakTouches(a) ||
+      a.rank - b.rank ||
+      a.id.localeCompare(b.id),
   );
   const picked = ordered.slice(0, Math.max(0, Math.min(limit, ordered.length)));
   const hasEngaged = picked.some((card) => tiers[card.id] === "engaged");

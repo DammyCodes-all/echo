@@ -276,6 +276,146 @@ describe("createChecksV2Service", () => {
     }
   });
 
+  it("generate prefers cards touching files the project got wrong before", async () => {
+    const { db, dataDir } = seedDb("ses_xnow");
+    try {
+      upsertSession(db, {
+        id: "ses_xpast",
+        projectId: PROJECT_ID,
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: "past",
+        startedAt: ISO,
+        tapePath: join(dataDir, "tape-past.jsonl"),
+        captureQuality: "partial",
+      });
+      upsertSession(db, {
+        id: "ses_xnow",
+        projectId: PROJECT_ID,
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: "now",
+        startedAt: ISO,
+        tapePath: join(dataDir, "tape-now.jsonl"),
+        captureQuality: "partial",
+      });
+      // Past session: one card on db/store.ts, answered confidently but wrong.
+      writeStory(db, dataDir, "ses_xpast", [
+        makeCard("h_8888888888888888", { touches: ["db/store.ts"] }),
+      ]);
+      const pastPath = join(
+        dataDir,
+        "projects",
+        PROJECT_ID,
+        "sessions",
+        "ses_xpast",
+        "artifacts",
+        "checks_v2.json",
+      );
+      writeFileSync(
+        pastPath,
+        JSON.stringify({
+          schemaVersion: 1,
+          sessionId: "ses_xpast",
+          status: "completed",
+          generatedAt: ISO,
+          tapeWatermark: { eventCount: 0, sha256: "abc" },
+          questions: [],
+          attempts: [],
+          picture: [
+            { cardId: "h_8888888888888888", bucket: "confident_but_wrong", questionId: "q_past" },
+          ],
+          currentQuestionId: null,
+          origin: "offer",
+        }),
+      );
+      // Now session: six plain cards; only the worst-ranked touches the weak file.
+      const nowCards = [1, 2, 3, 4, 5, 6].map((rank) =>
+        makeCard(`h_${String(rank).repeat(16)}`, {
+          rank,
+          touches: rank === 6 ? ["db/store.ts"] : [`docs/f${rank}.md`],
+        }),
+      );
+      writeStory(db, dataDir, "ses_xnow", nowCards);
+      const draftAll = {
+        questions: [1, 2, 3, 4, 5, 6].map((rank) => {
+          const file = rank === 6 ? "db/store.ts" : `docs/f${rank}.md`;
+          return {
+            cardId: `h_${String(rank).repeat(16)}`,
+            format: "free_text",
+            kind: "teach_back",
+            question: `What changed in ${file}?`,
+            rubric: [`States the ${file} change.`],
+            explanation: `${file} changed.`,
+            evidencePaths: [file],
+          };
+        }),
+      };
+      const { fetchImpl, calls } = stubFetchQueue([draftAll]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const state = ChecksV2ResponseSchema.parse((await service.generate("ses_xnow")).body);
+      expect(calls()).toBe(1);
+      const pictured = new Map(state.picture.map((entry) => [entry.cardId, entry.questionId]));
+      // Rank 6 jumps into the five targeted slots on the weak-file signal;
+      // rank 5 (better rank, fresh files) drops out.
+      expect(pictured.get("h_6666666666666666")).not.toBeNull();
+      expect(pictured.get("h_5555555555555555")).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("generate keeps rank order when no other session left a weak file", async () => {
+    const { db, dataDir } = seedDb("ses_xsolo");
+    try {
+      upsertSession(db, {
+        id: "ses_xsolo",
+        projectId: PROJECT_ID,
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: "solo",
+        startedAt: ISO,
+        tapePath: join(dataDir, "tape-solo.jsonl"),
+        captureQuality: "partial",
+      });
+      const soloCards = [1, 2, 3, 4, 5, 6].map((rank) =>
+        makeCard(`h_${String(rank).repeat(16)}`, { rank, touches: [`docs/f${rank}.md`] }),
+      );
+      writeStory(db, dataDir, "ses_xsolo", soloCards);
+      const draftAll = {
+        questions: [1, 2, 3, 4, 5, 6].map((rank) => {
+          const file = `docs/f${rank}.md`;
+          return {
+            cardId: `h_${String(rank).repeat(16)}`,
+            format: "free_text",
+            kind: "teach_back",
+            question: `What changed in ${file}?`,
+            rubric: [`States the ${file} change.`],
+            explanation: `${file} changed.`,
+            evidencePaths: [file],
+          };
+        }),
+      };
+      const { fetchImpl } = stubFetchQueue([draftAll]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const state = ChecksV2ResponseSchema.parse((await service.generate("ses_xsolo")).body);
+      const pictured = new Map(state.picture.map((entry) => [entry.cardId, entry.questionId]));
+      expect(pictured.get("h_5555555555555555")).not.toBeNull();
+      expect(pictured.get("h_6666666666666666")).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   it("runs generate to answer to completed and marks the session checked", async () => {
     const { db, dataDir } = seedSession("ses_v2_full");
     try {

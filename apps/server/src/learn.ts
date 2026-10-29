@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { isWeakPictureBucket, weakFileCounts } from "@echo/checks";
 import {
   type CardPicture,
   type ChecksV2State,
@@ -130,7 +131,7 @@ export function createLearnService(deps: { db: EchoDb; dataDir: string }): {
     }
     const sessions = listSessions(db, projectId);
     const bucketTotals = emptyTotals();
-    const perFile = new Map<string, { confidentWrong: number; total: number }>();
+    const weakEntries: Array<{ touches: string[]; weak: boolean }> = [];
     const entries: Array<{
       sessionId: string;
       title: string | null;
@@ -165,14 +166,10 @@ export function createLearnService(deps: { db: EchoDb; dataDir: string }): {
       for (const entry of checks.picture) {
         bucketTotals[entry.bucket] += 1;
         if (entry.bucket === "never_looked") neverLooked += 1;
-        const touches = touchesByCard.get(entry.cardId) ?? [];
-        const bad = entry.bucket === "confident_but_wrong" || entry.bucket === "wrong_and_knew_it";
-        for (const file of touches) {
-          const slot = perFile.get(file) ?? { confidentWrong: 0, total: 0 };
-          slot.total += 1;
-          if (bad) slot.confidentWrong += 1;
-          perFile.set(file, slot);
-        }
+        weakEntries.push({
+          touches: touchesByCard.get(entry.cardId) ?? [],
+          weak: isWeakPictureBucket(entry.bucket),
+        });
       }
       // Next-up queue: only sessions still awaiting a check. Checked and
       // explicitly skipped sessions never queue; story-less sessions have no
@@ -207,6 +204,11 @@ export function createLearnService(deps: { db: EchoDb; dataDir: string }): {
         picture: checks.picture,
       });
     }
+
+    // One counting rule for weak areas here and check targeting in
+    // checks-v2 (both read it from @echo/checks): per-file touch counts
+    // split by weak picture entries, insertion-ordered by first touch.
+    const perFile = weakFileCounts(weakEntries);
 
     const weakAreas = [...perFile.entries()]
       .filter(([, counts]) => counts.confidentWrong > 0)

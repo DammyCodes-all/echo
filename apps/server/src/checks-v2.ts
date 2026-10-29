@@ -1,7 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { bucketFor, gradeMcq, gradeRubric, makeCheck, selectTargets } from "@echo/checks";
+import {
+  bucketFor,
+  gradeMcq,
+  gradeRubric,
+  isWeakPictureBucket,
+  makeCheck,
+  selectTargets,
+  weakFiles,
+} from "@echo/checks";
 import {
   type AnswerConfidence,
   type AskEvidence,
@@ -25,6 +33,7 @@ import {
   type EchoDb,
   getArtifactRef,
   getSession,
+  listSessions,
   readAllEvents,
   setSessionCheckStatus,
   upsertArtifactRef,
@@ -756,6 +765,31 @@ export function createChecksV2Service(
     }));
   }
 
+  /**
+   * Files this project got wrong before, excluding the session being
+   * checked: weak picture entries in other sessions' artifacts, counted per
+   * story-card touch with Learn's weak-area rule (shared helpers from
+   * @echo/checks). Corrupt or missing artifacts read as empty — a bad
+   * sibling write must not block generating this session's check.
+   */
+  function crossSessionWeakFiles(projectId: string, excludeSessionId: string): Set<string> {
+    const entries: Array<{ touches: string[]; weak: boolean }> = [];
+    for (const session of listSessions(db, projectId)) {
+      if (session.id === excludeSessionId) continue;
+      const story = loadStory(projectId, session.id);
+      const artifact = loadArtifact(projectId, session.id);
+      if (!story || !artifact) continue;
+      const touchesByCard = new Map(story.cards.map((card) => [card.id, card.touches]));
+      for (const entry of artifact.picture) {
+        entries.push({
+          touches: touchesByCard.get(entry.cardId) ?? [],
+          weak: isWeakPictureBucket(entry.bucket),
+        });
+      }
+    }
+    return weakFiles(entries);
+  }
+
   async function generate(sessionId: string): Promise<ChecksV2Outcome> {
     const session = getSession(db, sessionId);
     if (!session) {
@@ -770,7 +804,12 @@ export function createChecksV2Service(
       sessionId,
       story.cards.map((card) => card.id),
     );
-    const targetIds = selectTargets(story.cards, tiers);
+    const targetIds = selectTargets(
+      story.cards,
+      tiers,
+      5,
+      crossSessionWeakFiles(session.projectId, sessionId),
+    );
     if (targetIds.length === 0) {
       return {
         status: 400,

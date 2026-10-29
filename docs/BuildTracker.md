@@ -866,3 +866,10 @@ notes.
 - status: done
 - evidence: `tsc` clean; `pnpm build` ok (web + server + cli); `biome` 4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`; `pnpm test` → 464 passed + same 2 pre-existing failures noted in the Learn v2 entry (ingest identity-migration, eval harness ENOENT)
 - notes: Docs-only (`README.md`); no code, contract, or migration change.
+
+## 2026-10-29 — Cross-session check targeting (weak-file bias)
+
+- item: check `generate()` biases `selectTargets` with files the project got wrong before — new pure `isWeakPictureBucket`/`weakFileCounts`/`weakFiles` in `packages/checks` (Learn's weak-area rule: confident_but_wrong/wrong_and_knew_it per story-card touch), shared by `learn.ts` (refactored counting, same order) and `checks-v2.ts` (`crossSessionWeakFiles` over other sessions' artifacts, corrupt/missing read as empty); `selectTargets` gains optional 4th param (weak-touch count between highRisk and rank, risk still outranks, engaged swap unchanged, default-off keeps old order byte-identical); question→card link already exists (`StoredCheckQuestion.cardId` required) so no contract change and no per-question provenance stored
+- status: done
+- evidence: `tsc` clean; `pnpm build` ok; `biome` 4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts` lines; targeted `packages/checks + checks-v2.test.ts + learn.test.ts` → 40 passed (new: 4 targeting bias units incl. highRisk-outranks-weak + determinism, weak-signal units, 2 generate-level tests proving rank-6 weak-touching card displaces rank-5 + solo control keeps rank order, single model call each); full `pnpm test` → 472 passed + same 2 pre-existing failures verified on clean HEAD in earlier entries (ingest identity-migration, eval harness ENOENT)
+- notes: Deliberate scope cuts: no threshold change (confidentWrong > 0, same as Learn display), no per-question cross-session provenance (originating sessions stay visible via Learn weak areas, not stored on questions), `checkMe` path untouched (single-card, no targeting). Nothing staged or committed.
