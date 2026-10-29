@@ -253,6 +253,15 @@ export function getSession(db: EchoDb, sessionId: string): SessionRow | null {
   return row ? { id: row.id, projectId: row.project_id } : null;
 }
 
+export function getSessionLastObservedAt(db: EchoDb, sessionId: string): string | null {
+  // One indexed lookup — no JSON parsing — so the per-poll finalize hook can
+  // cheaply learn an active session isn't ready for its story yet.
+  const row = db
+    .prepare("SELECT MAX(observed_at) AS last_observed FROM events WHERE session_id = ?")
+    .get(sessionId) as { last_observed: string | null };
+  return row.last_observed;
+}
+
 export function getSessionEventIds(db: EchoDb, sessionId: string): Set<string> {
   const rows = db.prepare("SELECT id FROM events WHERE session_id = ?").all(sessionId) as Array<{
     id: string;
@@ -507,6 +516,43 @@ export function appendEvents(db: EchoDb, sessionId: string, events: TapeEvent[])
     event.tape_seq = seq;
   }
   return insertStampedEvents(db, sessionId, events);
+}
+
+// True when the user has touched a session beyond capture: engagement,
+// persisted threads/checks answers. Auto-generated stories don't count —
+// they rebuild from the parent lane after migration. Lane migration must not
+// delete sessions the user has interacted with — those stay as their own cards.
+export function sessionHasUserData(db: EchoDb, sessionId: string): boolean {
+  const engagement = db
+    .prepare("SELECT 1 AS ok FROM engagement_events WHERE session_id = ? LIMIT 1")
+    .get(sessionId) as { ok: number } | undefined;
+  if (engagement) return true;
+  const artifact = db
+    .prepare(
+      "SELECT 1 AS ok FROM session_artifacts WHERE session_id = ? AND kind != 'story' LIMIT 1",
+    )
+    .get(sessionId) as { ok: number } | undefined;
+  return artifact !== undefined;
+}
+
+// Removes a derived session and everything captured for it: events, snapshot
+// rows, checkpoints, pins and the session row, children before parents for
+// the REFERENCES constraints. Project-level and code-index tables are untouched.
+// The tape file and artifact files on disk are the caller's to remove.
+export function deleteEchoSession(db: EchoDb, sessionId: string): void {
+  withTransaction(db, () => {
+    db.prepare(
+      "DELETE FROM snapshot_files WHERE snapshot_id IN (SELECT id FROM snapshots WHERE session_id = ?)",
+    ).run(sessionId);
+    db.prepare("DELETE FROM snapshots WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM events WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM reader_checkpoints WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM session_build_pins WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM engagement_events WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM session_artifacts WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM review_transition_cache WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM sessions WHERE id = ?").run(sessionId);
+  });
 }
 
 export function listProjects(db: EchoDb): ProjectSummary[] {
@@ -1114,4 +1160,55 @@ export function listSnapshotFiles(db: EchoDb, snapshotId: string): SnapshotFileR
     captured: Number(row.captured) === 1,
     reason: row.reason === null ? null : String(row.reason),
   }));
+}
+
+// Review-transition cache stamp. Bump whenever hunk extraction, attempt
+// grouping, or hunk JSON parse semantics change so stale rows miss and the
+// review index recomputes instead of serving entries parsed under old rules.
+export const REVIEW_CACHE_VERSION = "1";
+
+export interface ReviewTransitionInput {
+  sessionId: string;
+  parentCommit: string;
+  childCommit: string;
+  hunksJson: string;
+  codeVersion: string;
+}
+
+// hunksJson is opaque here on purpose: the caller owns the redaction gate
+// before writing, and db must not gain new package deps (ARCHITECTURE §4).
+export function putReviewTransition(db: EchoDb, input: ReviewTransitionInput): void {
+  db.prepare(
+    `INSERT INTO review_transition_cache
+       (session_id, parent_commit, child_commit, hunks_json, code_version, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, parent_commit, child_commit) DO UPDATE SET
+       hunks_json = excluded.hunks_json,
+       code_version = excluded.code_version,
+       created_at = excluded.created_at`,
+  ).run(
+    input.sessionId,
+    input.parentCommit,
+    input.childCommit,
+    input.hunksJson,
+    input.codeVersion,
+    nowIso(),
+  );
+}
+
+export function getReviewTransition(
+  db: EchoDb,
+  sessionId: string,
+  parentCommit: string,
+  childCommit: string,
+): { hunksJson: string; codeVersion: string } | null {
+  const row = db
+    .prepare(
+      "SELECT hunks_json, code_version FROM review_transition_cache WHERE session_id = ? AND parent_commit = ? AND child_commit = ?",
+    )
+    .get(sessionId, parentCommit, childCommit) as
+    | { hunks_json: string; code_version: string }
+    | undefined;
+  if (!row) return null;
+  return { hunksJson: String(row.hunks_json), codeVersion: String(row.code_version) };
 }

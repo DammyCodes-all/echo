@@ -6,10 +6,12 @@ import type { TapeEvent } from "@echo/contracts";
 import { describe, expect, it } from "vitest";
 import {
   appendEvents,
+  deleteEchoSession,
   deriveEngagementTiers,
   ensureIngestProject,
   getArtifactRef,
   getReaderCheckpoint,
+  getReviewTransition,
   getSession,
   getSessionBuildPin,
   getSessionEventIds,
@@ -28,10 +30,13 @@ import {
   MIGRATIONS,
   openEchoDb,
   pruneReaderCheckpoints,
+  putReviewTransition,
+  REVIEW_CACHE_VERSION,
   readAllEvents,
   readEvents,
   recordEngagementEvents,
   saveStackRegenState,
+  sessionHasUserData,
   setSessionCheckStatus,
   setSessionStoryState,
   upsertArtifactRef,
@@ -115,7 +120,7 @@ describe("openEchoDb migrations", () => {
       version: number;
     }>;
     second.close();
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   });
 
   it("waits on locked writers instead of failing fast", () => {
@@ -151,7 +156,7 @@ describe("openEchoDb migrations", () => {
     const rows = db.prepare("SELECT version FROM schema_migrations").all() as Array<{
       version: number;
     }>;
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
     const checkpoints = db
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reader_checkpoints'",
@@ -930,6 +935,152 @@ describe("session title stability", () => {
       expect(byId.get("ses_none")).toMatchObject({ summarySkeleton: false });
       expect(getSessionSummary(db, "ses_skel")?.summarySkeleton).toBe(true);
       expect(getSessionSummary(db, "ses_model")?.summarySkeleton).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("review transition cache", () => {
+  it("round-trips a cached transition", () => {
+    const db = openTestDb();
+    try {
+      const hunks = JSON.stringify([{ path: "src/a.ts", added: 3, removed: 1 }]);
+      putReviewTransition(db, {
+        sessionId: "ses_1",
+        parentCommit: "aaa",
+        childCommit: "bbb",
+        hunksJson: hunks,
+        codeVersion: REVIEW_CACHE_VERSION,
+      });
+      expect(getReviewTransition(db, "ses_1", "aaa", "bbb")).toEqual({
+        hunksJson: hunks,
+        codeVersion: "1",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("misses on unknown session or commit pair", () => {
+    const db = openTestDb();
+    try {
+      putReviewTransition(db, {
+        sessionId: "ses_1",
+        parentCommit: "aaa",
+        childCommit: "bbb",
+        hunksJson: "[]",
+        codeVersion: REVIEW_CACHE_VERSION,
+      });
+      expect(getReviewTransition(db, "ses_1", "aaa", "ccc")).toBeNull();
+      expect(getReviewTransition(db, "ses_1", "ccc", "bbb")).toBeNull();
+      expect(getReviewTransition(db, "ses_missing", "aaa", "bbb")).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("overwrites the same key with the newest write", () => {
+    const db = openTestDb();
+    try {
+      putReviewTransition(db, {
+        sessionId: "ses_1",
+        parentCommit: "aaa",
+        childCommit: "bbb",
+        hunksJson: JSON.stringify([{ path: "old.ts" }]),
+        codeVersion: "1",
+      });
+      putReviewTransition(db, {
+        sessionId: "ses_1",
+        parentCommit: "aaa",
+        childCommit: "bbb",
+        hunksJson: JSON.stringify([{ path: "new.ts" }]),
+        codeVersion: "2",
+      });
+      expect(getReviewTransition(db, "ses_1", "aaa", "bbb")).toEqual({
+        hunksJson: JSON.stringify([{ path: "new.ts" }]),
+        codeVersion: "2",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("stores code_version verbatim and keys rows per commit pair", () => {
+    const db = openTestDb();
+    try {
+      putReviewTransition(db, {
+        sessionId: "ses_1",
+        parentCommit: "aaa",
+        childCommit: "bbb",
+        hunksJson: "[]",
+        codeVersion: "custom-stamp",
+      });
+      putReviewTransition(db, {
+        sessionId: "ses_1",
+        parentCommit: "bbb",
+        childCommit: "ccc",
+        hunksJson: "[]",
+        codeVersion: "other-stamp",
+      });
+      expect(getReviewTransition(db, "ses_1", "aaa", "bbb")?.codeVersion).toBe("custom-stamp");
+      expect(getReviewTransition(db, "ses_1", "bbb", "ccc")?.codeVersion).toBe("other-stamp");
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("subagent orphan cleanup", () => {
+  it("reports user data only after engagement or artifacts", () => {
+    const db = openTestDb();
+    try {
+      seed(db);
+      expect(sessionHasUserData(db, "ses_1")).toBe(false);
+      // An auto-generated story alone is not user data: it rebuilds.
+      upsertArtifactRef(db, {
+        sessionId: "ses_1",
+        kind: "story",
+        path: "/data/story.json",
+        tapeWatermark: { eventCount: 3, sha256: "abc" },
+        generator: "story-v1",
+        generatedAt: "2026-10-28T10:00:00.000Z",
+      });
+      expect(sessionHasUserData(db, "ses_1")).toBe(false);
+      recordEngagementEvents(db, "ses_1", [
+        {
+          id: "eng_lane",
+          cardId: null,
+          kind: "story_opened",
+          occurredAt: "2026-10-28T10:00:00.000Z",
+        },
+      ]);
+      expect(sessionHasUserData(db, "ses_1")).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("deletes a derived session with its events and engagement rows", () => {
+    const db = openTestDb();
+    try {
+      seed(db);
+      appendEvents(db, "ses_1", [makeEvent(1), makeEvent(2)]);
+      recordEngagementEvents(db, "ses_1", [
+        {
+          id: "eng_lane",
+          cardId: null,
+          kind: "story_opened",
+          occurredAt: "2026-10-28T10:00:00.000Z",
+        },
+      ]);
+      expect(getSession(db, "ses_1")).not.toBeNull();
+      deleteEchoSession(db, "ses_1");
+      expect(getSession(db, "ses_1")).toBeNull();
+      expect(getSessionEventIds(db, "ses_1").size).toBe(0);
+      expect(listEngagementEvents(db, "ses_1")).toEqual([]);
+      // The project row survives: only the derived session is removed.
+      expect(listProjects(db)).toHaveLength(1);
     } finally {
       db.close();
     }

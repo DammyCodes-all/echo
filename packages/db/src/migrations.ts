@@ -234,4 +234,18 @@ CREATE TABLE IF NOT EXISTS project_stack_state (
 );
 `,
   },
+  {
+    version: 11,
+    sql: `
+CREATE TABLE IF NOT EXISTS review_transition_cache (
+  session_id TEXT NOT NULL,
+  parent_commit TEXT NOT NULL,
+  child_commit TEXT NOT NULL,
+  hunks_json TEXT NOT NULL,
+  code_version TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, parent_commit, child_commit)
+);
+`,
+  },
 ];
