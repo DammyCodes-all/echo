@@ -16,6 +16,7 @@ import { AskThreadPanel } from "../components/ask-thread-panel";
 import { CheckOffer } from "../components/check-offer";
 import { CheckPicture } from "../components/check-picture";
 import { CheckRunner } from "../components/check-runner";
+import { ProjectNavPill } from "../components/project-nav-pill";
 import { ScaffoldPage } from "../components/scaffold-page";
 import { ClaimBody, ClaimItem, type HistoryEntry, StoryCard } from "../components/story-card";
 import { VerificationPanel } from "../components/verification-panel";
@@ -805,6 +806,9 @@ export function StoryPage() {
           onCitationClick={handleCitationClick}
           onClose={() => setAskOpen(false)}
         />
+      ) : null}
+      {sessionQuery.data?.projectId ? (
+        <ProjectNavPill projectId={sessionQuery.data.projectId} active={-1} />
       ) : null}
     </ScaffoldPage>
   );

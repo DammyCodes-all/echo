@@ -1,18 +1,21 @@
 import { useQuery } from "@tanstack/react-query";
-import { NavLink, Outlet, useParams } from "react-router";
+import { Outlet, useLocation, useParams } from "react-router";
 import { api } from "../api";
+import { ProjectNavPill } from "../components/project-nav-pill";
 import { ScaffoldPage } from "../components/scaffold-page";
 
-function tabClass({ isActive }: { isActive: boolean }) {
-  return `rounded-dusk-pill px-3 py-1.5 text-sm transition-colors ${
-    isActive ? "bg-dusk-pill text-dusk-ink" : "text-dusk-muted hover:text-dusk-ink"
-  }`;
-}
+const SECTIONS = ["overview", "learn", "architecture"] as const;
 
 export function ProjectLayout() {
   const { projectId = "" } = useParams();
+  const location = useLocation();
   const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
   const projectName = projects.data?.find((project) => project.id === projectId)?.name ?? projectId;
+
+  const active = Math.max(
+    0,
+    SECTIONS.findIndex((section) => location.pathname.endsWith(`/${section}`)),
+  );
 
   return (
     <ScaffoldPage
@@ -20,18 +23,8 @@ export function ProjectLayout() {
       title={projectName}
       description="Overview, learning, and architecture for this repository. Tapes never mix between projects."
     >
-      <nav aria-label="Project sections" className="flex items-center gap-1">
-        <NavLink to={`/projects/${projectId}/overview`} className={tabClass} end>
-          Overview
-        </NavLink>
-        <NavLink to={`/projects/${projectId}/learn`} className={tabClass}>
-          Learn
-        </NavLink>
-        <NavLink to={`/projects/${projectId}/architecture`} className={tabClass}>
-          Architecture
-        </NavLink>
-      </nav>
       <Outlet />
+      <ProjectNavPill projectId={projectId} active={active} />
     </ScaffoldPage>
   );
 }
