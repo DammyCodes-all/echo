@@ -102,6 +102,7 @@ export const SessionSummarySchema = z.object({
   directory: z.string().nullable(),
   startedAt: z.string().nullable(),
   endedAt: z.string().nullable(),
+  lastActivity: z.string(),
   status: z.string().min(1),
   captureQuality: z.string().min(1),
   eventCount: z.number().int().nonnegative(),
