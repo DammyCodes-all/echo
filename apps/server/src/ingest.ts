@@ -30,6 +30,7 @@ import {
   snapshotWorkingTree,
 } from "@echo/snapshots";
 import { TapeWriter } from "@echo/tape";
+import { ensureEnabledProjects } from "./enabled-projects";
 import { makeGapEvent, makeSnapshotEvent, makeSnapshotEventId } from "./tape-events";
 
 export interface IngestLogger {
@@ -83,6 +84,8 @@ export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOpt
     const result = emptyResult();
     const config = loadEchoConfig();
     if (config.projects.length === 0) return result;
+    // Enabled but sessionless repos still get their folder (empty state).
+    await ensureEnabledProjects(db, config.projects, log);
     if (!config.opencode_db || !existsSync(config.opencode_db)) return result;
 
     const store = new DatabaseSync(config.opencode_db, { readOnly: true });

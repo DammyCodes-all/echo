@@ -26,6 +26,7 @@ import {
   spoolRoot,
   tailChunk,
 } from "@echo/capture-muse";
+import { loadEchoConfig } from "@echo/config";
 import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import { projectIdForDirectory } from "@echo/core";
 import {
@@ -55,6 +56,7 @@ import {
   snapshotWorkingTree,
 } from "@echo/snapshots";
 import { TapeWriter } from "@echo/tape";
+import { ensureEnabledProjects } from "./enabled-projects";
 import { maybeFinalSnapshot } from "./muse-snapshots";
 import { makeSnapshotEvent, makeSnapshotEventId } from "./tape-events";
 
@@ -866,6 +868,9 @@ export function createMuseIngest(options: MuseIngestOptions) {
   async function scan(): Promise<MuseIngestResult> {
     const result = emptyResult();
     if (projects.length === 0) return result;
+    // Fresh allowlist (not the boot-time one): enabled but sessionless
+    // repos still get their folder (empty state) without a restart.
+    await ensureEnabledProjects(db, loadEchoConfig().projects, log);
     const observedAt = new Date().toISOString();
     await drainSpool(result, observedAt);
     if (!existsSync(sessionsDir)) return result;
