@@ -178,7 +178,20 @@ export function AskThreadPanel({
 
       <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
         {threadQuery.isPending ? (
-          <p className="text-sm text-dusk-muted">Loading thread…</p>
+          <div role="status" aria-label="Loading thread" className="space-y-3">
+            <span className="sr-only">Loading thread…</span>
+            {[0, 1, 2].map((index) => (
+              <div
+                key={index}
+                aria-hidden
+                className="space-y-2 rounded-dusk-card bg-dusk-pill px-4 py-3 motion-safe:animate-pulse"
+              >
+                <div className="h-4 w-11/12 rounded-dusk-code bg-dusk-track" />
+                <div className="h-4 w-full rounded-dusk-code bg-dusk-track" />
+                {index === 1 ? null : <div className="h-4 w-2/3 rounded-dusk-code bg-dusk-track" />}
+              </div>
+            ))}
+          </div>
         ) : threadQuery.isError ? (
           <p className="text-sm text-dusk-fail">{errorMessage(threadQuery.error)}</p>
         ) : messages.length === 0 ? (
