@@ -747,6 +747,47 @@ export function getArtifactRef(
   };
 }
 
+export interface ProjectArtifactRefRow {
+  projectId: string;
+  kind: string;
+  path: string;
+  watermark: string;
+  generator: string;
+  generatedAt: string;
+}
+
+export function upsertProjectArtifactRef(db: EchoDb, ref: ProjectArtifactRefRow): void {
+  db.prepare(
+    `INSERT INTO project_artifacts
+       (project_id, kind, path, watermark, generator, generated_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(project_id, kind) DO UPDATE SET
+       path = excluded.path,
+       watermark = excluded.watermark,
+       generator = excluded.generator,
+       generated_at = excluded.generated_at`,
+  ).run(ref.projectId, ref.kind, ref.path, ref.watermark, ref.generator, ref.generatedAt);
+}
+
+export function getProjectArtifactRef(
+  db: EchoDb,
+  projectId: string,
+  kind: string,
+): ProjectArtifactRefRow | null {
+  const row = db
+    .prepare("SELECT * FROM project_artifacts WHERE project_id = ? AND kind = ?")
+    .get(projectId, kind) as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    projectId: String(row.project_id),
+    kind: String(row.kind),
+    path: String(row.path),
+    watermark: String(row.watermark),
+    generator: String(row.generator),
+    generatedAt: String(row.generated_at),
+  };
+}
+
 export function readEvents(
   db: EchoDb,
   sessionId: string,
