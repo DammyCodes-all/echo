@@ -93,6 +93,11 @@ export type GlassFolderProps = {
   open?: boolean;
   defaultOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /**
+   * Replaces the front-panel open/close toggle with an activation (e.g.
+   * navigate somewhere). The `more` menu keeps an explicit Open/Close item.
+   */
+  onHitActivate?: () => void;
   /** Called when a file is chosen while the folder is open. */
   onFileSelect?: (file: FolderFile, index: number) => void;
   /** Width in px. Everything else scales with it; the height is 0.96 × width. */
@@ -591,6 +596,7 @@ export default function GlassFolder({
   open: openProp,
   defaultOpen = false,
   onOpenChange,
+  onHitActivate,
   onFileSelect,
   width = 340,
   appear = true,
@@ -827,16 +833,22 @@ export default function GlassFolder({
               ref={hitRef}
               type="button"
               className="gf-hit"
-              aria-expanded={open}
+              aria-expanded={onHitActivate ? undefined : open}
               aria-label={
-                (open ? "Close " : "Open ") +
-                label +
-                ", " +
-                count +
-                (count === 1 ? " item" : " items")
+                onHitActivate
+                  ? `Open ${label}`
+                  : (open ? "Close " : "Open ") +
+                    label +
+                    ", " +
+                    count +
+                    (count === 1 ? " item" : " items")
               }
               onClick={() => {
                 setMenuOpen(false);
+                if (onHitActivate) {
+                  onHitActivate();
+                  return;
+                }
                 setOpen(!open);
               }}
             />
