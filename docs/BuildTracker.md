@@ -671,3 +671,40 @@ notes.
 - status: done
 - evidence: `tsc` clean; `biome` exit 0 on touched files (2 warnings + 4 infos repo-wide, all in untouched concurrent files); `pnpm test` → 54 files / 451 passed; `pnpm build` ok (web + server + cli)
 - notes: UI is vitest-exempt, no new tests. A first gate attempt in this window showed 1 failed + 8 skipped, then a SIGKILL — re-run on the settled tree is fully green (a concurrent session is editing server tests mid-flight; counts shifted 448 → 451 between runs). Recording state is now carried only by the "Still recording — story pending…" title fallback; capture/event detail lives on the story page. No browser here; user's live dev server picks it up via HMR.
+
+## 2026-10-29 — Stale-while-revalidate tech stack with change gate + lastActivity type completion
+
+- item: per-project tech-stack endpoint serves the previous artifact as `stale` while regeneration is change-gated (≥3 detected code-index changes AND ≥10 min artifact age; background single-flight regen, 30s web poll to converge); first view still generates inline with skeleton fallback only when nothing exists; failures/backoff keep the previous artifact, never downgrade to skeleton; migration v10 `project_stack_state` + repo helpers; redacted README/package.json prompt context; completed the parallel `lastActivity` unit by adding the missing `lastActivity: string` field to the db `SessionSummary` interface (SQL, mapper, contracts schema, and test already assumed it)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (2 pre-existing warnings, 4 infos), `pnpm test` → 54 files / 458 passed, `pnpm build` ok; live proof earlier: echo project ingested backlog with historic id kept, no second row; endpoint returned model-generated purpose with new prompt
+- notes: Regen gate bounds model cost during active editing (every save moves the files hash). Route needed no change (returns any non-error stack). The `lastActivity` completion is one interface line; parallel session owns the test. Daemon picked up server changes via `tsx watch` reload.
+## 2026-10-29 — SessionSummary.lastActivity (last recorded event, tested)
+
+- item: card time is now genuinely last activity — `SessionSummary` gains required `lastActivity` (`packages/contracts/src/api.ts`), `listSessions`/`getSessionSummary` compute `COALESCE(MAX(events.observed_at), sessions.updated_at)` (no migration; `updated_at` covers event-less sessions and is NOT NULL), both contract fixtures updated; `SessionCard` + `/`-route folder preview read `lastActivity` instead of `startedAt`. Was session start: a still-recording session showed a stale start time. Ordering stays `updated_at DESC` (inbox "recently touched" semantics, incl. check/story writes — changing it is a separate product call).
+- status: done
+- evidence: new `db.test.ts` case watched red before the fix (undefined), green after — out-of-order inserts prove MAX, fixed-`updated_at` session proves the fallback; focused `db.test.ts` + `api.test.ts` → 36 passed; full gate green (tsc, biome exit 0 with pre-existing warnings/infos in untouched files, 54 files / 458 passed, build ok)
+- notes: Failing-test-first per durable-test-collateral. Mid-window noise, all environmental: a typecheck run raced a concurrent write to `repositories.ts` (re-ran green, no dupes), and one broad suite showed 6× 5s-timeout failures across 4 untouched files at load avg 25–29 with 179MB free — every one passes focused (24/24 db, 38/38 others) and the full suite is green after reboot (458/458). Concurrent files (muse-ingest, tech-stack, migrations, eval stamps) left alone.
+## 2026-10-29 — SessionCard one-line footer with icons
+
+- item: card bottom row is now time + badges on a single line — clock icon + relative time left, check/high-risk pills with icons (check-circle / skip / alert, 12px, matching Hugeicons set) right; exact timestamp moved to the time element's hover title; badgeless cards show just the time
+- status: done
+- evidence: covered by the same gate run as the lastActivity unit (tsc, biome, 54/458, build); UI is vitest-exempt, no new tests
+- notes: No browser here; user's live dev server picks it up via HMR. Pills keep existing colors/shapes — icons only, no new chrome language.
+## 2026-10-29 — Stable session order stops overview grid reshuffle
+
+- item: `ProjectOverviewPage` sorts sessions client-side (startedAt DESC, id tiebreak, memoized) instead of taking the server's `updated_at DESC` order, which reshuffles on every ingest/story/check write and made the grid visibly jump each 5s poll; new sessions still appear at top, existing rows no longer move
+- status: done
+- evidence: `tsc` clean, `biome` clean on the touched file, `pnpm test` → 54 files / 458 passed, `pnpm build` ok
+- notes: UI-only, no new tests. Server order untouched (history scan relies on it). If flicker persists it is a different mechanism (suspects: HMR reloads from concurrent saves, or insert-at-top as new sessions arrive) — user to confirm visually, no browser here.
+## 2026-10-29 — Session inbox ordered by last activity
+
+- item: `listSessions` orders by `last_activity DESC, s.id ASC` instead of `updated_at DESC` — most recently active session first, deterministic tiebreak; `history.ts` candidate-scan comment updated (same recency assumption, better key); overview page reverted to server order (client startedAt sort removed); folder-preview top-3 now also means most-recent
+- status: done
+- evidence: new order test watched red first (`ses_2,ses_3,ses_1` under old key), green after — recency beats start time + id tiebreak in one case; full gate green (tsc, biome, 54 files / 459 passed, build ok)
+- notes: Only genuinely live sessions move now; story/check writes to old sessions no longer bubble them. UI is vitest-exempt; web side takes server order directly.
+## 2026-10-29 — SessionCard anti-flicker stabilizers
+
+- item: `SessionCard` memoized (unchanged rows skip re-render each 5s poll via React Query structural sharing) + title block fixed to 2-line min-height so summary swaps and 1-vs-2-line titles no longer resize cards and shift grid rows
+- status: done
+- evidence: `tsc` clean, `biome` clean on the file, `pnpm build` ok; test evidence is the same window's 459/459 run (delta since is this web-only file, vitest-exempt)
+- notes: Poll stays 5s (recording→story freshness); not done: FLIP reorder animation, pagination/cap for large lists — offered as follow-ups if motion persists. No browser here; user confirms visually.
