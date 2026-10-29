@@ -289,6 +289,49 @@ const DIFF_ENV = {
 };
 
 /**
+ * Whole-tree unified diff between two shadow commits. Same invocation as
+ * diffShadowCommits but without a path filter, so one call covers every
+ * file; renames stay disabled so a moved file reads as delete+add, matching
+ * per-path diff semantics for the old and new paths.
+ */
+export function diffShadowTrees(
+  shadowDir: string,
+  oldOid: string,
+  newOid: string,
+  context = 3,
+): string {
+  if (!/^[0-9a-f]{40}$/.test(oldOid) || !/^[0-9a-f]{40}$/.test(newOid)) {
+    throw new Error("shadow diff needs two full commit oids");
+  }
+  const result = spawnSync(
+    "git",
+    [
+      "--git-dir",
+      shadowDir,
+      "diff",
+      "--no-color",
+      "--no-ext-diff",
+      "--no-renames",
+      `--unified=${context}`,
+      oldOid,
+      newOid,
+    ],
+    {
+      encoding: "utf8",
+      timeout: 10_000,
+      maxBuffer: 10 * 1024 * 1024,
+      env: { ...process.env, ...DIFF_ENV },
+    },
+  );
+  if (result.error) throw result.error;
+  // Git exits 1 when the two commits differ; only other statuses are errors.
+  if (result.status !== 0 && result.status !== 1) {
+    throw new Error(`shadow diff failed: ${String(result.stderr).slice(0, 500)}`);
+  }
+  return result.stdout ?? "";
+}
+
+/**
  * Unified diff between two shadow commits for one path. Git is the
  * line-mapping authority; callers parse the returned diff rather than
  * reimplementing diff alignment.

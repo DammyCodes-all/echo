@@ -1,6 +1,7 @@
 export type { RepositoryIdentity } from "@echo/core";
 export {
   diffShadowCommits,
+  diffShadowTrees,
   findRepositoryRoot,
   readShadowBlob,
   resolveRepositoryIdentity,
