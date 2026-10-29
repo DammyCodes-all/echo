@@ -859,3 +859,10 @@ notes.
 - status: done
 - evidence: `tsc` clean; `biome` clean on touched files (4 pre-existing infos in untouched `checks-v2.test.ts`); targeted `packages/contracts/src/api.test.ts + apps/server/src/learn.test.ts` → 19 passed; `pnpm build` exit 0 with "Next up" in the web bundle; full `pnpm test` → 464 passed + same 2 pre-existing failures verified on clean HEAD `5a587d8` (ingest identity-migration, eval harness ENOENT)
 - notes: Contracts gain `LearnNextUpEntry` + required `nextUp` on `ProjectLearnResponse` (total record, matching the v1 bucket-totals lesson). Reasons are plain counts ("N high-risk cards with no check yet" / "N cards never looked at"). Empty-state rule updated: the no-checks card shows only when the queue is also empty; with queue entries but zero checks, a slim "start above" note replaces the picture. Nothing staged or committed.
+
+## 2026-10-29 — README refresh (scaffold → story-first)
+
+- item: `README.md` status/layout rewrite — scaffold-stage copy replaced with the built story-first loop (spec §10 items 1–9), project tabs (Overview/Learn/Architecture + code index), and pending delivery items (baked tape, hosted demo, video, submission); `story/` + `graph` (central code index) layout entries corrected, stale duplicate `graph/` line removed
+- status: done
+- evidence: `tsc` clean; `pnpm build` ok (web + server + cli); `biome` 4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`; `pnpm test` → 464 passed + same 2 pre-existing failures noted in the Learn v2 entry (ingest identity-migration, eval harness ENOENT)
+- notes: Docs-only (`README.md`); no code, contract, or migration change.

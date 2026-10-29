@@ -1,6 +1,5 @@
 # Echo
 
-Replay what your coding agent did and why. Then prove you understood it before you approve.
 
 Echo is a local-first recorder and review loop for coding-agent sessions. It records a normal interactive Muse Code session, replays the captured actions and file states, answers questions only from evidence on the tape, and checks understanding by running code instead of trusting a feeling of understanding.
 
@@ -8,13 +7,11 @@ Built during the Meta Global AI Developer Hackathon 2026 (Oct 27 to Nov 4). Muse
 
 ## Status
 
-This repository is at the scaffold stage: workspace tooling, package boundaries and runnable app shells. Capture, replay, Q&A and checks are the next implementation steps.
+Story-first loop is built (spec §10 items 1–9): projects + sessions with automatic ingestion, triage inbox, five-section story with behaviour cards, deterministic trust layer (fact-check + computed verification/risk), evidence-grounded Ask Why with refusal, calibration checks v2 (picture, no scores), engagement tracking, redaction gate before all Echo-owned storage and model calls.
 
-- pnpm workspace with `@echo/*` packages and `apps/{cli,server,web}`
-- Fastify daemon shell with `GET /api/health`
-- Vite + React + Tailwind review UI shell with the planned routes
-- `echo-cli` binary shell
-- SQLite/Drizzle, shadow Git, redaction, model and sandbox packages stubbed at their boundaries
+Project tabs add Overview (purpose + tech stack + sessions), Learn (calibration picture, weakest areas, next-up queue), and Architecture (agent-touched file overlay over the central code index).
+
+Pending delivery items: baked demo tape(s), hosted read-only demo, three-minute video, submission.
 
 ## Layout
 
@@ -33,12 +30,13 @@ packages/
   capture-muse/            Muse hook translator, native-log reader, export reconciler
   capture-opencode/        OpenCode V2 plugin and adapter (optional)
   snapshots/               shadow Git repo, manifest, snapshotter, blame queries
+  story/                   deterministic facts, validator, skeleton, narration prompt
+  graph/                   central code index (files/symbols/edges) + parsers
   redaction/               detectors, placeholders, preview, policy
   retrieval/               evidence bundle builder, FTS ranking, token budget
   model/                   provider interface, Meta/Baseten clients, structured output, cache
   checks/                  hunk scoring, generation, verification gate, grading, calibration
   sandbox/                 runner interface, container/bwrap/WASM backends
-  graph/                   TypeScript import graph and project overlay
   notifier/                desktop notification, browser open
   fixtures/                fixture builders used by tests and evals
 ```
