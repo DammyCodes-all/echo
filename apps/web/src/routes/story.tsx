@@ -7,8 +7,6 @@ import type {
   ReviewHunk,
   SessionStory,
   StoryClaim,
-  VerificationBadge,
-  VerifiedCounts,
 } from "@echo/contracts";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
@@ -19,12 +17,8 @@ import { CheckOffer } from "../components/check-offer";
 import { CheckPicture } from "../components/check-picture";
 import { CheckRunner } from "../components/check-runner";
 import { ScaffoldPage } from "../components/scaffold-page";
-import {
-  ClaimItem,
-  type HistoryEntry,
-  StoryCard,
-  VERIFICATION_BADGE,
-} from "../components/story-card";
+import { ClaimBody, ClaimItem, type HistoryEntry, StoryCard } from "../components/story-card";
+import { VerificationPanel } from "../components/verification-panel";
 import { useEngagement } from "../hooks/use-engagement";
 
 const CHECK_UNAVAILABLE = "Check unavailable (model off). Your session status is untouched.";
@@ -36,6 +30,14 @@ function checkMessage(error: unknown): string {
 
 function isNotFound(error: unknown): boolean {
   return error instanceof Error && error.message.startsWith("404");
+}
+
+function tabClass(active: boolean): string {
+  const base =
+    "rounded-dusk-code px-3 py-2 text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent";
+  return active
+    ? `${base} bg-dusk-accent font-semibold text-dusk-base`
+    : `${base} bg-dusk-pill text-dusk-muted hover:text-dusk-ink`;
 }
 
 function isHistoryEntry(value: unknown): value is HistoryEntry {
@@ -59,16 +61,33 @@ function toHistoryEntries(raw: unknown): HistoryEntry[] {
   return [];
 }
 
-function storySubtitle(story: SessionStory): string {
-  if (story.cards.length === 0) return "No behavior changes — research or answers only.";
-  const parts = [`${story.cards.length} behavior change${story.cards.length === 1 ? "" : "s"}`];
-  if (story.detours.length > 0) {
-    parts.push(`${story.detours.length} detour${story.detours.length === 1 ? "" : "s"}`);
-  }
-  if (story.looseEnds.length > 0) {
-    parts.push(`${story.looseEnds.length} loose end${story.looseEnds.length === 1 ? "" : "s"}`);
-  }
-  return parts.join(" · ");
+function SubtitleLinks({ story }: { story: SessionStory }) {
+  if (story.cards.length === 0) return <>No behavior changes — research or answers only.</>;
+  const behavior = `${story.cards.length} behavior change${story.cards.length === 1 ? "" : "s"}`;
+  const detour =
+    story.detours.length > 0
+      ? ` · ${story.detours.length} detour${story.detours.length === 1 ? "" : "s"}`
+      : null;
+  const loose =
+    story.looseEnds.length > 0
+      ? `${story.looseEnds.length} loose end${story.looseEnds.length === 1 ? "" : "s"}`
+      : null;
+  return (
+    <>
+      <a href="#what-changed" className="underline underline-offset-4 hover:text-dusk-ink">
+        {behavior}
+      </a>
+      {detour}
+      {loose ? (
+        <>
+          {" · "}
+          <a href="#loose-ends" className="underline underline-offset-4 hover:text-dusk-ink">
+            {loose}
+          </a>
+        </>
+      ) : null}
+    </>
+  );
 }
 
 function groupLooseEndsByBehavior(
@@ -93,34 +112,91 @@ function groupLooseEndsByBehavior(
   return groups;
 }
 
-function VerificationBand({ counts }: { counts: VerifiedCounts }) {
-  const entries: { badge: VerificationBadge; count: number }[] = [
-    { badge: "observed", count: counts.observed },
-    { badge: "partly_observed", count: counts.partlyObserved },
-    { badge: "agent_stated", count: counts.agentStated },
-    { badge: "nothing", count: counts.nothing },
-  ];
+function pairAskedDelivered(
+  asked: StoryClaim[],
+  delivered: StoryClaim[],
+): { ask: StoryClaim; result: StoryClaim | null }[] {
+  if (asked.length === delivered.length) {
+    return asked.map((ask, index) => ({ ask, result: delivered[index] ?? null }));
+  }
+  const used = new Set<number>();
+  return asked.map((ask) => {
+    const match = delivered.findIndex(
+      (candidate, index) =>
+        !used.has(index) && candidate.factIds.some((id) => ask.factIds.includes(id)),
+    );
+    if (match === -1) return { ask, result: null };
+    used.add(match);
+    return { ask, result: delivered[match] ?? null };
+  });
+}
+
+function AskRows({ asked, delivered }: { asked: StoryClaim[]; delivered: StoryClaim[] }) {
+  if (asked.length === 0) return null;
   return (
-    <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-      <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-        How much is verified
-      </p>
-      <div className="mt-3 flex flex-wrap items-baseline gap-x-6 gap-y-3">
-        {entries.map(({ badge, count }) => {
-          const style = VERIFICATION_BADGE[badge];
-          return (
-            <span key={badge} title={style.title} className="flex items-baseline gap-2">
-              <span className="text-2xl font-semibold text-dusk-ink">{count}</span>
-              <span
-                className={`rounded-dusk-code px-2 py-0.5 text-xs font-semibold ${style.className}`}
-              >
-                {style.label}
-              </span>
-            </span>
-          );
-        })}
-      </div>
+    <div className="space-y-3">
+      {pairAskedDelivered(asked, delivered).map(({ ask, result }) => (
+        <div
+          key={`ask-${ask.text}`}
+          className="grid gap-1 text-sm sm:grid-cols-[1fr_auto_1fr] sm:items-start sm:gap-3"
+        >
+          <p>
+            <ClaimBody claim={ask} />
+          </p>
+          <span aria-hidden className="hidden text-dusk-muted sm:inline">
+            →
+          </span>
+          {result ? (
+            <p>
+              <ClaimBody claim={result} />
+            </p>
+          ) : (
+            <p className="text-sm text-dusk-muted">Not delivered</p>
+          )}
+        </div>
+      ))}
     </div>
+  );
+}
+
+function normalizeClaimText(text: string): string {
+  return text
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9\s]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function ShortVersionSection({ story }: { story: SessionStory }) {
+  const asked = new Set(story.askVsResult.asked.map((claim) => normalizeClaimText(claim.text)));
+  const delivered = story.shortVersion.filter((claim) => {
+    const text = normalizeClaimText(claim.text);
+    return text !== "" && !text.startsWith("user asked") && !asked.has(text);
+  });
+  useEffect(() => {
+    if (
+      import.meta.env.DEV &&
+      story.generator.kind === "model" &&
+      !story.skeleton &&
+      story.shortVersion.length > 0 &&
+      delivered.length === 0
+    ) {
+      console.debug(
+        `[echo] hid Short version for ${story.sessionId}: ${story.shortVersion.length} prompt-like line(s) filtered`,
+      );
+    }
+  }, [story, delivered.length]);
+  if (delivered.length === 0) return null;
+  return (
+    <section className="space-y-3">
+      <h2 className="text-xl font-semibold tracking-tight">Short version</h2>
+      <ul className="space-y-1 text-sm">
+        {delivered.map((claim) => (
+          <ClaimItem key={`short-${claim.text}`} claim={claim} />
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -257,6 +333,7 @@ export function StoryPage() {
   const [sortMode, setSortMode] = useState<"risk" | "session">("risk");
   const [showAll, setShowAll] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [dismissedIds, setDismissedIds] = useState<Set<string>>(new Set());
   const [askOpen, setAskOpen] = useState(false);
   const [askCard, setAskCard] = useState<{ id: string; headline: string } | null>(null);
   const [checkRunnerOpen, setCheckRunnerOpen] = useState(false);
@@ -340,8 +417,27 @@ export function StoryPage() {
     sortMode === "risk"
       ? [...story.cards].sort((a, b) => a.rank - b.rank)
       : [...story.cards].sort((a, b) => a.sessionOrder - b.sessionOrder);
-  const visible = showAll ? sorted : sorted.slice(0, 7);
-  const hiddenCount = sorted.length - visible.length;
+  // Destructive matches pin to the top in either sort mode; locally dismissed
+  // flags fall back to their sorted position. Dismissal is session-local
+  // state only — the backend has no waiver yet.
+  const isDestructive = (card: ChangeCard): boolean =>
+    card.riskReasons.some((reason) => reason.startsWith("destructive:"));
+  const pinned = sorted.filter((card) => isDestructive(card) && !dismissedIds.has(card.id));
+  const rest = sorted.filter((card) => !(isDestructive(card) && !dismissedIds.has(card.id)));
+  const ordered = [...pinned, ...rest];
+  const visible = showAll ? ordered : ordered.slice(0, 7);
+  const hiddenCount = ordered.length - visible.length;
+  const toggleDismissed = (cardId: string) => {
+    setDismissedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(cardId)) next.delete(cardId);
+      else next.add(cardId);
+      return next;
+    });
+  };
+  // Untested loose ends exist iff the session ran nothing, so one shared
+  // notice replaces the per-card line.
+  const noPassingRun = story.looseEnds.some((end) => end.kind === "untested");
 
   const handleAsk = (asked: { id: string; headline: string }) => {
     track("ask_opened", asked.id);
@@ -410,6 +506,16 @@ export function StoryPage() {
   const handleRunnerDone = () => {
     setCheckRunnerOpen(false);
     setCheckFinished(true);
+    void queryClient.invalidateQueries({ queryKey: ["story", sessionId] });
+  };
+
+  const handlePanelCheck = () => {
+    const state = checksQuery.data;
+    if (state && (state.questions.length > 0 || state.status !== "offered")) {
+      document.getElementById("understanding-check")?.scrollIntoView({ behavior: "smooth" });
+      return;
+    }
+    void handleStartCheck();
   };
 
   const handleBackToInbox = () => {
@@ -436,221 +542,241 @@ export function StoryPage() {
   };
 
   return (
-    <ScaffoldPage eyebrow="Session story" title={story.summary} description={storySubtitle(story)}>
+    <ScaffoldPage
+      eyebrow="Session story"
+      title={story.summary}
+      description={<SubtitleLinks story={story} />}
+    >
       {story.skeleton ? (
         <div className="max-w-2xl rounded-dusk-card bg-dusk-pill px-6 py-3 text-sm text-dusk-accent-soft">
           Model unavailable — deterministic skeleton from the tape.
         </div>
       ) : null}
 
-      <div className="max-w-2xl space-y-8">
-        {story.verifiedCounts.total > 0 ? <VerificationBand counts={story.verifiedCounts} /> : null}
+      <div className="lg:hidden sticky top-0 z-10 -mx-4 border-b border-dusk-hairline bg-dusk-base/95 px-4 py-3 backdrop-blur">
+        <VerificationPanel
+          compact
+          counts={story.verifiedCounts}
+          hasLooseEnds={story.looseEnds.length > 0 || story.blindSpots.length > 0}
+          onStartCheck={handlePanelCheck}
+          starting={checkBusy}
+        />
+      </div>
 
-        {story.shortVersion.length > 0 ? (
-          <section className="space-y-3">
-            <h2 className="text-xl font-semibold tracking-tight">Short version</h2>
-            <ul className="space-y-1 text-sm">
-              {story.shortVersion.map((claim) => (
-                <ClaimItem key={`short-${claim.text}`} claim={claim} />
-              ))}
-            </ul>
-          </section>
-        ) : null}
+      <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_320px] lg:items-start lg:gap-8">
+        <div className="min-w-0 max-w-2xl space-y-8">
+          {<ShortVersionSection story={story} />}
 
-        {hasAskVsResult ? (
-          <section className="space-y-3">
-            <h2 className="text-xl font-semibold tracking-tight">Ask vs result</h2>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <AskGroup title="Asked" claims={story.askVsResult.asked} />
-              <AskGroup title="Delivered" claims={story.askVsResult.delivered} />
-              <AskGroup title="Extras" claims={story.askVsResult.extras} forceUncertain />
-              <AskGroup title="Missing" claims={story.askVsResult.missing} forceUncertain />
-            </div>
-          </section>
-        ) : null}
-
-        <section className="space-y-3">
-          <h2 className="text-xl font-semibold tracking-tight">What changed</h2>
-          {story.routineSummary ? (
-            <p className="text-sm text-dusk-muted">{story.routineSummary}</p>
+          {hasAskVsResult ? (
+            <section className="space-y-3">
+              <h2 className="text-xl font-semibold tracking-tight">Ask vs result</h2>
+              {story.askVsResult.asked.length > 0 ? (
+                <AskRows asked={story.askVsResult.asked} delivered={story.askVsResult.delivered} />
+              ) : (
+                <AskGroup title="Delivered" claims={story.askVsResult.delivered} />
+              )}
+              <div className="grid gap-4 sm:grid-cols-2">
+                <AskGroup title="Extras" claims={story.askVsResult.extras} forceUncertain />
+                <AskGroup title="Missing" claims={story.askVsResult.missing} forceUncertain />
+              </div>
+            </section>
           ) : null}
-          {sorted.length > 0 ? (
-            <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={() => setSortMode("risk")}
-                className={`rounded-dusk-code px-3 py-2 text-sm ${
-                  sortMode === "risk" ? "bg-dusk-ink text-white" : "bg-dusk-pill text-dusk-ink"
-                }`}
-              >
-                Risk
-              </button>
-              <button
-                type="button"
-                onClick={() => setSortMode("session")}
-                className={`rounded-dusk-code px-3 py-2 text-sm ${
-                  sortMode === "session" ? "bg-dusk-ink text-white" : "bg-dusk-pill text-dusk-ink"
-                }`}
-              >
-                Session order
-              </button>
-            </div>
-          ) : null}
-          {sorted.length === 0 ? (
-            <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
-              <p>No changes shipped in this session.</p>
-              <p className="mt-1">No checks needed — there is nothing here to verify.</p>
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {visible.map((card) => (
-                <StoryCard
-                  key={card.id}
-                  card={card}
-                  reviewHunks={reviewHunks}
-                  historyEntries={historyEntries}
-                  expanded={expandedId === card.id}
-                  onToggle={() => setExpandedId(expandedId === card.id ? null : card.id)}
-                  onTrack={track}
-                  onAsk={handleAsk}
-                  onCheck={handleCheckMe}
-                />
-              ))}
-              {hiddenCount > 0 && !showAll ? (
+
+          <section id="what-changed" className="scroll-mt-8 space-y-3">
+            <h2 className="text-xl font-semibold tracking-tight">What changed</h2>
+            {story.routineSummary ? (
+              <p className="text-sm text-dusk-muted">{story.routineSummary}</p>
+            ) : null}
+            {sorted.length > 0 ? (
+              <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setShowAll(true)}
-                  className="rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink"
+                  onClick={() => setSortMode("risk")}
+                  className={tabClass(sortMode === "risk")}
                 >
-                  {hiddenCount} more changes
+                  Risk
                 </button>
-              ) : null}
-            </div>
-          )}
-        </section>
-
-        {story.detours.length > 0 ? (
-          <section className="space-y-3">
-            <h2 className="text-xl font-semibold tracking-tight">Detours</h2>
-            <div className="space-y-4">
-              {story.detours.map((detour) => (
-                <DetourItem key={detour.id} detour={detour} />
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {story.looseEnds.length > 0 || story.blindSpots.length > 0 ? (
-          <section className="space-y-3">
-            <h2 className="text-xl font-semibold tracking-tight">Loose ends</h2>
-            {looseEndGroups.length > 0 ? (
-              <div className="space-y-4">
-                {looseEndGroups.map((group) => (
-                  <LooseEndGroup
-                    key={group.card?.id ?? "session"}
-                    card={group.card}
-                    ends={group.ends}
-                    onOpenCard={openCard}
-                  />
-                ))}
+                <button
+                  type="button"
+                  onClick={() => setSortMode("session")}
+                  className={tabClass(sortMode === "session")}
+                >
+                  Session order
+                </button>
               </div>
             ) : null}
-            {story.blindSpots.length > 0 ? (
-              <div className="rounded-dusk-card border border-dusk-hairline-strong bg-dusk-surface px-6 py-5">
+            {sorted.length === 0 ? (
+              <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
+                <p>No changes shipped in this session.</p>
+                <p className="mt-1">No checks needed — there is nothing here to verify.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {noPassingRun ? (
+                  <p className="text-sm text-dusk-muted">
+                    No passing run observed in this session.
+                  </p>
+                ) : null}
+                {visible.map((card) => (
+                  <StoryCard
+                    key={card.id}
+                    card={card}
+                    reviewHunks={reviewHunks}
+                    historyEntries={historyEntries}
+                    expanded={expandedId === card.id}
+                    onToggle={() => setExpandedId(expandedId === card.id ? null : card.id)}
+                    onTrack={track}
+                    onAsk={handleAsk}
+                    onCheck={handleCheckMe}
+                    destructive={isDestructive(card)}
+                    dismissed={dismissedIds.has(card.id)}
+                    onDismiss={() => toggleDismissed(card.id)}
+                  />
+                ))}
+                {hiddenCount > 0 && !showAll ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowAll(true)}
+                    className="rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink"
+                  >
+                    {hiddenCount} more changes
+                  </button>
+                ) : null}
+              </div>
+            )}
+          </section>
+
+          {story.detours.length > 0 ? (
+            <section className="space-y-3">
+              <h2 className="text-xl font-semibold tracking-tight">Detours</h2>
+              <div className="space-y-4">
+                {story.detours.map((detour) => (
+                  <DetourItem key={detour.id} detour={detour} />
+                ))}
+              </div>
+            </section>
+          ) : null}
+
+          {story.looseEnds.length > 0 || story.blindSpots.length > 0 ? (
+            <section id="loose-ends" className="scroll-mt-8 space-y-3">
+              <h2 className="text-xl font-semibold tracking-tight">Loose ends</h2>
+              {looseEndGroups.length > 0 ? (
+                <div className="space-y-4">
+                  {looseEndGroups.map((group) => (
+                    <LooseEndGroup
+                      key={group.card?.id ?? "session"}
+                      card={group.card}
+                      ends={group.ends}
+                      onOpenCard={openCard}
+                    />
+                  ))}
+                </div>
+              ) : null}
+              {story.blindSpots.length > 0 ? (
+                <div className="rounded-dusk-card border border-dusk-hairline-strong bg-dusk-surface px-6 py-5">
+                  <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+                    Echo couldn&apos;t see
+                  </p>
+                  <ul className="mt-2 space-y-1 text-sm text-dusk-muted">
+                    {story.blindSpots.map((spot) => (
+                      <li key={spot}>{spot}</li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+            </section>
+          ) : null}
+
+          {story.gaps.length > 0 ? (
+            <section className="space-y-3">
+              <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
                 <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-                  Echo couldn&apos;t see
+                  What Echo couldn&apos;t verify
                 </p>
-                <ul className="mt-2 space-y-1 text-sm text-dusk-muted">
-                  {story.blindSpots.map((spot) => (
-                    <li key={spot}>{spot}</li>
+                <ul className="mt-2 space-y-1 font-mono text-xs text-dusk-muted">
+                  {story.gaps.map((gap) => (
+                    <li key={gap}>Echo couldn&apos;t verify: {gap}</li>
                   ))}
                 </ul>
               </div>
-            ) : null}
-          </section>
-        ) : null}
+            </section>
+          ) : null}
 
-        {story.gaps.length > 0 ? (
-          <section className="space-y-3">
-            <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-                What Echo couldn&apos;t verify
-              </p>
-              <ul className="mt-2 space-y-1 font-mono text-xs text-dusk-muted">
-                {story.gaps.map((gap) => (
-                  <li key={gap}>Echo couldn&apos;t verify: {gap}</li>
-                ))}
-              </ul>
-            </div>
-          </section>
-        ) : null}
-
-        {story.cards.length === 0 ? (
-          <section className="space-y-3">
-            <h2 className="text-xl font-semibold tracking-tight">Understanding check</h2>
-            <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
-              No check needed for this session.
-            </div>
-          </section>
-        ) : (
-          <section className="space-y-3">
-            <h2 className="text-xl font-semibold tracking-tight">Understanding check</h2>
-            {checkError !== null ? <p className="text-sm text-dusk-fail">{checkError}</p> : null}
-            {checksQuery.isPending ? (
-              <p className="text-sm text-dusk-muted">Loading check…</p>
-            ) : checksQuery.isError ? (
+          {story.cards.length === 0 ? (
+            <section id="understanding-check" className="scroll-mt-8 space-y-3">
+              <h2 className="text-xl font-semibold tracking-tight">Understanding check</h2>
               <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
-                <p>Could not load the check.</p>
-                <button
-                  type="button"
-                  onClick={() => {
-                    void checksQuery.refetch();
-                  }}
-                  className="mt-4 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink"
-                >
-                  Retry
-                </button>
+                No check needed for this session.
               </div>
-            ) : checksQuery.data === undefined ? null : checkRunnerOpen ? (
-              <CheckRunner
-                sessionId={sessionId}
-                state={checksQuery.data}
-                focusQuestionId={checkFocusId}
-                onUpdate={(next) => queryClient.setQueryData(["checks-v2", sessionId], next)}
-                onSkip={() => void handleSkipCheck()}
-                onDone={handleRunnerDone}
-              />
-            ) : checksQuery.data.status === "skipped" ? (
-              <div className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5">
-                <p className="text-sm text-dusk-muted">Skipped — no pressure.</p>
-                <button
-                  type="button"
-                  onClick={handleBackToInbox}
-                  className="rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white"
-                >
-                  Done — back to inbox
-                </button>
-              </div>
-            ) : checksQuery.data.status === "completed" || checkFinished ? (
-              <CheckPicture
-                cards={story.cards}
-                picture={checksQuery.data.picture}
-                onOpenCard={openCard}
-                onDone={handleBackToInbox}
-              />
-            ) : (
-              <CheckOffer
-                hasHighRisk={story.cards.some((card) => card.highRisk)}
-                questionCount={
-                  checksQuery.data.questions.length > 0 ? checksQuery.data.questions.length : null
-                }
-                onStart={() => void handleStartCheck()}
-                onSkip={() => void handleSkipCheck()}
-                starting={checkBusy}
-              />
-            )}
-          </section>
-        )}
+            </section>
+          ) : (
+            <section id="understanding-check" className="scroll-mt-8 space-y-3">
+              <h2 className="text-xl font-semibold tracking-tight">Understanding check</h2>
+              {checkError !== null ? <p className="text-sm text-dusk-fail">{checkError}</p> : null}
+              {checksQuery.isPending ? (
+                <p className="text-sm text-dusk-muted">Loading check…</p>
+              ) : checksQuery.isError ? (
+                <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
+                  <p>Could not load the check.</p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void checksQuery.refetch();
+                    }}
+                    className="mt-4 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink"
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : checksQuery.data === undefined ? null : checkRunnerOpen ? (
+                <CheckRunner
+                  sessionId={sessionId}
+                  state={checksQuery.data}
+                  focusQuestionId={checkFocusId}
+                  onUpdate={(next) => queryClient.setQueryData(["checks-v2", sessionId], next)}
+                  onSkip={() => void handleSkipCheck()}
+                  onDone={handleRunnerDone}
+                />
+              ) : checksQuery.data.status === "skipped" ? (
+                <div className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5">
+                  <p className="text-sm text-dusk-muted">Skipped — no pressure.</p>
+                  <button
+                    type="button"
+                    onClick={handleBackToInbox}
+                    className="rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
+                  >
+                    Done — back to inbox
+                  </button>
+                </div>
+              ) : checksQuery.data.status === "completed" || checkFinished ? (
+                <CheckPicture
+                  cards={story.cards}
+                  picture={checksQuery.data.picture}
+                  onOpenCard={openCard}
+                  onDone={handleBackToInbox}
+                />
+              ) : (
+                <CheckOffer
+                  hasHighRisk={story.cards.some((card) => card.highRisk)}
+                  questionCount={
+                    checksQuery.data.questions.length > 0 ? checksQuery.data.questions.length : null
+                  }
+                  onStart={() => void handleStartCheck()}
+                  onSkip={() => void handleSkipCheck()}
+                  starting={checkBusy}
+                />
+              )}
+            </section>
+          )}
+        </div>
+        <aside className="mt-8 hidden lg:block lg:sticky lg:top-6 lg:self-start">
+          <VerificationPanel
+            counts={story.verifiedCounts}
+            hasLooseEnds={story.looseEnds.length > 0 || story.blindSpots.length > 0}
+            onStartCheck={handlePanelCheck}
+            starting={checkBusy}
+          />
+        </aside>
       </div>
       {askOpen ? (
         <AskThreadPanel
