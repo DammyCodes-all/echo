@@ -831,3 +831,68 @@ describe("project stack regen state", () => {
     }
   });
 });
+
+describe("session title stability", () => {
+  it("keeps the first title while other fields update", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_1", root: "/repo", name: "repo" });
+      const base = {
+        id: "ses_title",
+        projectId: "prj_1",
+        agent: "opencode",
+        model: "model-a",
+        directory: "/repo",
+        title: "First title",
+        startedAt: "2026-10-27T09:00:00.000Z",
+        tapePath: "/data/a.jsonl",
+        captureQuality: "import_only",
+      } as const;
+      upsertSession(db, { ...base });
+      // A later poll renames the session upstream and moves fields: the
+      // title stays, everything else follows.
+      upsertSession(db, {
+        ...base,
+        model: "model-b",
+        directory: "/repo/sub",
+        title: "Renamed title",
+        tapePath: "/data/b.jsonl",
+      });
+      expect(getSessionSummary(db, "ses_title")).toMatchObject({
+        title: "First title",
+        model: "model-b",
+        directory: "/repo/sub",
+      });
+      // A null title never clears an established one.
+      upsertSession(db, { ...base, model: "model-c", title: null });
+      expect(getSessionSummary(db, "ses_title")?.title).toBe("First title");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("adopts the first non-empty title, then freezes", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_1", root: "/repo", name: "repo" });
+      const base = {
+        id: "ses_late",
+        projectId: "prj_1",
+        agent: "muse",
+        model: null,
+        directory: "/repo",
+        startedAt: null,
+        tapePath: "/data/a.jsonl",
+        captureQuality: "import_only",
+      } as const;
+      upsertSession(db, { ...base, title: null });
+      expect(getSessionSummary(db, "ses_late")?.title).toBeNull();
+      upsertSession(db, { ...base, title: "Late title" });
+      expect(getSessionSummary(db, "ses_late")?.title).toBe("Late title");
+      upsertSession(db, { ...base, title: "Another rename" });
+      expect(getSessionSummary(db, "ses_late")?.title).toBe("Late title");
+    } finally {
+      db.close();
+    }
+  });
+});

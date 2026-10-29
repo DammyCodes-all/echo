@@ -780,3 +780,10 @@ notes.
 - status: done
 - evidence: post-merge gate green — `tsc` clean, `biome` 211 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 55 files / 439 passed + 8 skipped, `pnpm build` ok
 - notes: Merge was blocked by an uncommitted in-flight search/sort edit on `projects.tsx` (another author's) — stashed before merging, popped and resolved after, stash dropped. One `--write` import-sort on the merged `projects.tsx`; earlier `--write` sorts on concurrent `index.ts`/`muse-ingest.ts` are ordering-only. Merge left open (staged, uncommitted) per user-owns-history; regenerated eval stamps left unstaged.
+
+## 2026-10-29 — Merge origin/main (sixth divergence, ingest identity + tech-stack)
+
+- item: merged remote `ensureEnabledProjects` boot wiring, `upsertProject` identity resolution, SettingsMenu + related web restyle, and the prior remote-sync entry into local (13 commits); conflicts in 4 files resolved — `muse-ingest.ts` keeps local `ensureIngestProject` convergence + per-session poison guard (remote `upsertProject` enhancement stays live for other callers, follow-up could unify the two), `BuildTracker.md` keeps both sides, eval stamps are the post-merge suite regen
+- status: done
+- evidence: `tsc` clean, `pnpm test` → 55 files / 463 passed, `pnpm build` ok; `biome` 1 error confined to a concurrent worker's unstaged `session-card.tsx` restyle (left alone) + 1 pre-existing warning (`ingest.test.ts` unused `root`) + 4 pre-existing infos
+- notes: `session-card.tsx` + `project-overview.tsx` restyle and a fresh `result.json` stamp churn appeared mid-merge from concurrent runs — all left unstaged/untouched. Nothing pushed.
