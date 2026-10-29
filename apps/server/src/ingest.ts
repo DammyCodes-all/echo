@@ -100,6 +100,14 @@ export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOpt
         const imported = importOpenCodeSession(store, session, new Date(), {
           projectId: identity.projectId,
         });
+        // Adapters can disagree about the remote (or it appears mid-life):
+        // adopt the canonical row so tapes, shadow dir and session row agree.
+        imported.projectId = upsertProject(db, {
+          id: identity.projectId,
+          root: identity.canonicalRoot,
+          remoteUrl: identity.remoteUrl,
+          name: basename(identity.canonicalRoot),
+        });
         const observedAt = new Date().toISOString();
         const tapePath = join(
           dataDir,
@@ -259,12 +267,6 @@ export function createIngest({ dataDir, db, log, onSessionQuiescent }: IngestOpt
         );
         if (synthetic.length > 0 || snapshotFailed || snapshotPartial) quality = "partial";
 
-        upsertProject(db, {
-          id: identity.projectId,
-          root: identity.canonicalRoot,
-          remoteUrl: identity.remoteUrl,
-          name: basename(identity.canonicalRoot),
-        });
         upsertSession(db, {
           id: session.id,
           projectId: imported.projectId,
