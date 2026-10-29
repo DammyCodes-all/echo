@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import {
   ARTIFACT_FILE_NAMES,
   type ChangeCard,
+  capStorySummary,
   type Detour,
   type DetourCostReason,
   type LooseEnd,
@@ -19,6 +20,7 @@ import {
   type EchoDb,
   getArtifactRef,
   getSession,
+  getSessionLastObservedAt,
   getSessionSummary,
   readAllEvents,
   type SessionSummary,
@@ -145,12 +147,36 @@ export type StoryOutcomeKind =
   | "fresh"
   | "generated"
   | "skeleton"
+  | "waiting"
   | "unavailable"
   | "unknown_session";
 
 export interface StoryOutcome {
   outcome: StoryOutcomeKind;
   story: SessionStory | null;
+}
+
+/**
+ * A session must be event-silent this long before its story may generate.
+ * Generating mid-stream narrates half-finished work, then regenerates on
+ * every open; waiting for quiet keeps stories stable and the UI calm.
+ */
+export const STORY_QUIET_MS = 60_000;
+
+/**
+ * True when the tape's latest event is old enough (or there are no events at
+ * all — nothing recorded means nothing to wait for). Unparseable timestamps
+ * fail open toward generating: corrupt clocks shouldn't silence a session.
+ */
+export function isSessionQuiet(
+  lastObservedAt: string | null,
+  nowMs: number,
+  quietMs: number = STORY_QUIET_MS,
+): boolean {
+  if (lastObservedAt === null) return true;
+  const last = Date.parse(lastObservedAt);
+  if (Number.isNaN(last)) return true;
+  return nowMs - last >= quietMs;
 }
 
 /** Watermark over the ordered tape: event count plus sha256 of event ids. */
@@ -419,7 +445,10 @@ function applyOrdering(facts: FactSet, story: SessionStory, tape: TapeEvent[]): 
  * and card ordering (see applyOrdering) run BEFORE validation so every
  * added claim is checked like a model claim, then single-regen drop, then
  * the server-owned blind-spot diagnostics (review + capture quality) merged
- * without validation — they describe the pipeline, not the session.
+ * without validation — they describe the pipeline, not the session. The
+ * summary headline cap runs last: validation judges the full claims, then
+ * the stored headline is cut to one short sentence. A capped summary is a
+ * strict substring, so it can only drop tokens, never invent them.
  */
 export function finalizeStory(args: {
   facts: FactSet;
@@ -441,7 +470,11 @@ export function finalizeStory(args: {
   ) {
     merged.push("intermediate states may not be captured");
   }
-  return SessionStorySchema.parse({ ...dropped.story, blindSpots: merged });
+  return SessionStorySchema.parse({
+    ...dropped.story,
+    summary: capStorySummary(dropped.story.summary),
+    blindSpots: merged,
+  });
 }
 
 /**
@@ -506,15 +539,18 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     // still refresh cards, risks and gaps, but keep the original title so
     // hierarchy navigation doesn't shift under the user. The one exception
     // is the skeleton-to-model upgrade — a deterministic fallback yields to
-    // the first real narration.
+    // the first real narration. The headline cap applies to the carried-over
+    // title too, so pre-cap long titles shrink to their first sentence on
+    // the next persist while the beginning stays stable.
     const prevSummary = getSessionSummary(db, input.sessionId)?.summary ?? null;
     const prevGenerator = getArtifactRef(db, input.sessionId, "story")?.generator ?? null;
     const prevIsSkeleton = prevGenerator?.startsWith("skeleton-") ?? false;
     const nextIsSkeleton = input.generator.startsWith("skeleton-");
-    const summary =
+    const summary = capStorySummary(
       prevSummary !== null && prevSummary !== "" && (nextIsSkeleton || !prevIsSkeleton)
         ? prevSummary
-        : input.story.summary;
+        : input.story.summary,
+    );
     const titled = summary === input.story.summary ? input.story : { ...input.story, summary };
     let scanned: unknown;
     try {
@@ -668,6 +704,24 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
   ): Promise<StoryOutcome> {
     const session = getSession(db, sessionId);
     if (!session) return { outcome: "unknown_session", story: null };
+    // Cheap quiet check first: the finalize hook fires on every poll, and an
+    // active session must cost one indexed lookup — not a full tape read and
+    // review — to be told "not yet".
+    const nowMs = clock().getTime();
+    if (!isSessionQuiet(getSessionLastObservedAt(db, sessionId), nowMs)) {
+      const ref = getArtifactRef(db, sessionId, "story");
+      if (ref && existsSync(ref.path)) {
+        try {
+          const story = SessionStorySchema.parse(
+            JSON.parse(readFileSync(ref.path, "utf8")) as unknown,
+          );
+          return { outcome: "waiting", story };
+        } catch {
+          // Corrupt artifact: report waiting with nothing to show.
+        }
+      }
+      return { outcome: "waiting", story: null };
+    }
     const stored = readAllEvents(db, sessionId);
     const watermark = computeWatermark(stored);
     const tape = stored.flatMap((event) => {

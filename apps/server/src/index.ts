@@ -34,7 +34,7 @@ import { createMuseWatcher } from "./muse-watch";
 import { createProjectTechStackService } from "./project-tech-stack";
 import { buildSessionReview } from "./review-index";
 import { readSnapshotFile } from "./snapshot-view";
-import { createStoryService, filterEmptySessions } from "./story";
+import { createStoryService, filterEmptySessions, isSessionQuiet } from "./story";
 
 const VERSION = "0.1.0";
 const DEFAULT_PORT = 4783;
@@ -115,11 +115,15 @@ app.get<{ Params: { id: string } }>("/api/projects/:id", async (request, reply) 
   return project;
 });
 
-app.get<{ Params: { id: string } }>("/api/projects/:id/sessions", async (request) =>
-  // Content-free skeletons ("no prompts, no changes") never reach the UI;
-  // recording sessions and unreadable artifacts stay visible.
-  filterEmptySessions(db, listSessions(db, request.params.id)),
-);
+app.get<{ Params: { id: string } }>("/api/projects/:id/sessions", async (request) => {
+  // Content-free skeletons never reach the UI, and neither do sessions that
+  // haven't gone quiet yet; recording sessions and unreadable artifacts stay
+  // visible. lastActivity is the tape's latest event (or the session touch).
+  const nowMs = Date.now();
+  return filterEmptySessions(db, listSessions(db, request.params.id)).filter((session) =>
+    isSessionQuiet(session.lastActivity, nowMs),
+  );
+});
 
 app.get<{ Params: { id: string } }>("/api/projects/:id/learn", async (request, reply) => {
   const outcome = learn.summary(request.params.id);
@@ -432,13 +436,19 @@ app.get<{ Params: { id: string } }>("/api/sessions/:id/history", async (request,
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/story", async (request, reply) => {
   // Read-through cache: generates on missing/stale, serves the artifact when
-  // the tape watermark still matches.
+  // the tape watermark still matches. A session that went quiet less than a
+  // minute ago reports waiting instead of narrating half-finished work.
   const outcome = await story.maybeGenerateStory(request.params.id, { reason: "read-through" });
-  if (outcome.outcome === "unknown_session" || !outcome.story) {
-    const code = outcome.outcome === "unknown_session" ? 404 : 500;
-    const errorCode = outcome.outcome === "unknown_session" ? "not_found" : "redaction_failed";
-    const message = outcome.outcome === "unknown_session" ? "unknown session" : "story unavailable";
-    return reply.code(code).send({ error: { code: errorCode, message } });
+  if (outcome.outcome === "unknown_session") {
+    return reply.code(404).send({ error: { code: "not_found", message: "unknown session" } });
+  }
+  if (outcome.outcome === "waiting" && !outcome.story) {
+    return reply.code(202).send({ waiting: true, sessionId: request.params.id });
+  }
+  if (!outcome.story) {
+    return reply
+      .code(500)
+      .send({ error: { code: "redaction_failed", message: "story unavailable" } });
   }
   return outcome.story;
 });

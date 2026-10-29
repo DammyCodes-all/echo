@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   ARTIFACT_FILE_NAMES,
+  capStorySummary,
   type SessionStory,
   SessionStorySchema,
   type TapeEvent,
@@ -32,7 +33,9 @@ import {
   createStoryService,
   filterEmptySessions,
   finalizeStory,
+  isSessionQuiet,
   normalizeDraftShape,
+  STORY_QUIET_MS,
   storyHasContent,
 } from "./story";
 import { makeSnapshotEvent } from "./tape-events";
@@ -815,6 +818,16 @@ describe("finalizeStory", () => {
     expect(story.detours.some((detour) => detour.attemptIds.includes("att-lone"))).toBe(false);
   });
 
+  it("caps the summary to one headline sentence after validation", () => {
+    const { tape, facts, draft } = buildScenario();
+    draft.summary =
+      "Shipped the auth fix across the login flow. Cleaned up the docs. A third sentence nobody needs on a card.";
+    const story = SessionStorySchema.parse(
+      finalizeStory({ facts, draft, tape, reviewDiagnostics: [], captureQuality: "full" }),
+    );
+    expect(story.summary).toBe("Shipped the auth fix across the login flow.");
+  });
+
   it("adds TODO and untested loose ends, blind spots stay separate", () => {
     const { tape, facts, draft } = buildScenario();
     const story = SessionStorySchema.parse(
@@ -1073,6 +1086,27 @@ describe("session title stability", () => {
     }
   });
 
+  it("caps an over-long model summary before storing it", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const long =
+        "Separated project workspace into overview learn and architecture areas with code index and generated project summary and tech stack alongside ingest hardening and follow-up fixes";
+      const { fetchImpl } = stubFetchSequence([titledDraft(long)]);
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("generated");
+      expect(outcome.story?.summary).toBe(capStorySummary(long));
+      expect(getSessionSummary(db, sessionId)?.summary).toBe(capStorySummary(long));
+      const ref = getArtifactRef(db, sessionId, "story");
+      expect(JSON.parse(readFileSync(ref?.path ?? "", "utf8")).summary).toBe(capStorySummary(long));
+    } finally {
+      db.close();
+    }
+  });
+
   it("lets the first model narration replace a skeleton title, then freezes", async () => {
     const { dataDir, db, sessionId, projectId } = await seedSession();
     try {
@@ -1234,6 +1268,74 @@ describe("empty session filtering", () => {
 
       const ids = filterEmptySessions(db, listSessions(db, projectId)).map((session) => session.id);
       expect(ids.sort()).toEqual(["ses_broken", "ses_gone"]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("story quiet gate", () => {
+  const T1 = Date.parse("2026-10-29T12:00:00.000Z");
+  const iso = (ms: number) => new Date(ms).toISOString();
+
+  function markAllEventsRecent(db: ReturnType<typeof openEchoDb>, sessionId: string, atMs: number) {
+    db.prepare("UPDATE events SET observed_at = ? WHERE session_id = ?").run(iso(atMs), sessionId);
+  }
+
+  it("isSessionQuiet treats missing or corrupt timestamps as quiet", () => {
+    expect(isSessionQuiet(null, T1)).toBe(true);
+    expect(isSessionQuiet("not-a-timestamp", T1)).toBe(true);
+    expect(isSessionQuiet(iso(T1 - 61_000), T1)).toBe(true);
+    expect(isSessionQuiet(iso(T1 - 60_000), T1)).toBe(true);
+    expect(isSessionQuiet(iso(T1 - 59_000), T1)).toBe(false);
+    expect(isSessionQuiet(iso(T1 - 59_000), T1, 30_000)).toBe(true);
+    expect(isSessionQuiet(iso(T1 - 29_000), T1, 30_000)).toBe(false);
+    expect(isSessionQuiet(iso(T1 - 31_000), T1, 30_000)).toBe(true);
+    expect(STORY_QUIET_MS).toBe(60_000);
+  });
+
+  it("reports waiting with nothing to show when an active session has no story yet", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      markAllEventsRecent(db, sessionId, T1);
+      const waiting = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch, clock: () => new Date(T1) },
+      );
+      const outcome = await waiting.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("waiting");
+      expect(outcome.story).toBeNull();
+      // A minute of silence later, the same session generates normally.
+      const quiet = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch, clock: () => new Date(T1 + 61_000) },
+      );
+      expect((await quiet.maybeGenerateStory(sessionId)).outcome).toBe("skeleton");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("serves the previous artifact as waiting while the session is active", async () => {
+    const { dataDir, db, sessionId, projectId } = await seedSession();
+    try {
+      const firstService = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch },
+      );
+      const first = await firstService.maybeGenerateStory(sessionId, { reason: "finalize" });
+      expect(first.outcome).toBe("skeleton");
+      const summary = first.story?.summary;
+      expect(typeof summary).toBe("string");
+      // New tape activity right now: watermark moved but the session is loud.
+      appendEvents(db, sessionId, [
+        seedTapeEvent(sessionId, projectId, "evt_loud", "prompt.submitted", { text: "keep going" }),
+      ]);
+      markAllEventsRecent(db, sessionId, Date.now());
+      const second = await firstService.maybeGenerateStory(sessionId);
+      expect(second.outcome).toBe("waiting");
+      expect(second.story?.summary).toBe(summary);
+      expect(getSessionSummary(db, sessionId)?.summary).toBe(summary);
     } finally {
       db.close();
     }
