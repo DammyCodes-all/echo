@@ -53,7 +53,7 @@ export function CheckOffer({
           type="button"
           onClick={onStart}
           disabled={starting}
-          className="rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white disabled:opacity-40"
+          className="rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40"
         >
           {starting ? "Starting…" : "Start check"}
         </button>
