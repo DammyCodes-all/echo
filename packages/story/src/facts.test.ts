@@ -375,9 +375,9 @@ describe("risk flags and boost", () => {
         }),
       );
       expect(deleted.risk.flags.map((f) => f.flag)).toContain("destructive");
-      expect(
-        deleted.risk.flags.find((f) => f.flag === "destructive")?.reason,
-      ).toContain("src/legacy.ts deleted");
+      expect(deleted.risk.flags.find((f) => f.flag === "destructive")?.reason).toContain(
+        "src/legacy.ts deleted",
+      );
     });
 
     it("leaves prose and non-code paths unflagged", () => {
@@ -394,9 +394,9 @@ describe("risk flags and boost", () => {
         }),
       ).not.toContain("destructive");
       // Docs describe DROP TABLE migrations.
-      expect(
-        flagsFor({ path: "docs/migrations.md", addedText: "DROP TABLE users" }),
-      ).not.toContain("destructive");
+      expect(flagsFor({ path: "docs/migrations.md", addedText: "DROP TABLE users" })).not.toContain(
+        "destructive",
+      );
       // Tracker narrates truncations.
       expect(flagsFor({ ...prose, path: "docs/BuildTracker.md" })).not.toContain("destructive");
       // Partial deletions are edits, not file removal.
