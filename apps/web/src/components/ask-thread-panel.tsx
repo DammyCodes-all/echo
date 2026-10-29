@@ -215,7 +215,7 @@ export function AskThreadPanel({
             type="button"
             onClick={submit}
             disabled={askMutation.isPending || question.trim().length === 0}
-            className="shrink-0 rounded-dusk-code bg-dusk-ink px-3 py-2 text-sm text-white disabled:opacity-40"
+            className="shrink-0 rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40"
           >
             {askMutation.isPending ? "Asking…" : "Ask"}
           </button>
