@@ -7,6 +7,7 @@ import {
   ChecksV2ResponseSchema,
   EngagementStateSchema,
   HunkIdSchema,
+  ProjectLearnResponseSchema,
   ProjectTechStackSchema,
   PublicCheckQuestionSchema,
   RecordEngagementRequestSchema,
@@ -68,6 +69,35 @@ function minimalStory(overrides: Record<string, unknown> = {}) {
       total: 0,
     },
     ...overrides,
+  };
+}
+
+function learnBase() {
+  return {
+    projectId: "prj_1",
+    sessionCount: 1,
+    checkedCount: 1,
+    skippedCount: 0,
+    notCheckedCount: 0,
+    bucketTotals: {
+      solid: 1,
+      right_but_unsure: 0,
+      confident_but_wrong: 0,
+      wrong_and_knew_it: 0,
+      never_looked: 0,
+    },
+    weakAreas: [{ file: "billing/retry.ts", confidentWrong: 1, total: 1 }],
+    sessions: [
+      {
+        sessionId: "ses_1",
+        title: "Retry billing",
+        summary: "One-line takeaway.",
+        checkStatus: "checked",
+        lastActivity: "2026-10-29T00:00:00.000Z",
+        checksStatus: "completed",
+        picture: [{ cardId: "h_0123456789abcdef", bucket: "solid", questionId: null }],
+      },
+    ],
   };
 }
 
@@ -292,6 +322,22 @@ describe("story-first contracts", () => {
         ...base,
         items: Array.from({ length: 9 }, (_, i) => ({ name: `Stack${i}`, kind: "data" })),
       }).success,
+    ).toBe(false);
+  });
+
+  it("accepts a project learn payload with bucket totals", () => {
+    expect(ProjectLearnResponseSchema.safeParse(learnBase()).success).toBe(true);
+    expect(
+      ProjectLearnResponseSchema.safeParse({
+        ...learnBase(),
+        bucketTotals: { ...learnBase().bucketTotals, solid: 2 },
+      }).success,
+    ).toBe(true);
+    expect(ProjectLearnResponseSchema.safeParse({ ...learnBase(), sessions: "nope" }).success).toBe(
+      false,
+    );
+    expect(
+      ProjectLearnResponseSchema.safeParse({ ...learnBase(), bucketTotals: { solid: 1 } }).success,
     ).toBe(false);
   });
 });

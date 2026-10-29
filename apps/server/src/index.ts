@@ -28,6 +28,7 @@ import { createEngagementService } from "./engagement";
 import { loadLocalEnv } from "./env";
 import { createHistoryService } from "./history";
 import { createIngest } from "./ingest";
+import { createLearnService } from "./learn";
 import { createMuseIngest } from "./muse-ingest";
 import { createMuseWatcher } from "./muse-watch";
 import { createProjectTechStackService } from "./project-tech-stack";
@@ -85,6 +86,7 @@ const checksV2 = createChecksV2Service({ db, dataDir: paths.dataDir, log: app.lo
 const engagement = createEngagementService(db);
 const history = createHistoryService(db, paths.dataDir);
 const codeIndex = createCodeIndexService({ db });
+const learn = createLearnService({ db, dataDir: paths.dataDir });
 const techStack = createProjectTechStackService(
   { db, dataDir: paths.dataDir, log: app.log },
   {
@@ -118,6 +120,11 @@ app.get<{ Params: { id: string } }>("/api/projects/:id/sessions", async (request
   // recording sessions and unreadable artifacts stay visible.
   filterEmptySessions(db, listSessions(db, request.params.id)),
 );
+
+app.get<{ Params: { id: string } }>("/api/projects/:id/learn", async (request, reply) => {
+  const outcome = learn.summary(request.params.id);
+  return reply.code(outcome.status).send(outcome.body);
+});
 
 app.get<{ Params: { id: string } }>("/api/projects/:id/files", async (request, reply) => {
   const project = getProject(db, request.params.id);

@@ -638,6 +638,55 @@ export const CheckV2AnswerResponseSchema = z.object({
   }),
 });
 export type CheckV2AnswerResponse = z.infer<typeof CheckV2AnswerResponseSchema>;
+// --- Project Learn (read-only calibration aggregation, no model calls) ---
+
+export const LearnChecksStatusSchema = z.enum([
+  "offered",
+  "in_progress",
+  "completed",
+  "skipped",
+  "none",
+]);
+export type LearnChecksStatus = z.infer<typeof LearnChecksStatusSchema>;
+
+export const LearnBucketTotalsSchema = z.object({
+  solid: z.number().int().nonnegative(),
+  right_but_unsure: z.number().int().nonnegative(),
+  confident_but_wrong: z.number().int().nonnegative(),
+  wrong_and_knew_it: z.number().int().nonnegative(),
+  never_looked: z.number().int().nonnegative(),
+});
+export type LearnBucketTotals = z.infer<typeof LearnBucketTotalsSchema>;
+
+export const LearnSessionEntrySchema = z.object({
+  sessionId: z.string().min(1),
+  title: z.string().nullable(),
+  summary: z.string().nullable(),
+  checkStatus: SessionCheckStatusSchema,
+  lastActivity: z.string().min(1),
+  checksStatus: LearnChecksStatusSchema,
+  picture: z.array(CardPictureSchema),
+});
+export type LearnSessionEntry = z.infer<typeof LearnSessionEntrySchema>;
+
+export const LearnWeakAreaSchema = z.object({
+  file: z.string().min(1),
+  confidentWrong: z.number().int().nonnegative(),
+  total: z.number().int().nonnegative(),
+});
+export type LearnWeakArea = z.infer<typeof LearnWeakAreaSchema>;
+
+export const ProjectLearnResponseSchema = z.object({
+  projectId: z.string().min(1),
+  sessionCount: z.number().int().nonnegative(),
+  checkedCount: z.number().int().nonnegative(),
+  skippedCount: z.number().int().nonnegative(),
+  notCheckedCount: z.number().int().nonnegative(),
+  bucketTotals: LearnBucketTotalsSchema,
+  weakAreas: z.array(LearnWeakAreaSchema),
+  sessions: z.array(LearnSessionEntrySchema),
+});
+export type ProjectLearnResponse = z.infer<typeof ProjectLearnResponseSchema>;
 // File layout for generated artifacts under the session dir (ARCHITECTURE §6).
 export const ARTIFACT_FILE_NAMES: Record<ArtifactKind, string> = {
   story: "story.json",

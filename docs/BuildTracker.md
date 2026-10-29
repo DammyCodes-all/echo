@@ -845,3 +845,10 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` clean (4 infos), `pnpm test` → 55 files / 473 passed, `pnpm build` ok; live check: 51 sessions, 17 flagged skeleton — e.g. "Greeting" and "Skeleton loaders for loading states" now display instead of path-soup; title-less Muse skeletons unchanged. New tests: contract fixtures carry the flag; db `summarySkeleton` matrix (skeleton true / model false / missing false)
 - notes: Muse sessions carry no title in their logs (verified: no title/name field in the first payloads), so the fallback only lifts OpenCode-titled sessions today; capturing Muse titles would be ingest work, not done here.
+
+## 2026-10-29 — Project Learn tab v1 (calibration history, read-only)
+
+- item: `GET /api/projects/:id/learn` (`apps/server/src/learn.ts`, read-only aggregation over `checks_v2.json` + `story.json`, no model calls) + contracts `ProjectLearnResponse` (total `LearnBucketTotals`, `LearnSessionEntry`, `LearnWeakArea`) + web `ProjectLearnPage` rewrite (calibration picture, weakest areas, session list; empty message only when nothing checked)
+- status: done
+- evidence: `tsc` clean; `biome` clean on touched files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`); `pnpm exec vitest run packages/contracts apps/server/src/learn.test.ts apps/server/src/checks-v2.test.ts apps/server/src/story.test.ts` → 5 files / 63 passed; `pnpm build` exit 0; built web bundle carries the new copy. Full `pnpm test` shows 2 failures that reproduce on clean HEAD `5a587d8` in an isolated worktree (ingest identity-migration + eval harness ENOENT) — pre-existing, untouched by this slice
+- notes: Totals count picture entries across sessions that have a checks artifact; weak areas count confident_but_wrong/wrong_and_knew_it per story-card touch file (top 8). Corrupt/missing artifacts read as empty picture, never 500. User call honored: no next-up queue, empty-state only. pnpm-lock.yaml drift in the tree is environmental (packageManager `@pnpm/exe` entry), not mine. Nothing staged or committed.
