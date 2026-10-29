@@ -30,6 +30,7 @@ import type { CaptureQuality, TapeEvent } from "@echo/contracts";
 import { projectIdForDirectory } from "@echo/core";
 import {
   type EchoDb,
+  ensureIngestProject,
   getReaderCheckpoint,
   getSession,
   getSessionBuildPin,
@@ -42,7 +43,6 @@ import {
   maxTapeSeq,
   pruneReaderCheckpoints,
   type ReaderCheckpoint,
-  upsertProject,
   upsertReaderCheckpoint,
   upsertSession,
   upsertSessionBuildPin,
@@ -559,7 +559,15 @@ export function createMuseIngest(options: MuseIngestOptions) {
         // Budget covers only entries that reach ingestion: files that can
         // never drain must not starve drainable ones behind the cap.
         processed += 1;
-        const projectId = identity.projectId;
+        // Same repo keeps its historic id across remote adds/removes and
+        // folder moves (one row per repository); isolated by the try/catch
+        // below, so a poison entry can't starve the rest of the drain.
+        const projectId = ensureIngestProject(db, {
+          id: identity.projectId,
+          root: identity.canonicalRoot,
+          remoteUrl: identity.remoteUrl,
+          name: basename(identity.canonicalRoot),
+        });
         const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
         const snapshotRoot = findRepositoryRoot(projectRoot) ?? identity.canonicalRoot;
         try {
@@ -584,12 +592,7 @@ export function createMuseIngest(options: MuseIngestOptions) {
           const isNewSession = !getSession(db, sessionId);
           if (isNewSession) {
             mkdirSync(dirname(tapePath), { recursive: true });
-            upsertProject(db, {
-              id: projectId,
-              root: identity.canonicalRoot,
-              remoteUrl: identity.remoteUrl,
-              name: basename(identity.canonicalRoot),
-            });
+            // Project row already ensured above.
             // Hook-only bootstrap quality comes from the same function as
             // every other quality value: no native log was seen, so the
             // hookOnly floor (degraded) applies. Ingest persists, never decides.
