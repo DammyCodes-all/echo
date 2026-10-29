@@ -243,6 +243,40 @@ describe("repositories", () => {
     db.close();
   });
 
+  it("adopts the existing row when a later identity claims the same root", () => {
+    const db = openTestDb();
+    seed(db);
+    // A remote that appears mid-life must not split the repo in two: the
+    // root-based row wins, keeps its id, and absorbs the remote.
+    const resolved = upsertProject(db, {
+      id: "prj_remote",
+      root: "/repo",
+      remoteUrl: "github.com/example/echo",
+      name: "repo",
+    });
+
+    expect(resolved).toBe("prj_1");
+    expect(listProjects(db)).toHaveLength(1);
+    expect(listProjects(db)[0]).toMatchObject({
+      id: "prj_1",
+      root: "/repo",
+      remoteUrl: "github.com/example/echo",
+    });
+    db.close();
+  });
+
+  it("keeps the stored remote when a later upsert omits it", () => {
+    const db = openTestDb();
+    seed(db);
+    upsertProject(db, { id: "prj_1", root: "/repo", name: "repo" });
+
+    expect(listProjects(db)[0]).toMatchObject({
+      id: "prj_1",
+      remoteUrl: "github.com/example/echo",
+    });
+    db.close();
+  });
+
   it("projects the latest revision per record and keeps history available", () => {
     const db = openTestDb();
     seed(db);

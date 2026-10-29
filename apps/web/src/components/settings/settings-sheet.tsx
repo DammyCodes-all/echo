@@ -180,9 +180,6 @@ export function SettingsMenu() {
       }
       const instant =
         reducedMotion || window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-      console.info(
-        `echo-settings: close instant=${instant} reducedMotion=${reducedMotion} open=${open} leaving=${leaving}`,
-      );
       if (instant) {
         finishClose(returnFocus, after);
         return;
@@ -557,7 +554,7 @@ export function SettingsMenu() {
           event.preventDefault();
           setOpenState(true, event.key === "ArrowDown" ? "first" : "last");
         }}
-        className="grid h-10 w-10 cursor-pointer place-items-center rounded-full border border-dusk-hairline-strong bg-dusk-secondary text-dusk-accent-soft transition hover:-translate-y-px focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
+        className="grid h-10 w-10 cursor-pointer place-items-center rounded-full text-dusk-muted transition hover:-translate-y-px hover:text-dusk-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
       >
         <HugeiconsIcon icon={Settings01Icon} size={18} strokeWidth={1.8} />
       </button>
