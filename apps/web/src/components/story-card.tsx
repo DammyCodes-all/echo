@@ -23,6 +23,9 @@ type StoryCardProps = {
   onTrack: (kind: EngagementKind, cardId?: string | null) => void;
   onAsk: (card: { id: string; headline: string }) => void;
   onCheck?: (card: { id: string; headline: string }) => void;
+  destructive: boolean;
+  dismissed: boolean;
+  onDismiss: () => void;
 };
 
 export const VERIFICATION_BADGE: Record<
@@ -51,7 +54,7 @@ export const VERIFICATION_BADGE: Record<
   },
 };
 
-export function ClaimItem({
+export function ClaimBody({
   claim,
   forceUncertain = false,
 }: {
@@ -60,8 +63,8 @@ export function ClaimItem({
 }) {
   const uncertain = forceUncertain || claim.label === "uncertain";
   return (
-    <li className={uncertain ? "text-dusk-muted" : "text-dusk-ink"}>
-      <span>{claim.text}</span>
+    <>
+      <span className={uncertain ? "text-dusk-muted" : "text-dusk-ink"}>{claim.text}</span>
       {claim.label === "agent_stated" ? (
         <span className="ml-2 rounded-dusk-code bg-dusk-peach-wash px-1.5 py-0.5 font-mono text-[10px] text-dusk-peach">
           agent-stated
@@ -72,6 +75,21 @@ export function ClaimItem({
           uncertain
         </span>
       ) : null}
+    </>
+  );
+}
+
+export function ClaimItem({
+  claim,
+  forceUncertain = false,
+}: {
+  claim: StoryClaim;
+  forceUncertain?: boolean;
+}) {
+  const uncertain = forceUncertain || claim.label === "uncertain";
+  return (
+    <li className={uncertain ? "text-dusk-muted" : "text-dusk-ink"}>
+      <ClaimBody claim={claim} forceUncertain={forceUncertain} />
     </li>
   );
 }
@@ -85,6 +103,9 @@ export function StoryCard({
   onTrack,
   onAsk,
   onCheck,
+  destructive,
+  dismissed,
+  onDismiss,
 }: StoryCardProps) {
   const [showCode, setShowCode] = useState(false);
   const rootRef = useRef<HTMLElement | null>(null);
@@ -132,24 +153,53 @@ export function StoryCard({
   };
 
   const badge = VERIFICATION_BADGE[card.verification];
-  const whyLine = card.why.at(0)?.text ?? "No reason recorded.";
-  const rankReason = card.riskReasons.at(0) ?? "No risk signal.";
+  // riskReasons is flag reasons plus "rewrite: ..." notes (see rollUpRisk in
+  // @echo/story). Flags render only beside the High risk flag; rewrite notes
+  // are neutral evidence shown on any card that carries them.
+  const rewriteNotes = card.riskReasons.filter((reason) => reason.startsWith("rewrite:"));
+  const destructiveReasons = card.riskReasons.filter((reason) => reason.startsWith("destructive:"));
+  // Pinned cards lead with the destructive match; other flag reasons stay
+  // beside the High risk flag, dismissed ones drop out, rewrite notes stay
+  // neutral. onDismiss toggles the dismissed state (dismiss and undo share it).
+  const isPinned = destructive && !dismissed;
+  const failReasons = card.riskReasons.filter(
+    (reason) =>
+      !reason.startsWith("rewrite:") &&
+      !(isPinned && reason.startsWith("destructive:")) &&
+      !(dismissed && reason.startsWith("destructive:")),
+  );
   const related = historyEntries.filter((entry) =>
     entry.sharedFiles.some((file) => card.touches.includes(file)),
   );
+  const shownTouches = card.touches.slice(0, 4);
+  const hiddenTouchCount = card.touches.length - shownTouches.length;
 
   return (
     <article
       ref={rootRef}
       id={`card-${card.id}`}
-      className="rounded-dusk-card bg-dusk-surface px-6 py-5"
+      className={`rounded-dusk-card px-6 py-5 ${
+        destructive && !dismissed
+          ? "border border-dusk-fail/40 bg-dusk-fail-wash/40"
+          : "bg-dusk-surface"
+      }`}
     >
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <span
-          title={badge.title}
-          className={`shrink-0 rounded-dusk-code px-2.5 py-1 text-xs font-semibold ${badge.className}`}
-        >
-          {badge.label}
+        <span className="flex flex-wrap items-center gap-2">
+          <span
+            title={badge.title}
+            className={`shrink-0 rounded-dusk-code px-2.5 py-1 text-xs font-semibold ${badge.className}`}
+          >
+            {badge.label}
+          </span>
+          {card.highRisk ? (
+            <span
+              title="High risk — the tape shows a blast-radius flag on this change."
+              className="shrink-0 rounded-dusk-code bg-dusk-fail-wash px-2.5 py-1 text-xs font-semibold text-dusk-fail"
+            >
+              High risk
+            </span>
+          ) : null}
         </span>
         <button
           type="button"
@@ -166,8 +216,58 @@ export function StoryCard({
       >
         {card.headline}
       </button>
-      <p className="mt-2 text-sm text-dusk-muted">{whyLine}</p>
-      <p className="mt-1 text-sm text-dusk-muted">{rankReason}</p>
+      {shownTouches.length > 0 ? (
+        <div className="mt-2 flex flex-wrap items-center gap-1">
+          {shownTouches.map((path) => (
+            <span
+              key={path}
+              className="rounded-dusk-code bg-dusk-pill px-2 py-0.5 font-mono text-xs text-dusk-accent-soft"
+            >
+              {path}
+            </span>
+          ))}
+          {hiddenTouchCount > 0 ? (
+            <span className="font-mono text-xs text-dusk-muted">+{hiddenTouchCount} more</span>
+          ) : null}
+        </div>
+      ) : null}
+      {card.why.length > 0 ? (
+        <p className="mt-2 text-sm text-dusk-muted">{card.why[0]?.text}</p>
+      ) : null}
+      {isPinned ? (
+        <div className="mt-2 space-y-1">
+          {destructiveReasons.map((reason) => (
+            <p key={reason} className="text-sm font-semibold text-dusk-fail">
+              {reason}
+            </p>
+          ))}
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="text-sm text-dusk-muted underline underline-offset-4"
+          >
+            Dismiss as false positive
+          </button>
+        </div>
+      ) : null}
+      {dismissed ? (
+        <p className="mt-1 text-sm text-dusk-muted">
+          Flag dismissed as false positive.{" "}
+          <button type="button" onClick={onDismiss} className="underline underline-offset-4">
+            Undo
+          </button>
+        </p>
+      ) : null}
+      {failReasons.map((reason) => (
+        <p key={reason} className="mt-1 text-sm text-dusk-fail">
+          {reason}
+        </p>
+      ))}
+      {rewriteNotes.map((reason) => (
+        <p key={reason} className="mt-1 text-sm text-dusk-muted">
+          {reason}
+        </p>
+      ))}
 
       {expanded ? (
         <div className="mt-4 space-y-4 border-t border-dusk-hairline pt-4">
@@ -206,9 +306,7 @@ export function StoryCard({
                   <ClaimItem key={`${card.id}-why-${claim.text}`} claim={claim} />
                 ))}
               </ul>
-            ) : (
-              <p className="mt-2 text-sm text-dusk-muted">No reason recorded.</p>
-            )}
+            ) : null}
             <blockquote className="mt-2 border-l-2 border-dusk-hairline-strong pl-3">
               {card.moment.ts ? (
                 <p className="font-mono text-[10px] text-dusk-muted">{card.moment.ts}</p>
