@@ -107,6 +107,8 @@ export const SessionSummarySchema = z.object({
   captureQuality: z.string().min(1),
   eventCount: z.number().int().nonnegative(),
   summary: z.string().nullable(),
+  /** True when the summary came from the deterministic skeleton fallback. */
+  summarySkeleton: z.boolean(),
   checkStatus: SessionCheckStatusSchema,
   highRiskCount: z.number().int().nonnegative(),
   captureState: CaptureStateSchema,

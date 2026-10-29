@@ -895,4 +895,43 @@ describe("session title stability", () => {
       db.close();
     }
   });
+
+  it("marks summarySkeleton from the story artifact generator", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_1", root: "/repo", name: "repo" });
+      const base = {
+        projectId: "prj_1",
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: "Agent title",
+        startedAt: null,
+        tapePath: "/data/a.jsonl",
+        captureQuality: "import_only",
+      } as const;
+      const artifact = (sessionId: string, generator: string) =>
+        upsertArtifactRef(db, {
+          sessionId,
+          kind: "story",
+          path: `/data/${sessionId}.json`,
+          tapeWatermark: { eventCount: 1, sha256: "x" },
+          generator,
+          generatedAt: "2026-10-29T00:00:00.000Z",
+        });
+      upsertSession(db, { ...base, id: "ses_skel" });
+      upsertSession(db, { ...base, id: "ses_model" });
+      upsertSession(db, { ...base, id: "ses_none" });
+      artifact("ses_skel", "skeleton-v2");
+      artifact("ses_model", "muse-spark-1.3-contributor");
+      const byId = new Map(listSessions(db, "prj_1").map((session) => [session.id, session]));
+      expect(byId.get("ses_skel")).toMatchObject({ summarySkeleton: true });
+      expect(byId.get("ses_model")).toMatchObject({ summarySkeleton: false });
+      expect(byId.get("ses_none")).toMatchObject({ summarySkeleton: false });
+      expect(getSessionSummary(db, "ses_skel")?.summarySkeleton).toBe(true);
+      expect(getSessionSummary(db, "ses_model")?.summarySkeleton).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
 });

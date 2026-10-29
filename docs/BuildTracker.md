@@ -838,3 +838,10 @@ notes.
 - status: done
 - evidence: full gate green (same run as above: 55 files / 472 passed); new tests: predicate unit (empty vs asked vs shortVersion vs model-always-counts), filter integration (drops empty, keeps recording + meaningful), unreadable-artifact safety (corrupt JSON + missing file both kept); live check: endpoint returns 51 sessions (no content-free skeletons exist right now, so nothing hidden — verified against DB)
 - notes: Only fully-empty skeletons hide; "Prompts, no file changes" (asked something) and "changes, no prompts" both stay. If the model key returns, skeleton→model upgrade still replaces the title on next regen (title-freeze exception).
+
+## 2026-10-29 — Agent session title as default when our story didn't run
+
+- item: session display title is now model summary → agent session title → skeleton text → recording/empty placeholders. New `summarySkeleton` boolean on `SessionSummary` (contracts + db mapper from the story artifact generator, indexed point lookup per session, same N+1 tradeoff as capture-state) feeds a shared `sessionDisplayTitle` helper (web `session-display.ts`, keeps the parallel landing's skeleton compaction for the last-resort branch); applied to session cards, folder names, and the story page header (which reads the artifact's own `skeleton` flag + loaded session title)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 infos), `pnpm test` → 55 files / 473 passed, `pnpm build` ok; live check: 51 sessions, 17 flagged skeleton — e.g. "Greeting" and "Skeleton loaders for loading states" now display instead of path-soup; title-less Muse skeletons unchanged. New tests: contract fixtures carry the flag; db `summarySkeleton` matrix (skeleton true / model false / missing false)
+- notes: Muse sessions carry no title in their logs (verified: no title/name field in the first payloads), so the fallback only lifts OpenCode-titled sessions today; capturing Muse titles would be ingest work, not done here.

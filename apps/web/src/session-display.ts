@@ -17,3 +17,23 @@ export function compactSessionSummary(summary: string | null): string | null {
   if (first === undefined) return summary;
   return rest.length === 0 ? `Prompts · changes in ${first}` : `Prompts · changes in ${first}…`;
 }
+
+/**
+ * Card display title: our model narration wins; when that didn't run
+ * (skeleton fallback or nothing yet), the agent's own session title is the
+ * default. The compacted skeleton text is last resort before the
+ * recording/empty placeholders.
+ */
+export function sessionDisplayTitle(session: {
+  summary: string | null;
+  summarySkeleton: boolean;
+  title: string | null;
+  captureState: string;
+}): string {
+  if (session.summary && !session.summarySkeleton) return session.summary;
+  const agentTitle = session.title?.trim();
+  if (agentTitle) return agentTitle;
+  if (session.summary) return compactSessionSummary(session.summary) ?? session.summary;
+  if (session.captureState === "recording") return "Still recording — story pending…";
+  return "No summary";
+}

@@ -31,6 +31,8 @@ export interface SessionSummary {
   captureQuality: string;
   eventCount: number;
   summary: string | null;
+  /** True when the summary came from the deterministic skeleton fallback. */
+  summarySkeleton: boolean;
   checkStatus: SessionCheckStatus;
   highRiskCount: number;
   captureState: CaptureState;
@@ -619,7 +621,12 @@ export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
     .all(projectId) as Array<Record<string, unknown>>;
   return rows.map((row) => {
     const base = toSessionSummary(row);
-    return { ...base, captureState: resolveCaptureState(db, String(row.id), row) };
+    const id = String(row.id);
+    return {
+      ...base,
+      summarySkeleton: summarySkeletonFor(db, id),
+      captureState: resolveCaptureState(db, id, row),
+    };
   });
 }
 
@@ -636,7 +643,11 @@ export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary
   const row = rows[0];
   if (!row) return null;
   const base = toSessionSummary(row);
-  return { ...base, captureState: resolveCaptureState(db, String(row.id), row) };
+  return {
+    ...base,
+    summarySkeleton: summarySkeletonFor(db, sessionId),
+    captureState: resolveCaptureState(db, String(row.id), row),
+  };
 }
 
 function deriveCaptureState(status: string, captureQuality: string): CaptureState {
@@ -680,10 +691,20 @@ function toSessionSummary(row: Record<string, unknown>): SessionSummary {
     captureQuality,
     eventCount: Number(row.event_count),
     summary: row.story_summary === null ? null : String(row.story_summary),
+    // Skeleton provenance comes from the artifact row, not the session row;
+    // attached by the caller (see summarySkeletonFor).
+    summarySkeleton: false,
     checkStatus: String(row.check_status) as SessionCheckStatus,
     highRiskCount: Number(row.high_risk_count),
     captureState: deriveCaptureState(status, captureQuality),
   };
+}
+
+// Skeleton provenance lives on the story artifact, not the session row: one
+// indexed point lookup per session. Same N+1 tradeoff as the capture-state
+// helper; fine at inbox scale.
+function summarySkeletonFor(db: EchoDb, sessionId: string): boolean {
+  return getArtifactRef(db, sessionId, "story")?.generator?.startsWith("skeleton-") ?? false;
 }
 
 export function setSessionCheckStatus(

@@ -21,6 +21,7 @@ import { ScaffoldPage } from "../components/scaffold-page";
 import { ClaimBody, ClaimItem, type HistoryEntry, StoryCard } from "../components/story-card";
 import { VerificationPanel } from "../components/verification-panel";
 import { useEngagement } from "../hooks/use-engagement";
+import { sessionDisplayTitle } from "../session-display";
 
 const CHECK_UNAVAILABLE = "Check unavailable (model off). Your session status is untouched.";
 
@@ -580,7 +581,12 @@ export function StoryPage() {
   return (
     <ScaffoldPage
       eyebrow="Session story"
-      title={story.summary}
+      title={sessionDisplayTitle({
+        summary: story.summary,
+        summarySkeleton: story.skeleton,
+        title: sessionQuery.data?.title ?? null,
+        captureState: sessionQuery.data?.captureState ?? "ready",
+      })}
       description={<SubtitleLinks story={story} />}
     >
       {story.skeleton ? (

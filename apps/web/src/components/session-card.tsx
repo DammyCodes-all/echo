@@ -9,7 +9,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { memo } from "react";
 import { Link } from "react-router";
 import { formatTime } from "../api";
-import { compactSessionSummary } from "../session-display";
+import { sessionDisplayTitle } from "../session-display";
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "unknown time";
@@ -27,9 +27,7 @@ function timeAgo(iso: string | null): string {
 }
 
 function cardTitle(session: SessionSummary): string {
-  if (session.summary) return compactSessionSummary(session.summary) ?? session.summary;
-  if (session.captureState === "recording") return "Still recording — story pending…";
-  return "No summary";
+  return sessionDisplayTitle(session);
 }
 
 /** Red is triage signal: five or more high-risk cards shout, smaller counts stay visible but quiet. */
