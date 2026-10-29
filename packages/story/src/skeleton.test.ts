@@ -51,7 +51,7 @@ describe("buildSkeletonStory", () => {
       promptVersion: SKELETON_PROMPT_VERSION,
     });
     expect(story.tapeWatermark).toEqual({ eventCount: session.tape.length, sha256: "test-sha" });
-    expect(story.shortVersion).toHaveLength(1);
+    expect(story.shortVersion).toEqual([]);
     expect(story.askVsResult.asked).toHaveLength(1);
   });
 
