@@ -568,3 +568,66 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 195 files (4 pre-existing useLiteralKeys infos in untouched `checks-v2.test.ts`), `pnpm test` → 49 files / 406 passed + 8 skipped, `pnpm build` ok; headless Chrome vs own dev stack (5173/4783, processes reaped, ports closed after): 2 folders render, first hover → entered=true open=true with 2 sheets at opacity 1 / translate none, leave → closed, re-hover → open again
 - notes: UI-only (`apps/web/src/components/project-folder-card.tsx`); `glass-folder-cards.tsx` untouched — entrance still plays for true first paint, only the data-load remount skips it. Pre-existing ingest `UNIQUE constraint failed: projects.canonical_root` poll errors observed on the dev daemon, untouched.
+
+## 2026-10-29 — Dusk-system nav pill (liquid removed)
+
+- item: replaced the vendored Nimbus liquid-glass navbar with a native dusk-system `ProjectNavPill` (sliding active indicator in Animate-UI style, compact `px-3 py-1.5 text-[13px]` tabs, HugeIcons kept); deleted `apps/web/src/components/ui/liquid-glass-navbar.tsx`
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 192 files clean (4 pre-existing infos), `pnpm test` → 49 files / 414 passed, `pnpm build` ok; built web bundle carries the pill and no `nimbus-nav` remains
+- notes: Indicator is a measured absolute span gliding via `transition-[left,top,width,height,opacity]` with `cubic-bezier(0.32,0.72,0,1)` + `motion-reduce:transition-none`; re-measured on active change via ResizeObserver. Story page still renders the pill with no highlight (`active={-1}`). Restart `pnpm dev` + hard-refresh to see it.
+
+## 2026-10-29 — Central project code index (central substrate, code half)
+
+- item: one derived rebuildable code index every section queries — contracts `code.ts` (files/symbols/edges/state + query responses), migration v7 (`code_files`/`code_symbols`/`code_edges`/`code_index_state`), db repositories + tests, `@echo/graph` inventory (snapshot-ignore walk, hashing, caps, stack detection) + oxc-parser file parser (module-record imports/re-exports/dynamics, top-level symbols, require walk, deterministic sym_ ids, resolved provenance) + tests, server service (hash-compared reindex, lazy refresh on read, BFS graph) + 6 routes (`GET code`, `POST reindex`, `GET files/symbols/file/graph`); ADR 0013 + tooling spike `docs/spikes/2026-10-29-code-index-tooling.md`
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 201 files clean (4 pre-existing infos), `pnpm test` → 53 files / 435 passed, `pnpm build` ok; live-daemon probe on alt port indexed this repo (240 files, 1261 symbols, 667 edges, ~2s cold) with correct symbol/graph/404/400 shapes
+- notes: oxc-parser chosen over ts-morph per spike (TS 7 ships no API; ts-morph bundles its own TS 6; oxc has prebuilt NAPI binaries, zero build approval). Runtime corrections found by probe, not docs: export moduleRequest lives on entries and is undefined (not null) for locals; string literals surface as `Literal`. Vectors deferred (sqlite-vec fits when an eval set demands it); per-file incrementality deferred (whole-project replace keyed by files_hash). db.test.ts version pins moved 6→7. Next units, not started: agent-touch→code joins, persistent code FTS, step segmentation for the Activity timeline.
+
+## 2026-10-29 — Overview sidebar layout
+
+- item: project Overview restructured into a left summary rail (`lg:grid-cols-[300px_minmax(0,1fr)]`, sticky `aside` with Purpose + Current-state cards) with the Agent sessions list beside it; stacks vertically on mobile; Learn/Architecture untouched per user call
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 201 files clean (4 pre-existing infos), `pnpm test` → 53 files / 435 passed, `pnpm build` ok
+- notes: Same copy/data, new arrangement — stats became label/value rows for the narrow rail, root path wraps (`break-all`). No API/capture changes.
+
+## 2026-10-29 — Page max-width restored (7xl)
+
+- item: restored a centered page constraint at `max-w-7xl` (1280px, one step up from the old `max-w-6xl`) on the header inner row and `main` in `apps/web/src/layout.tsx`
+- status: done
+- evidence: `tsc` clean, `biome` clean, `pnpm build` ok (class-only change; full test suite last green 53 files / 435 passed)
+- notes: Supersedes the full-width call for page Frankenstein ultra-wide stretch; sidebar + sessions grid now sits inside the wider container.
+
+## 2026-10-29 — Project header trim + name normalization
+
+- item: project header slimmed to a `← Projects` back link + `Project - <Name>` title (generic "Project workspace" eyebrow and filler description dropped); new `displayProjectName` helper (`apps/web/src/project-display.ts`: stored name → repo-dir basename → id, de-slugged + title-cased) used in `ProjectLayout` and the projects list cards; `ScaffoldPage` `eyebrow`/`description` now optional with an optional `back` link slot
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 53 files / 435 passed, `pnpm build` ok
+- notes: "echo" renders as "Echo"; root-path fallback in project cards replaced by the pretty name (root still shown as mono sub-line). No API/capture changes.
+
+## 2026-10-29 — Project breadcrumb header
+
+- item: project header collapsed to a single breadcrumb row (`← Projects / Echo`, name as the page `h1` with `aria-current`); "Project -" prefix and two-row stack gone; `ScaffoldPage` gains a `breadcrumb` header mode (replacing the one-off `back` slot), other pages unchanged
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 53 files / 435 passed, `pnpm build` ok
+- notes: Content starts higher; document outline keeps a single `h1`. No API/capture changes.
+
+## 2026-10-29 — Sidebar stat polish
+
+- item: Current-state card restyled — hairline-divided stat rows with tabular numbers, high-risk count in `dusk-fail` when non-zero, checked-coverage bar (checked/total, `dusk-pass` on `dusk-track`, same width-transition motif as the verification panel), and a last-activity line from the already-fetched project summary
+- status: done
+- evidence: `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm build` ok; `pnpm test` → 53 files / 435 passed on a clean pass (one run showed 5 unrelated flakes in `packages/sandbox` timing tests, green on targeted rerun 28/28)
+- notes: UI-only (`project-overview.tsx`). No API/capture changes.
+
+## 2026-10-29 — Sidebar restraint pass
+
+- item: reverted the coverage bar, last-activity line, and divided rows from the previous polish — Current-state card is now a compact 2×2 stat grid (number over micro label, tabular numbers, high-risk in `dusk-fail` when non-zero); dropped the static "Main features under review" filler line, kept the project-specific Stack line
+- status: done
+- evidence: `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm build` ok (UI-only, no test surface)
+- notes: Net less content than before, per user call.
+
+## 2026-10-29 — Remote sync (merge 5533902, code index + dusk UI)
+
+- item: merged remote `5533902` (25 commits: central code index with oxc parser, dusk-system nav pill, overview sidebar, header/breadcrumb, display names) into local (merge #1 + folder rAF smoother); 4 conflicts resolved — `projects.tsx` kept local folder grid with remote's `displayProjectName` applied to the folder label, tracker concatenated (local block then remote's 8 entries, both byte-identical), eval stamps regenerated by the suite; remote's LiquidNavbar deletion + pill rewrite auto-merged with zero dangling imports (`active={-1}` still supported)
+- status: done
+- evidence: post-merge gate green — `tsc` clean, `biome` 204 files (4 pre-existing useLiteralKeys infos in untouched checks-v2.test.ts), `pnpm test` → 53 files / 427 passed + 8 skipped, `pnpm build` ok (web + server + cli); `pnpm install` pulled `oxc-parser` (prebuilt NAPI, no approval needed)
+- notes: Merge left open (uncommitted) per user-owns-history. Trade-off: remote's link-card sub-lines (root path, remoteUrl, session counts) stay dropped — folders show name/sessions/activity only, per the earlier local call. Inbox folder titles now render through `displayProjectName`, same as the overview header.

@@ -149,4 +149,55 @@ CREATE TABLE IF NOT EXISTS session_artifacts (
 );
 `,
   },
+  {
+    version: 7,
+    sql: `
+CREATE TABLE IF NOT EXISTS code_files (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  path TEXT NOT NULL,
+  language TEXT NOT NULL,
+  size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  parsed INTEGER NOT NULL,
+  indexed_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, path)
+);
+CREATE TABLE IF NOT EXISTS code_symbols (
+  id TEXT NOT NULL,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  file TEXT NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  exported INTEGER NOT NULL,
+  line INTEGER NOT NULL,
+  PRIMARY KEY (project_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_code_symbols_name ON code_symbols (project_id, name);
+CREATE INDEX IF NOT EXISTS idx_code_symbols_file ON code_symbols (project_id, file);
+CREATE TABLE IF NOT EXISTS code_edges (
+  id TEXT NOT NULL,
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  from_file TEXT NOT NULL,
+  to_file TEXT,
+  external_module TEXT,
+  kind TEXT NOT NULL,
+  names_json TEXT NOT NULL DEFAULT '[]',
+  resolved INTEGER NOT NULL,
+  PRIMARY KEY (project_id, id)
+);
+CREATE INDEX IF NOT EXISTS idx_code_edges_from ON code_edges (project_id, from_file);
+CREATE INDEX IF NOT EXISTS idx_code_edges_to ON code_edges (project_id, to_file);
+CREATE INDEX IF NOT EXISTS idx_code_edges_external ON code_edges (project_id, external_module);
+CREATE TABLE IF NOT EXISTS code_index_state (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id),
+  files_hash TEXT NOT NULL,
+  file_count INTEGER NOT NULL,
+  symbol_count INTEGER NOT NULL,
+  edge_count INTEGER NOT NULL,
+  stack_json TEXT NOT NULL,
+  indexed_at TEXT NOT NULL,
+  parser TEXT NOT NULL
+);
+`,
+  },
 ];

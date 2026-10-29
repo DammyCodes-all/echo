@@ -1,3 +1,16 @@
+export {
+  type CodeFileRow,
+  type CodeIndexInput,
+  getCodeFile,
+  getCodeIndexState,
+  listCodeFiles,
+  listExternalModules,
+  listFileImportedBy,
+  listFileImports,
+  listFileSymbols,
+  replaceProjectCodeIndex,
+  searchCodeSymbols,
+} from "./code-index";
 export { type EchoDb, openEchoDb, withTransaction } from "./database";
 export { MIGRATIONS, type Migration } from "./migrations";
 export {

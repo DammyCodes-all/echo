@@ -19,9 +19,10 @@ import {
   openEchoDb,
   readEvents,
 } from "@echo/db";
-import Fastify from "fastify";
+import Fastify, { type FastifyReply } from "fastify";
 import { createAskService } from "./ask";
 import { createChecksV2Service } from "./checks-v2";
+import { createCodeIndexService } from "./code-index";
 import { createEngagementService } from "./engagement";
 import { loadLocalEnv } from "./env";
 import { createHistoryService } from "./history";
@@ -81,6 +82,7 @@ const ask = createAskService(db, paths.dataDir, { log: app.log });
 const checksV2 = createChecksV2Service({ db, dataDir: paths.dataDir, log: app.log });
 const engagement = createEngagementService(db);
 const history = createHistoryService(db, paths.dataDir);
+const codeIndex = createCodeIndexService({ db });
 
 app.get("/api/health", async () => ({
   status: "ok",
@@ -115,6 +117,145 @@ app.get<{ Params: { id: string } }>("/api/projects/:id/files", async (request, r
   const { files, truncated } = listProjectTouchedFiles(db, request.params.id);
   return { projectId: project.id, files, truncated };
 });
+
+function codeIndexError(reply: FastifyReply) {
+  return reply.code(422).send({
+    error: { code: "invalid_request", message: "project root unreadable" },
+  });
+}
+
+app.get<{ Params: { id: string } }>("/api/projects/:id/code", async (request, reply) => {
+  try {
+    const state = codeIndex.state(request.params.id);
+    if (!state) {
+      return reply.code(404).send({
+        error: { code: "not_found", message: "unknown project" },
+      });
+    }
+    return state;
+  } catch (error) {
+    if (error instanceof Error && error.message === "code_index_root_unreadable") {
+      return codeIndexError(reply);
+    }
+    throw error;
+  }
+});
+
+app.post<{ Params: { id: string } }>("/api/projects/:id/code/reindex", async (request, reply) => {
+  try {
+    const result = codeIndex.reindex(request.params.id, { force: true });
+    if (!result) {
+      return reply.code(404).send({
+        error: { code: "not_found", message: "unknown project" },
+      });
+    }
+    return result;
+  } catch (error) {
+    if (error instanceof Error && error.message === "code_index_root_unreadable") {
+      return codeIndexError(reply);
+    }
+    throw error;
+  }
+});
+
+app.get<{ Params: { id: string }; Querystring: { limit?: string } }>(
+  "/api/projects/:id/code/files",
+  async (request, reply) => {
+    try {
+      const result = codeIndex.files(request.params.id, Number(request.query.limit));
+      if (!result) {
+        return reply.code(404).send({
+          error: { code: "not_found", message: "unknown project" },
+        });
+      }
+      return { projectId: request.params.id, ...result };
+    } catch (error) {
+      if (error instanceof Error && error.message === "code_index_root_unreadable") {
+        return codeIndexError(reply);
+      }
+      throw error;
+    }
+  },
+);
+
+app.get<{ Params: { id: string }; Querystring: { q?: string; limit?: string } }>(
+  "/api/projects/:id/code/symbols",
+  async (request, reply) => {
+    try {
+      const result = codeIndex.symbols(
+        request.params.id,
+        request.query.q ?? "",
+        Number(request.query.limit),
+      );
+      if (!result) {
+        return reply.code(404).send({
+          error: { code: "not_found", message: "unknown project" },
+        });
+      }
+      return { projectId: request.params.id, query: request.query.q ?? "", ...result };
+    } catch (error) {
+      if (error instanceof Error && error.message === "code_index_root_unreadable") {
+        return codeIndexError(reply);
+      }
+      throw error;
+    }
+  },
+);
+
+app.get<{ Params: { id: string }; Querystring: { path?: string } }>(
+  "/api/projects/:id/code/file",
+  async (request, reply) => {
+    if (!request.query.path) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "path is required" },
+      });
+    }
+    try {
+      const detail = codeIndex.fileDetail(request.params.id, request.query.path);
+      if (!detail) {
+        return reply.code(404).send({
+          error: { code: "not_found", message: "unknown project or file" },
+        });
+      }
+      return detail;
+    } catch (error) {
+      if (error instanceof Error && error.message === "code_index_root_unreadable") {
+        return codeIndexError(reply);
+      }
+      throw error;
+    }
+  },
+);
+
+app.get<{ Params: { id: string }; Querystring: { root?: string; depth?: string; limit?: string } }>(
+  "/api/projects/:id/code/graph",
+  async (request, reply) => {
+    if (!request.query.root) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "root is required" },
+      });
+    }
+    try {
+      const graph = codeIndex.graph(
+        request.params.id,
+        request.query.root,
+        Number(request.query.depth),
+        Number(request.query.limit),
+      );
+      if (!graph) {
+        return reply.code(404).send({
+          error: { code: "not_found", message: "unknown project or file" },
+        });
+      }
+      return graph;
+    } catch (error) {
+      if (error instanceof Error && error.message === "code_index_root_unreadable") {
+        return codeIndexError(reply);
+      }
+      throw error;
+    }
+  },
+);
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
   const summary = getSessionSummary(db, request.params.id);

@@ -2,6 +2,7 @@ import type { ProjectSummary, SessionSummary } from "@echo/contracts";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, formatTime } from "../api";
+import { displayProjectName } from "../project-display";
 import GlassFolder, { type ArtRecipe, type FolderFile, hashString } from "./glass-folder-cards";
 
 /** Dusk streak: the workspace at rest, pulled toward the accent. */
@@ -192,7 +193,7 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
     <div ref={wrapRef} className="flex flex-col items-center gap-3">
       <GlassFolder
         key={files === null ? "shell" : "ready"}
-        label={project.name ?? project.root}
+        label={displayProjectName(project)}
         meta={metaLine(project, total)}
         tone="dark"
         art={DUSK_ART}
