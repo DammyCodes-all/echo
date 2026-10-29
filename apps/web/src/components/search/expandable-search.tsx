@@ -1,6 +1,6 @@
 import { Cancel01Icon, Search01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { FormEvent, KeyboardEvent } from "react";
+import type { FormEvent } from "react";
 import { useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useSearchParams } from "react-router";
 
@@ -61,16 +61,22 @@ export function ExpandableSearch({
     return () => window.clearTimeout(id);
   }, [open]);
 
+  // Escape closes and clears from anywhere while open.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: globalThis.KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setValue("");
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
   function onSubmit(event: FormEvent<HTMLFormElement>): void {
     event.preventDefault();
     onSearch?.(value);
-  }
-
-  function onInputKeyDown(event: KeyboardEvent<HTMLInputElement>): void {
-    if (event.key !== "Escape") return;
-    event.stopPropagation();
-    setValue("");
-    setOpen(false);
   }
 
   return (
@@ -97,7 +103,6 @@ export function ExpandableSearch({
             type="text"
             value={value}
             onChange={(event) => setValue(event.target.value)}
-            onKeyDown={onInputKeyDown}
             placeholder={placeholder}
             aria-label="Search projects"
             autoComplete="off"

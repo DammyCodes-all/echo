@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router";
 import { HeaderSearch } from "./components/search/expandable-search";
+import { ProjectSort } from "./components/search/project-sort";
 import { SettingsMenu } from "./components/settings/settings-sheet";
 
 export function AppLayout() {
@@ -12,6 +13,7 @@ export function AppLayout() {
           </NavLink>
           <div className="flex items-center gap-1">
             <HeaderSearch />
+            <ProjectSort />
             <SettingsMenu />
           </div>
         </div>
