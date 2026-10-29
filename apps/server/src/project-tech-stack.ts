@@ -12,8 +12,10 @@ import {
   getCodeIndexState,
   getProject,
   getProjectArtifactRef,
+  getStackRegenState,
   listExternalModules,
   type ProjectSummary,
+  saveStackRegenState,
   upsertProjectArtifactRef,
 } from "@echo/db";
 import { type ChatMessage, type ModelConfig, modelConfigFromEnv, requestJson } from "@echo/model";
@@ -21,6 +23,7 @@ import { redactJson } from "@echo/redaction";
 
 export type TechStackOutcomeKind =
   | "fresh"
+  | "stale"
   | "generated"
   | "skeleton"
   | "unavailable"
@@ -45,10 +48,21 @@ interface StackServiceOptions {
   clock?: () => Date;
   /** Rebuild the code index when missing/stale; sync no-op when fresh. */
   ensureIndex?: (projectId: string) => void;
+  /** Serve the previous artifact and regenerate in the background (default
+   *  true). False regenerates inline — deterministic, for tests. */
+  backgroundRegen?: boolean;
 }
 
 const TECH_STACK_KIND = "tech-stack";
 const MAX_ITEMS = 8;
+const MAX_README_CHARS = 1500;
+const MAX_PACKAGE_DESCRIPTION_CHARS = 500;
+// Regen gate: only rewrite the summary/stack after this many code-index
+// changes AND this much age on the current artifact. Every save moves the
+// files hash, so an ungated watermark regenerates (and bills a model call)
+// on each keystroke; the gate batches that churn.
+export const STACK_REGEN_MIN_CHANGES = 3;
+export const STACK_REGEN_MIN_INTERVAL_MS = 10 * 60 * 1000;
 
 const LANGUAGE_DISPLAY: Record<string, string> = {
   ts: "TypeScript",
@@ -63,6 +77,41 @@ export interface DetectedSignals {
   frameworks: string[];
   languages: Array<{ language: string; files: number }>;
   modules: Array<{ module: string; fileCount: number }>;
+}
+
+/** Genuinely helpful repo-authored context for the purpose/stack draft. */
+export interface RepoDocs {
+  readmeExcerpt: string | null;
+  packageDescription: string | null;
+}
+
+/** Bounded, best-effort read of repo-authored docs. Missing or unreadable
+ *  files are not a signal — never an error, never fabricated. */
+export function readRepoDocs(root: string): RepoDocs {
+  let readmeExcerpt: string | null = null;
+  for (const name of ["README.md", "readme.md"]) {
+    try {
+      const text = readFileSync(join(root, name), "utf8").trim();
+      if (text.length > 0) {
+        readmeExcerpt = text.slice(0, MAX_README_CHARS);
+        break;
+      }
+    } catch {
+      // Missing or unreadable README: no docs signal.
+    }
+  }
+  let packageDescription: string | null = null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      description?: unknown;
+    };
+    if (typeof pkg.description === "string" && pkg.description.trim().length > 0) {
+      packageDescription = pkg.description.trim().slice(0, MAX_PACKAGE_DESCRIPTION_CHARS);
+    }
+  } catch {
+    // Not a node repo, or unreadable: no docs signal.
+  }
+  return { readmeExcerpt, packageDescription };
 }
 
 function parseStackSummary(raw: string): {
@@ -251,6 +300,7 @@ export function createProjectTechStackService(
     config: ModelConfig,
     project: ProjectSummary,
     signals: DetectedSignals,
+    docs: RepoDocs,
   ): Promise<ProjectTechStack | null> {
     const languages = signals.languages
       .map(({ language, files }) => `${LANGUAGE_DISPLAY[language] ?? language} (${files} files)`)
@@ -265,6 +315,7 @@ export function createProjectTechStackService(
           "drop one-off mentions and transitive-only noise; every name MUST come from the SIGNALS below, never invent;",
           "purpose is one plain-words line (<=140 chars) saying what someone GETS from this repo — the outcome, not the mechanism;",
           "no jargon in purpose: no stack names, no acronyms, no words like calibrate/snapshot/tape/artifact/pipeline;",
+          "use the REPO DOCS below to ground the purpose in what the repo claims to do; never copy stack names into purpose;",
           "bad: 'TypeScript-first capture with local daemon persistence';",
           "good: 'A workspace that turns coding sessions into short stories you can review.'",
         ].join(" "),
@@ -276,6 +327,10 @@ export function createProjectTechStackService(
           `Languages: ${languages || "none detected"}`,
           `Detected frameworks/tools: ${signals.frameworks.join(", ") || "none"}`,
           `Most imported external modules: ${signals.modules.map((m) => `${m.module} (${m.fileCount})`).join(", ") || "none"}`,
+          ...(docs.packageDescription
+            ? [`Repo description (package.json): ${docs.packageDescription}`]
+            : []),
+          ...(docs.readmeExcerpt ? [`README excerpt:\n${docs.readmeExcerpt}`] : []),
         ].join("\n"),
       },
     ];
@@ -309,6 +364,145 @@ export function createProjectTechStackService(
     }
   }
 
+  const backgroundRegen = options.backgroundRegen ?? true;
+  const inflight = new Map<string, Promise<void>>();
+
+  function syncRegenBaseline(projectId: string, filesHash: string): void {
+    const prev = getStackRegenState(db, projectId);
+    if (!prev || prev.lastFilesHash !== filesHash || prev.pendingChanges !== 0) {
+      saveStackRegenState(db, { projectId, lastFilesHash: filesHash, pendingChanges: 0 });
+    }
+  }
+
+  function noteIndexChange(projectId: string, filesHash: string): number {
+    const prev = getStackRegenState(db, projectId) ?? { lastFilesHash: "", pendingChanges: 0 };
+    const next =
+      prev.lastFilesHash === filesHash
+        ? prev
+        : {
+            lastFilesHash: filesHash,
+            pendingChanges: prev.pendingChanges + 1,
+          };
+    if (next !== prev) {
+      saveStackRegenState(db, { projectId, ...next });
+    }
+    return next.pendingChanges;
+  }
+
+  function backOff(projectId: string, filesHash: string): void {
+    // A failed regen must not retry on every visit: baseline the current
+    // hash so only genuinely new changes re-arm the gate.
+    saveStackRegenState(db, { projectId, lastFilesHash: filesHash, pendingChanges: 0 });
+  }
+
+  function persistFresh(input: {
+    projectId: string;
+    stack: ProjectTechStack;
+    generator: string;
+    watermark: string;
+    filesHash: string;
+  }): boolean {
+    if (
+      !persistStack({
+        projectId: input.projectId,
+        stack: input.stack,
+        generator: input.generator,
+        watermark: input.watermark,
+      })
+    ) {
+      return false;
+    }
+    saveStackRegenState(db, {
+      projectId: input.projectId,
+      lastFilesHash: input.filesHash,
+      pendingChanges: 0,
+    });
+    return true;
+  }
+
+  // Model pipeline shared by first-gen, blocking regen and background regen.
+  // Returns null when there is nothing worth persisting (model off, draft
+  // rejected, persist failed) — the caller decides between skeleton (first
+  // view, nothing to show) and stale (keep the previous artifact).
+  async function draftFresh(input: {
+    project: ProjectSummary;
+    signals: DetectedSignals;
+    filesHash: string;
+    watermark: string;
+    generatedAt: string;
+  }): Promise<ProjectTechStack | null> {
+    if (modelOff()) return null;
+    let config: ModelConfig;
+    try {
+      config = modelConfigFromEnv(env);
+    } catch {
+      return null;
+    }
+    const draft = await narrate(
+      config,
+      input.project,
+      input.signals,
+      readRepoDocs(input.project.root),
+    );
+    if (!draft) return null;
+    if (
+      !persistFresh({
+        projectId: input.project.id,
+        stack: draft,
+        generator: config.model,
+        watermark: input.watermark,
+        filesHash: input.filesHash,
+      })
+    ) {
+      return null;
+    }
+    return draft;
+  }
+
+  function kickBackgroundRegen(input: {
+    project: ProjectSummary;
+    signals: DetectedSignals;
+    filesHash: string;
+    watermark: string;
+  }): void {
+    if (inflight.has(input.project.id)) return;
+    const run = (async (): Promise<void> => {
+      try {
+        const fresh = await draftFresh({
+          ...input,
+          generatedAt: clock().toISOString(),
+        });
+        if (!fresh) backOff(input.project.id, input.filesHash);
+      } catch (error) {
+        log.error(
+          { project_id: input.project.id, err: String(error) },
+          "tech stack background regen failed",
+        );
+        backOff(input.project.id, input.filesHash);
+      }
+    })();
+    inflight.set(input.project.id, run);
+    void run.finally(() => {
+      if (inflight.get(input.project.id) === run) inflight.delete(input.project.id);
+    });
+  }
+
+  function readCachedStack(projectId: string): {
+    ref: { path: string; watermark: string; generatedAt: string };
+    stack: ProjectTechStack;
+  } | null {
+    const ref = getProjectArtifactRef(db, projectId, TECH_STACK_KIND);
+    if (!ref || !existsSync(ref.path)) return null;
+    try {
+      const stack = ProjectTechStackSchema.parse(
+        JSON.parse(readFileSync(ref.path, "utf8")) as unknown,
+      );
+      return { ref, stack };
+    } catch {
+      return null;
+    }
+  }
+
   async function maybeGetTechStack(projectId: string): Promise<TechStackOutcome> {
     const project = getProject(db, projectId);
     if (!project) return { outcome: "unknown_project", stack: null };
@@ -336,48 +530,65 @@ export function createProjectTechStackService(
       modules,
     });
 
-    const existing = getProjectArtifactRef(db, projectId, TECH_STACK_KIND);
-    if (existing && existing.watermark === watermark && existsSync(existing.path)) {
-      try {
-        const stack = ProjectTechStackSchema.parse(
-          JSON.parse(readFileSync(existing.path, "utf8")) as unknown,
-        );
-        return { outcome: "fresh", stack };
-      } catch {
-        // Corrupt artifact: fall through and regenerate.
-      }
+    const existing = readCachedStack(projectId);
+    if (existing && existing.ref.watermark === watermark) {
+      syncRegenBaseline(projectId, state.filesHash);
+      return { outcome: "fresh", stack: existing.stack };
     }
 
     const generatedAt = clock().toISOString();
-    const writeSkeleton = (): TechStackOutcome => {
-      const stack = buildSkeletonStack({ project, signals, generatedAt });
-      if (
-        !persistStack({
-          projectId,
-          stack,
-          generator: `${STACK_PROMPT_VERSION}-skeleton`,
-          watermark,
-        })
-      ) {
-        return { outcome: "unavailable", stack: null };
-      }
-      log.info({ project_id: projectId }, "tech stack skeleton");
-      return { outcome: "skeleton", stack };
-    };
+    if (!existing) {
+      // First view: nothing to show yet, so generate inline. Skeleton is
+      // the honest fallback — it only ever appears when no artifact exists.
+      const writeSkeleton = (): TechStackOutcome => {
+        const stack = buildSkeletonStack({ project, signals, generatedAt });
+        if (
+          !persistFresh({
+            projectId,
+            stack,
+            generator: `${STACK_PROMPT_VERSION}-skeleton`,
+            watermark,
+            filesHash: state.filesHash,
+          })
+        ) {
+          return { outcome: "unavailable", stack: null };
+        }
+        log.info({ project_id: projectId }, "tech stack skeleton");
+        return { outcome: "skeleton", stack };
+      };
 
-    if (modelOff()) return writeSkeleton();
-    let config: ModelConfig;
-    try {
-      config = modelConfigFromEnv(env);
-    } catch {
+      const fresh = await draftFresh({
+        project,
+        signals,
+        filesHash: state.filesHash,
+        watermark,
+        generatedAt,
+      });
+      if (fresh) return { outcome: "generated", stack: fresh };
       return writeSkeleton();
     }
-    const draft = await narrate(config, project, signals);
-    if (!draft) return writeSkeleton();
-    if (!persistStack({ projectId, stack: draft, generator: config.model, watermark })) {
-      return writeSkeleton();
+
+    // Stale-while-revalidate: the previous artifact stays visible while the
+    // gate decides. Regen only after enough detected changes AND enough age.
+    const pending = noteIndexChange(projectId, state.filesHash);
+    const ageMs = clock().getTime() - Date.parse(existing.ref.generatedAt);
+    const ageDue = !Number.isFinite(ageMs) || ageMs >= STACK_REGEN_MIN_INTERVAL_MS;
+    if (pending < STACK_REGEN_MIN_CHANGES || !ageDue) {
+      return { outcome: "stale", stack: existing.stack };
     }
-    return { outcome: "generated", stack: draft };
+    if (backgroundRegen) {
+      kickBackgroundRegen({ project, signals, filesHash: state.filesHash, watermark });
+      return { outcome: "stale", stack: existing.stack };
+    }
+    const fresh = await draftFresh({
+      project,
+      signals,
+      filesHash: state.filesHash,
+      watermark,
+      generatedAt,
+    });
+    if (fresh) return { outcome: "generated", stack: fresh };
+    return { outcome: "stale", stack: existing.stack };
   }
 
   return { maybeGetTechStack };

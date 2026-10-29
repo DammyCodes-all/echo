@@ -26,6 +26,7 @@ export interface SessionSummary {
   directory: string | null;
   startedAt: string | null;
   endedAt: string | null;
+  lastActivity: string;
   status: string;
   captureQuality: string;
   eventCount: number;
@@ -216,7 +217,9 @@ export function upsertSession(
        project_id = excluded.project_id,
        model = excluded.model,
        directory = excluded.directory,
-       title = excluded.title,
+       -- Session titles are stable: the first non-empty title wins. Later
+       -- polls may rename the session upstream; other details still update.
+       title = CASE WHEN sessions.title IS NOT NULL AND sessions.title != '' THEN sessions.title ELSE excluded.title END,
        started_at = excluded.started_at,
        tape_path = excluded.tape_path,
        capture_quality = excluded.capture_quality,
@@ -608,9 +611,10 @@ export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
   const rows = db
     .prepare(
       `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
+              COALESCE((SELECT MAX(e.observed_at) FROM events e WHERE e.session_id = s.id), s.updated_at) AS last_activity,
               s.status, s.capture_quality, s.check_status, s.story_summary, s.high_risk_count,
               (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count
-       FROM sessions s WHERE s.project_id = ? ORDER BY s.updated_at DESC`,
+       FROM sessions s WHERE s.project_id = ? ORDER BY last_activity DESC, s.id ASC`,
     )
     .all(projectId) as Array<Record<string, unknown>>;
   return rows.map((row) => {
@@ -623,6 +627,7 @@ export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary
   const rows = db
     .prepare(
       `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
+              COALESCE((SELECT MAX(e.observed_at) FROM events e WHERE e.session_id = s.id), s.updated_at) AS last_activity,
               s.status, s.capture_quality, s.check_status, s.story_summary, s.high_risk_count,
               (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count
        FROM sessions s WHERE s.id = ?`,
@@ -670,6 +675,7 @@ function toSessionSummary(row: Record<string, unknown>): SessionSummary {
     directory: row.directory === null ? null : String(row.directory),
     startedAt: row.started_at === null ? null : String(row.started_at),
     endedAt: row.ended_at === null ? null : String(row.ended_at),
+    lastActivity: String(row.last_activity),
     status,
     captureQuality,
     eventCount: Number(row.event_count),
@@ -879,6 +885,42 @@ export function getProjectArtifactRef(
     generator: String(row.generator),
     generatedAt: String(row.generated_at),
   };
+}
+
+// Change gate for tech-stack regeneration: how many code-index changes have
+// been seen since the last stack write, and what hash they were measured
+// against. Lets the stack serve stale-while-revalidate instead of
+// regenerating on every save.
+export interface StackRegenState {
+  projectId: string;
+  lastFilesHash: string;
+  pendingChanges: number;
+}
+
+export function getStackRegenState(db: EchoDb, projectId: string): StackRegenState | null {
+  const row = db
+    .prepare(
+      "SELECT project_id, last_files_hash, pending_changes FROM project_stack_state WHERE project_id = ?",
+    )
+    .get(projectId) as
+    | { project_id: unknown; last_files_hash: unknown; pending_changes: unknown }
+    | undefined;
+  if (!row) return null;
+  return {
+    projectId: String(row.project_id),
+    lastFilesHash: String(row.last_files_hash),
+    pendingChanges: Number(row.pending_changes),
+  };
+}
+
+export function saveStackRegenState(db: EchoDb, state: StackRegenState): void {
+  db.prepare(
+    `INSERT INTO project_stack_state (project_id, last_files_hash, pending_changes)
+     VALUES (?, ?, ?)
+     ON CONFLICT(project_id) DO UPDATE SET
+       last_files_hash = excluded.last_files_hash,
+       pending_changes = excluded.pending_changes`,
+  ).run(state.projectId, state.lastFilesHash, state.pendingChanges);
 }
 
 export function readEvents(

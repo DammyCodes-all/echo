@@ -724,6 +724,56 @@ notes.
 - status: done
 - evidence: `pnpm typecheck` clean; `pnpm lint` clean on touched web files (1 pre-existing warning in server tech-stack test, untouched); `pnpm test` → 54 files / 443 passed; `pnpm build` ok; grep-clean of plain "Loading…" page states (4 remaining hits are button/progress texts: Asking…/Checking…/Starting…)
 - notes: Three parallel subagents with disjoint files (skeleton+projects+architecture / overview+layout / story+ask+check-offer); overview+layout and story slices inlined skeleton divs instead of importing the in-flight shared component — follow-up could migrate them to `Skeleton*` imports. No browser pass (same constraint as prior web entries); verified via bundle build + source grep. Stage and commit nothing.
+
+## 2026-10-29 — Ingest survives remote-add identity change + per-session isolation; stack agent reads README
+
+- item: `ensureIngestProject` in `packages/db` (same root keeps its historic id when a remote appears, same remote adopts a moved root, truly new repos insert; one row per repository) wired into all three project-registration sites (`apps/server` opencode `ingest.ts`, muse spool drain + log scan in `muse-ingest.ts`); per-session try/catch in both scan loops so one poison session logs and skips instead of aborting the whole poll; stack/purpose prompt now gets bounded repo docs (`README.md` excerpt 1500 chars + `package.json` description 500 chars, best-effort, redaction-gated)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 54 files / 451 passed (new: 3 db migration-shape tests, 2 ingest regression tests incl. remote-appears + poison-session isolation, 3 repo-docs tests), `pnpm build` ok; live proof: echo project ingested 8 → 31+ sessions after daemon auto-reload, single project row kept (`prj_6c57…`, remote recorded), no second row
+- notes: Root cause of the 8-session freeze: adding the GitHub remote changed the derived project id (hash of remote ?? root), so every poll crashed on `UNIQUE(canonical_root)` on the first new session and ingested nothing — confirmed by running the scan and watching it throw. Muse path had the identical latent crash at both its registration sites. Daemon picked the fix up via `tsx watch` reload, no restart needed. Session-card.tsx churn in the diff is parallel-landing work, untouched except a biome format pass.
+## 2026-10-29 — SessionCard trim: relative time, quiet default, no capture/event meta
+
+- item: `apps/web/src/components/session-card.tsx` trimmed per review — absolute start time replaced with relative `timeAgo` ("just now", "N min ago", "N hrs ago", "N days ago", short date past a week; exact timestamp kept as hover title), `not_checked` renders no badge (only Checked green / Skipped muted pills remain), capture-state pills (recording/partial) and the event count dropped from the card; badgeless cards omit the badge row entirely
+- status: done
+- evidence: `tsc` clean; `biome` exit 0 on touched files (2 warnings + 4 infos repo-wide, all in untouched concurrent files); `pnpm test` → 54 files / 451 passed; `pnpm build` ok (web + server + cli)
+- notes: UI is vitest-exempt, no new tests. A first gate attempt in this window showed 1 failed + 8 skipped, then a SIGKILL — re-run on the settled tree is fully green (a concurrent session is editing server tests mid-flight; counts shifted 448 → 451 between runs). Recording state is now carried only by the "Still recording — story pending…" title fallback; capture/event detail lives on the story page. No browser here; user's live dev server picks it up via HMR.
+
+## 2026-10-29 — Stale-while-revalidate tech stack with change gate + lastActivity type completion
+
+- item: per-project tech-stack endpoint serves the previous artifact as `stale` while regeneration is change-gated (≥3 detected code-index changes AND ≥10 min artifact age; background single-flight regen, 30s web poll to converge); first view still generates inline with skeleton fallback only when nothing exists; failures/backoff keep the previous artifact, never downgrade to skeleton; migration v10 `project_stack_state` + repo helpers; redacted README/package.json prompt context; completed the parallel `lastActivity` unit by adding the missing `lastActivity: string` field to the db `SessionSummary` interface (SQL, mapper, contracts schema, and test already assumed it)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (2 pre-existing warnings, 4 infos), `pnpm test` → 54 files / 458 passed, `pnpm build` ok; live proof earlier: echo project ingested backlog with historic id kept, no second row; endpoint returned model-generated purpose with new prompt
+- notes: Regen gate bounds model cost during active editing (every save moves the files hash). Route needed no change (returns any non-error stack). The `lastActivity` completion is one interface line; parallel session owns the test. Daemon picked up server changes via `tsx watch` reload.
+## 2026-10-29 — SessionSummary.lastActivity (last recorded event, tested)
+
+- item: card time is now genuinely last activity — `SessionSummary` gains required `lastActivity` (`packages/contracts/src/api.ts`), `listSessions`/`getSessionSummary` compute `COALESCE(MAX(events.observed_at), sessions.updated_at)` (no migration; `updated_at` covers event-less sessions and is NOT NULL), both contract fixtures updated; `SessionCard` + `/`-route folder preview read `lastActivity` instead of `startedAt`. Was session start: a still-recording session showed a stale start time. Ordering stays `updated_at DESC` (inbox "recently touched" semantics, incl. check/story writes — changing it is a separate product call).
+- status: done
+- evidence: new `db.test.ts` case watched red before the fix (undefined), green after — out-of-order inserts prove MAX, fixed-`updated_at` session proves the fallback; focused `db.test.ts` + `api.test.ts` → 36 passed; full gate green (tsc, biome exit 0 with pre-existing warnings/infos in untouched files, 54 files / 458 passed, build ok)
+- notes: Failing-test-first per durable-test-collateral. Mid-window noise, all environmental: a typecheck run raced a concurrent write to `repositories.ts` (re-ran green, no dupes), and one broad suite showed 6× 5s-timeout failures across 4 untouched files at load avg 25–29 with 179MB free — every one passes focused (24/24 db, 38/38 others) and the full suite is green after reboot (458/458). Concurrent files (muse-ingest, tech-stack, migrations, eval stamps) left alone.
+## 2026-10-29 — SessionCard one-line footer with icons
+
+- item: card bottom row is now time + badges on a single line — clock icon + relative time left, check/high-risk pills with icons (check-circle / skip / alert, 12px, matching Hugeicons set) right; exact timestamp moved to the time element's hover title; badgeless cards show just the time
+- status: done
+- evidence: covered by the same gate run as the lastActivity unit (tsc, biome, 54/458, build); UI is vitest-exempt, no new tests
+- notes: No browser here; user's live dev server picks it up via HMR. Pills keep existing colors/shapes — icons only, no new chrome language.
+## 2026-10-29 — Stable session order stops overview grid reshuffle
+
+- item: `ProjectOverviewPage` sorts sessions client-side (startedAt DESC, id tiebreak, memoized) instead of taking the server's `updated_at DESC` order, which reshuffles on every ingest/story/check write and made the grid visibly jump each 5s poll; new sessions still appear at top, existing rows no longer move
+- status: done
+- evidence: `tsc` clean, `biome` clean on the touched file, `pnpm test` → 54 files / 458 passed, `pnpm build` ok
+- notes: UI-only, no new tests. Server order untouched (history scan relies on it). If flicker persists it is a different mechanism (suspects: HMR reloads from concurrent saves, or insert-at-top as new sessions arrive) — user to confirm visually, no browser here.
+## 2026-10-29 — Session inbox ordered by last activity
+
+- item: `listSessions` orders by `last_activity DESC, s.id ASC` instead of `updated_at DESC` — most recently active session first, deterministic tiebreak; `history.ts` candidate-scan comment updated (same recency assumption, better key); overview page reverted to server order (client startedAt sort removed); folder-preview top-3 now also means most-recent
+- status: done
+- evidence: new order test watched red first (`ses_2,ses_3,ses_1` under old key), green after — recency beats start time + id tiebreak in one case; full gate green (tsc, biome, 54 files / 459 passed, build ok)
+- notes: Only genuinely live sessions move now; story/check writes to old sessions no longer bubble them. UI is vitest-exempt; web side takes server order directly.
+## 2026-10-29 — SessionCard anti-flicker stabilizers
+
+- item: `SessionCard` memoized (unchanged rows skip re-render each 5s poll via React Query structural sharing) + title block fixed to 2-line min-height so summary swaps and 1-vs-2-line titles no longer resize cards and shift grid rows
+- status: done
+- evidence: `tsc` clean, `biome` clean on the file, `pnpm build` ok; test evidence is the same window's 459/459 run (delta since is this web-only file, vitest-exempt)
+- notes: Poll stays 5s (recording→story freshness); not done: FLIP reorder animation, pagination/cap for large lists — offered as follow-ups if motion persists. No browser here; user confirms visually.
 ## 2026-10-29 — Remote sync (merge origin/main, ingest identity + skeletons + search)
 
 - item: merged `origin/main` (`add2c5f`, 7 commits: `Skeleton` shared component + skeleton loaders across projects/architecture/overview/layout/story/ask/check-offer, `SessionCard` overview restyle, code_edges.id v9 heal) into local (16 commits); conflicts resolved — `ingest.ts` takes origin's `ensureIngestProject` mechanism over local's `upsertProject`-adopt (import block already expected it; merged `db` exports both) while keeping local's `ensureEnabledProjects` boot call and both sides' per-session poison guard (origin's try-wrap); `projects.tsx` keeps both remote skeleton loading and the stashed local search/sort toolbar (stash popped + dropped after resolution); `BuildTracker.md` concatenated; eval stamps taken from ours then regenerated by the suite
@@ -736,3 +786,23 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing `useLiteralKeys` infos), `pnpm test` → 55 files / 439 passed + 8 skipped, `pnpm build` ok; headless-Chrome probes: name/path/remote filters each narrow correctly (`port` → Portfolio, `whitespace` → Whitespace, `DammyCodes-all` → Echo + Whitespace, `ECHO` case-insensitive), count line "1 of 3 projects", no-match state + Clear restores all, sort switching proven on live data (activity order differed from name/sessions order mid-probe as ingest advanced timestamps), zero page errors; toolbar screenshot reviewed
 - notes: Merged tree keeps both this toolbar and the concurrent skeleton loading state (their merge commit `6772abc`; my edit had been stashed as "in-flight projects search-sort" and popped back intact — verified byte-identical to what I wrote). Verified on an isolated stack (fresh sqlite snapshot, daemon :4784, vite :5199, `/api` routed via playwright) because the user's daemon died mid-task (likely on the conflict-marker `ingest.ts`) and their vite followed; both were down at verify time — user needs to restart `pnpm dev`. My daemon/vite reaped afterwards; user processes never touched. Finding for the backlog (not mine, not fixed): Portfolio's `remote_url` is NULL on the live DB though the API served it earlier today — the merged ingest/upsert path appears to clear stored remotes on re-ingest; the identity-fix "preserves stored remote" guarantee may not have survived merge `6772abc`. Probe scripts `/tmp/opencode/pw/search-verify*.mjs`, screenshots `/tmp/echo-search/`. Nothing staged or committed by this session.
+
+## 2026-10-29 — Merge origin/main (sixth divergence, ingest identity + tech-stack)
+
+- item: merged remote `ensureEnabledProjects` boot wiring, `upsertProject` identity resolution, SettingsMenu + related web restyle, and the prior remote-sync entry into local (13 commits); conflicts in 4 files resolved — `muse-ingest.ts` keeps local `ensureIngestProject` convergence + per-session poison guard (remote `upsertProject` enhancement stays live for other callers, follow-up could unify the two), `BuildTracker.md` keeps both sides, eval stamps are the post-merge suite regen
+- status: done
+- evidence: `tsc` clean, `pnpm test` → 55 files / 463 passed, `pnpm build` ok; `biome` 1 error confined to a concurrent worker's unstaged `session-card.tsx` restyle (left alone) + 1 pre-existing warning (`ingest.test.ts` unused `root`) + 4 pre-existing infos
+- notes: `session-card.tsx` + `project-overview.tsx` restyle and a fresh `result.json` stamp churn appeared mid-merge from concurrent runs — all left unstaged/untouched. Nothing pushed.
+
+## 2026-10-29 — Stable session titles across regens
+
+- item: session titles no longer shift when the session itself changes — `upsertSession` keeps the first non-empty `sessions.title` (later polls update model/directory/tape path/quality but never the title, null never clears); story summaries freeze the same way — `persistStory` reuses the first persisted summary on regen while cards/risks/gaps/watermark still refresh, with one upgrade path (skeleton fallback yields to the first real model narration), and now returns the persisted story so API responses match the artifact/DB instead of the pre-freeze draft
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (1 warning + 4 infos, pre-existing), `pnpm test` → 55 files / 467 passed, `pnpm build` ok; new coverage: db `session title stability` (freeze + null-never-clears + first-non-empty-wins), story `session title stability` (model regen keeps title while watermark advances, skeleton→model upgrades once then freezes)
+- notes: Card titles (session cards, folder cards) and the story page header all read the frozen summary, so hierarchy navigation stays put. Daemon picks up server changes via `tsx watch` reload.
+## 2026-10-29 — SessionCard breathing room (cramped-footer restyle)
+
+- item: `SessionCard` footer de-jumbled — hairline divider between title and footer; badges restyled into the story-card voice (wash fill, no border, sentence case, `rounded-dusk-code px-2.5 py-1 text-xs semibold`, 14px icons); title loosened (`leading-6`, `text-pretty`, `break-words`, 3rem 2-line slot); footer `gap-x-4` + wrap fallback so a future Checked+risk pair never spills on 390px; grid `gap-4` → `gap-5`; loading skeleton mirrors the new card shape
+- status: done
+- evidence: full gate green (tsc clean, biome exit 0 with only the pre-existing warning + 4 infos in untouched server tests, 55 files / 467 passed, build ok); headless-chrome passes on the live dev stack — 1400px overview (footers calm, badges quiet), 390px cards (time + badge hold one line, no overflow), skeleton state matches card shape
+- notes: One transient single-test failure mid-window, green on the re-runs before and after — load flake, web change is vitest-exempt. Remaining density is skeleton-summary copy (path-soup titles), a content problem for the story slice, not this card. No new chrome language; dusk tokens only.

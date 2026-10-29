@@ -123,3 +123,129 @@ describe("createIngest project identity", () => {
     }
   });
 });
+
+describe("createIngest identity migration", () => {
+  function makeTwoSessionSource(
+    sessions: Array<{ id: string; directory: string; timeCreated: number }>,
+  ): string {
+    const path = join(mkdtempSync(join(tmpdir(), "echo-opencode-source-")), "multi.db");
+    const store = new DatabaseSync(path);
+    store.exec(`
+      CREATE TABLE session_v2 (
+        id TEXT PRIMARY KEY, title TEXT, directory TEXT, model TEXT, agent TEXT,
+        time_created INTEGER, time_updated INTEGER
+      );
+      CREATE TABLE session_message (
+        id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER,
+        time_created INTEGER, data TEXT
+      );
+    `);
+    for (const session of sessions) {
+      store
+        .prepare("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(
+          session.id,
+          session.id,
+          session.directory,
+          null,
+          "opencode",
+          session.timeCreated,
+          session.timeCreated,
+        );
+      store
+        .prepare("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?)")
+        .run(
+          `msg_${session.id}`,
+          session.id,
+          "user",
+          1,
+          session.timeCreated,
+          JSON.stringify({ text: "read the file", time: { created: session.timeCreated } }),
+        );
+    }
+    store.close();
+    return path;
+  }
+
+  it("keeps the historic project id when a remote appears mid-life", async () => {
+    const { root, workDir } = await makeGitProject();
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-opencode-migrate-data-"));
+    const configDir = mkdtempSync(join(tmpdir(), "echo-opencode-migrate-config-"));
+    const source = makeTwoSessionSource([
+      { id: "ses_migrate_new", directory: workDir, timeCreated: 1793097800000 },
+    ]);
+    writeFileSync(
+      join(configDir, "config.json"),
+      JSON.stringify({ projects: [workDir], opencode_db: source, poll_interval_ms: 250 }),
+    );
+    const previousConfigDir = process.env.ECHO_CONFIG_DIR;
+    process.env.ECHO_CONFIG_DIR = configDir;
+    try {
+      const { projectIdForDirectory } = await import("@echo/core");
+      const db = openEchoDb(join(dataDir, "echo.sqlite"));
+      try {
+        // Project captured before the remote existed: root-derived id, no remote.
+        const { upsertProject, listProjects } = await import("@echo/db");
+        upsertProject(db, {
+          id: projectIdForDirectory(root),
+          root,
+          remoteUrl: null,
+          name: "echo",
+        });
+        const result = await createIngest({ dataDir, db, log }).runOnce();
+        expect(result.capturedSessions).toBe(1);
+        expect(result.eventsAdded).toBeGreaterThan(0);
+        // One row, historic id kept, remote recorded — no UNIQUE crash and no
+        // orphaned second project.
+        const projects = listProjects(db);
+        expect(projects).toHaveLength(1);
+        expect(projects[0]?.id).toBe(projectIdForDirectory(root));
+        expect(projects[0]?.remoteUrl).toBe("github.com/example/echo");
+      } finally {
+        db.close();
+      }
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.ECHO_CONFIG_DIR;
+      else process.env.ECHO_CONFIG_DIR = previousConfigDir;
+    }
+  });
+
+  it("a poison session does not starve the rest of the poll", async () => {
+    const { root, workDir } = await makeGitProject();
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-opencode-poison-data-"));
+    const configDir = mkdtempSync(join(tmpdir(), "echo-opencode-poison-config-"));
+    const source = makeTwoSessionSource([
+      { id: "ses_poison_new", directory: workDir, timeCreated: 1793097801000 },
+      { id: "ses_poison_ok", directory: workDir, timeCreated: 1793097800000 },
+    ]);
+    writeFileSync(
+      join(configDir, "config.json"),
+      JSON.stringify({ projects: [workDir], opencode_db: source, poll_interval_ms: 250 }),
+    );
+    const previousConfigDir = process.env.ECHO_CONFIG_DIR;
+    process.env.ECHO_CONFIG_DIR = configDir;
+    try {
+      const identity = await resolveRepositoryIdentity(workDir);
+      // A stray file where the session dir belongs makes tape setup throw
+      // ENOTDIR for exactly one session.
+      fs.mkdirSync(join(dataDir, "projects", identity.projectId, "sessions"), {
+        recursive: true,
+      });
+      writeFileSync(
+        join(dataDir, "projects", identity.projectId, "sessions", "ses_poison_new"),
+        "stray",
+      );
+      const db = openEchoDb(join(dataDir, "echo.sqlite"));
+      try {
+        const result = await createIngest({ dataDir, db, log }).runOnce();
+        expect(result.capturedSessions).toBe(1);
+        expect(result.eventsAdded).toBeGreaterThan(0);
+      } finally {
+        db.close();
+      }
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.ECHO_CONFIG_DIR;
+      else process.env.ECHO_CONFIG_DIR = previousConfigDir;
+    }
+  });
+});

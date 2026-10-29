@@ -66,7 +66,7 @@ export function createHistoryService(db: EchoDb, dataDir: string): HistoryServic
         matchNote: string;
         previousPicture: null;
       }> = [];
-      // listSessions orders by updated_at DESC; scan at most 50 candidates.
+      // listSessions orders by last activity DESC; scan at most 50 candidates.
       const candidates = listSessions(db, session.projectId)
         .filter((row) => row.id !== sessionId)
         .slice(0, 50);

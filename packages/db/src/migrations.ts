@@ -224,4 +224,14 @@ CREATE TABLE IF NOT EXISTS project_artifacts (
     version: 9,
     sql: `ALTER TABLE code_edges ADD COLUMN id TEXT NOT NULL DEFAULT '';`,
   },
+  {
+    version: 10,
+    sql: `
+CREATE TABLE IF NOT EXISTS project_stack_state (
+  project_id TEXT PRIMARY KEY REFERENCES projects(id),
+  last_files_hash TEXT NOT NULL DEFAULT '',
+  pending_changes INTEGER NOT NULL DEFAULT 0
+);
+`,
+  },
 ];

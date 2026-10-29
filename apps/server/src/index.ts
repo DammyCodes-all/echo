@@ -130,7 +130,8 @@ app.get<{ Params: { id: string } }>("/api/projects/:id/files", async (request, r
 
 app.get<{ Params: { id: string } }>("/api/projects/:id/tech-stack", async (request, reply) => {
   // Read-through cache: generates on missing/stale, serves the artifact when
-  // the code-index watermark still matches.
+  // the code-index watermark still matches. A moved watermark serves the
+  // previous artifact as stale while regen is change-gated in the background.
   const outcome = await techStack.maybeGetTechStack(request.params.id);
   if (outcome.outcome === "unknown_project" || !outcome.stack) {
     const code = outcome.outcome === "index_missing" ? 503 : 500;

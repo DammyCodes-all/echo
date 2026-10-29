@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   appendEvents,
   deriveEngagementTiers,
+  ensureIngestProject,
   getArtifactRef,
   getReaderCheckpoint,
   getSession,
@@ -14,6 +15,7 @@ import {
   getSessionEventIds,
   getSessionSummary,
   getSnapshotByCommit,
+  getStackRegenState,
   hasEventKind,
   insertSnapshot,
   latestSnapshot,
@@ -29,6 +31,7 @@ import {
   readAllEvents,
   readEvents,
   recordEngagementEvents,
+  saveStackRegenState,
   setSessionCheckStatus,
   setSessionStoryState,
   upsertArtifactRef,
@@ -112,7 +115,7 @@ describe("openEchoDb migrations", () => {
       version: number;
     }>;
     second.close();
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it("waits on locked writers instead of failing fast", () => {
@@ -148,7 +151,7 @@ describe("openEchoDb migrations", () => {
     const rows = db.prepare("SELECT version FROM schema_migrations").all() as Array<{
       version: number;
     }>;
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const checkpoints = db
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reader_checkpoints'",
@@ -221,6 +224,83 @@ describe("repositories", () => {
       eventCount: 1,
     });
     expect(getSessionSummary(db, "ses_missing")).toBeNull();
+    db.close();
+  });
+
+  it("reports lastActivity as the latest observed event, else the session touch", () => {
+    const db = openTestDb();
+    seed(db);
+    appendEvents(db, "ses_1", [
+      makeEvent(1, {
+        event_id: "evt_late",
+        ts: "2026-10-28T12:00:00.000Z",
+        observed_at: "2026-10-28T12:00:00.050Z",
+      }),
+      makeEvent(0, { event_id: "evt_early" }),
+    ]);
+    expect(listSessions(db, "prj_1")[0]?.lastActivity).toBe("2026-10-28T12:00:00.050Z");
+    expect(getSessionSummary(db, "ses_1")?.lastActivity).toBe("2026-10-28T12:00:00.050Z");
+
+    upsertSession(db, {
+      id: "ses_bare",
+      projectId: "prj_1",
+      agent: "opencode",
+      model: null,
+      directory: "/repo",
+      title: null,
+      startedAt: null,
+      tapePath: "/data/bare.jsonl",
+      captureQuality: "import_only",
+    });
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(
+      "2026-10-26T00:00:00.000Z",
+      "ses_bare",
+    );
+    expect(getSessionSummary(db, "ses_bare")?.lastActivity).toBe("2026-10-26T00:00:00.000Z");
+    db.close();
+  });
+
+  it("orders sessions by lastActivity, newest first, id tiebreak", () => {
+    const db = openTestDb();
+    seed(db);
+    for (const id of ["ses_2", "ses_3"]) {
+      upsertSession(db, {
+        id,
+        projectId: "prj_1",
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: null,
+        startedAt: "2026-10-28T09:00:00.000Z",
+        tapePath: `/data/${id}.jsonl`,
+        captureQuality: "import_only",
+      });
+    }
+    // ses_1 started first but went active last; ses_2/ses_3 tie.
+    appendEvents(db, "ses_1", [
+      makeEvent(0, {
+        event_id: "evt_newest",
+        ts: "2026-10-29T00:00:00.000Z",
+        observed_at: "2026-10-29T00:00:00.050Z",
+      }),
+    ]);
+    appendEvents(db, "ses_2", [
+      makeEvent(0, {
+        event_id: "evt_mid_2",
+        session_id: "ses_2",
+        ts: "2026-10-28T10:00:00.000Z",
+        observed_at: "2026-10-28T10:00:00.050Z",
+      }),
+    ]);
+    appendEvents(db, "ses_3", [
+      makeEvent(0, {
+        event_id: "evt_mid_3",
+        session_id: "ses_3",
+        ts: "2026-10-28T10:00:00.000Z",
+        observed_at: "2026-10-28T10:00:00.050Z",
+      }),
+    ]);
+    expect(listSessions(db, "prj_1").map((row) => row.id)).toEqual(["ses_1", "ses_2", "ses_3"]);
     db.close();
   });
 
@@ -641,5 +721,178 @@ describe("repositories", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: "ses_1", eventCount: 3, captureState: "recording" });
     db.close();
+  });
+});
+
+describe("ensureIngestProject", () => {
+  it("keeps the historic id when a remote appears on the same root", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_root", root: "/repo", remoteUrl: null, name: "repo" });
+      upsertSession(db, {
+        id: "ses_old",
+        projectId: "prj_root",
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: null,
+        startedAt: null,
+        tapePath: "/data/tape.jsonl",
+        captureQuality: "import_only",
+      });
+      // Remote added later: derived id changes, but the row (and its
+      // sessions) must stay joined instead of throwing UNIQUE(canonical_root).
+      const effective = ensureIngestProject(db, {
+        id: "prj_remote",
+        root: "/repo",
+        remoteUrl: "github.com/example/echo",
+        name: "repo",
+      });
+      expect(effective).toBe("prj_root");
+      const projects = listProjects(db);
+      expect(projects).toHaveLength(1);
+      expect(projects[0]).toMatchObject({
+        id: "prj_root",
+        remoteUrl: "github.com/example/echo",
+      });
+      expect(listSessions(db, "prj_root")).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("adopts a moved root when the remote matches", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, {
+        id: "prj_remote",
+        root: "/old/repo",
+        remoteUrl: "github.com/example/echo",
+        name: "repo",
+      });
+      const effective = ensureIngestProject(db, {
+        id: "prj_remote",
+        root: "/new/repo",
+        remoteUrl: "github.com/example/echo",
+        name: "repo",
+      });
+      expect(effective).toBe("prj_remote");
+      expect(listProjects(db)[0]).toMatchObject({ id: "prj_remote", root: "/new/repo" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("inserts truly new repositories", () => {
+    const db = openTestDb();
+    try {
+      const effective = ensureIngestProject(db, {
+        id: "prj_new",
+        root: "/other",
+        remoteUrl: null,
+        name: "other",
+      });
+      expect(effective).toBe("prj_new");
+      expect(listProjects(db)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("project stack regen state", () => {
+  it("round-trips the change counter per project", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_stack", root: "/repo", name: "repo" });
+      expect(getStackRegenState(db, "prj_stack")).toBeNull();
+      saveStackRegenState(db, {
+        projectId: "prj_stack",
+        lastFilesHash: "abc",
+        pendingChanges: 2,
+      });
+      expect(getStackRegenState(db, "prj_stack")).toEqual({
+        projectId: "prj_stack",
+        lastFilesHash: "abc",
+        pendingChanges: 2,
+      });
+      saveStackRegenState(db, {
+        projectId: "prj_stack",
+        lastFilesHash: "def",
+        pendingChanges: 0,
+      });
+      expect(getStackRegenState(db, "prj_stack")).toEqual({
+        projectId: "prj_stack",
+        lastFilesHash: "def",
+        pendingChanges: 0,
+      });
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("session title stability", () => {
+  it("keeps the first title while other fields update", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_1", root: "/repo", name: "repo" });
+      const base = {
+        id: "ses_title",
+        projectId: "prj_1",
+        agent: "opencode",
+        model: "model-a",
+        directory: "/repo",
+        title: "First title",
+        startedAt: "2026-10-27T09:00:00.000Z",
+        tapePath: "/data/a.jsonl",
+        captureQuality: "import_only",
+      } as const;
+      upsertSession(db, { ...base });
+      // A later poll renames the session upstream and moves fields: the
+      // title stays, everything else follows.
+      upsertSession(db, {
+        ...base,
+        model: "model-b",
+        directory: "/repo/sub",
+        title: "Renamed title",
+        tapePath: "/data/b.jsonl",
+      });
+      expect(getSessionSummary(db, "ses_title")).toMatchObject({
+        title: "First title",
+        model: "model-b",
+        directory: "/repo/sub",
+      });
+      // A null title never clears an established one.
+      upsertSession(db, { ...base, model: "model-c", title: null });
+      expect(getSessionSummary(db, "ses_title")?.title).toBe("First title");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("adopts the first non-empty title, then freezes", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_1", root: "/repo", name: "repo" });
+      const base = {
+        id: "ses_late",
+        projectId: "prj_1",
+        agent: "muse",
+        model: null,
+        directory: "/repo",
+        startedAt: null,
+        tapePath: "/data/a.jsonl",
+        captureQuality: "import_only",
+      } as const;
+      upsertSession(db, { ...base, title: null });
+      expect(getSessionSummary(db, "ses_late")?.title).toBeNull();
+      upsertSession(db, { ...base, title: "Late title" });
+      expect(getSessionSummary(db, "ses_late")?.title).toBe("Late title");
+      upsertSession(db, { ...base, title: "Another rename" });
+      expect(getSessionSummary(db, "ses_late")?.title).toBe("Late title");
+    } finally {
+      db.close();
+    }
   });
 });
