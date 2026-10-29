@@ -70,8 +70,19 @@ export function ProjectOverviewPage() {
               <HugeiconsIcon icon={Folder01Icon} size={14} strokeWidth={1.8} />
             </span>
             <span>
-              {project.data?.root ?? "…"}
-              {project.data?.remoteUrl ? ` · ${project.data.remoteUrl}` : ""}
+              {project.isPending ? (
+                <span role="status" aria-label="Loading project location">
+                  <span
+                    aria-hidden
+                    className="inline-block h-3 w-40 rounded-dusk-code bg-dusk-pill motion-safe:animate-pulse"
+                  />
+                </span>
+              ) : (
+                <>
+                  {project.data?.root ?? "…"}
+                  {project.data?.remoteUrl ? ` · ${project.data.remoteUrl}` : ""}
+                </>
+              )}
             </span>
           </p>
         </div>
@@ -178,6 +189,25 @@ export function ProjectOverviewPage() {
 
       <section className="mt-8 space-y-3 lg:mt-0">
         <h2 className="text-xl font-semibold tracking-tight">Agent sessions</h2>
+        {sessions.isPending ? (
+          <div role="status" aria-label="Loading sessions" className="grid gap-4 sm:grid-cols-2">
+            {["first", "second", "third", "fourth"].map((key) => (
+              <div
+                key={key}
+                aria-hidden
+                className="rounded-[20px] border border-dusk-hairline bg-dusk-surface p-5 motion-safe:animate-pulse"
+              >
+                <div className="h-4 w-3/4 rounded-dusk-code bg-dusk-pill" />
+                <div className="mt-2 h-4 w-1/2 rounded-dusk-code bg-dusk-pill" />
+                <div className="mt-1.5 h-3 w-2/5 rounded-dusk-code bg-dusk-pill" />
+                <div className="mt-4 flex gap-2 pt-4">
+                  <div className="h-5 w-16 rounded-full bg-dusk-pill" />
+                  <div className="h-5 w-20 rounded-full bg-dusk-pill" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
         {sessions.isError ? (
           <div className="rounded-dusk-card border border-dusk-fail/40 bg-dusk-fail-wash p-8 text-sm text-dusk-fail">
             Could not load sessions.

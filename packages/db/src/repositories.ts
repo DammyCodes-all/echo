@@ -101,6 +101,69 @@ export function upsertProject(
   ).run(input.id, input.root, input.remoteUrl ?? null, input.name, nowIso());
 }
 
+// Ingest-side project registration. The derived id changes when a remote is
+// added/removed (hash of remote ?? root) or the folder moves, but ARCHITECTURE
+// says one row per repository — and tapes, shadow repos, artifacts and the
+// code index are all keyed by project id on disk. So an existing row wins over
+// a fresh id: same root keeps its historic id (remote/name refresh), same
+// remote adopts a moved root. Truly new repos insert. Returns the effective id
+// the caller must use for sessions, tapes and snapshots. Without this the
+// bare upsertProject throws UNIQUE(canonical_root) on the first poll after a
+// remote appears, and the throw aborts the whole scan (every session starves).
+export function ensureIngestProject(
+  db: EchoDb,
+  input: { id: string; root: string; remoteUrl?: string | null; name: string | null },
+): string {
+  const remoteUrl = input.remoteUrl ?? null;
+  const byId = db
+    .prepare("SELECT id, canonical_root FROM projects WHERE id = ?")
+    .get(input.id) as { id: string; canonical_root: string } | undefined;
+  if (byId) {
+    // Same id, folder moved under a stable remote: adopt the new root when
+    // no other row holds it; otherwise keep the stored root, never crash.
+    if (byId.canonical_root !== input.root) {
+      const clash = db
+        .prepare("SELECT id FROM projects WHERE canonical_root = ?")
+        .get(input.root) as { id: string } | undefined;
+      if (!clash) {
+        db.prepare("UPDATE projects SET canonical_root = ? WHERE id = ?").run(input.root, input.id);
+      }
+    }
+    db.prepare("UPDATE projects SET remote_url = ?, name = ? WHERE id = ?").run(
+      remoteUrl,
+      input.name,
+      input.id,
+    );
+    return input.id;
+  }
+  const byRoot = db
+    .prepare("SELECT id FROM projects WHERE canonical_root = ?")
+    .get(input.root) as { id: string } | undefined;
+  if (byRoot) {
+    db.prepare("UPDATE projects SET remote_url = ?, name = ? WHERE id = ?").run(
+      remoteUrl,
+      input.name,
+      byRoot.id,
+    );
+    return byRoot.id;
+  }
+  if (remoteUrl) {
+    const byRemote = db
+      .prepare("SELECT id FROM projects WHERE remote_url = ?")
+      .get(remoteUrl) as { id: string } | undefined;
+    if (byRemote) {
+      db.prepare("UPDATE projects SET canonical_root = ?, name = ? WHERE id = ?").run(
+        input.root,
+        input.name,
+        byRemote.id,
+      );
+      return byRemote.id;
+    }
+  }
+  upsertProject(db, input);
+  return input.id;
+}
+
 export function upsertSession(
   db: EchoDb,
   input: {
