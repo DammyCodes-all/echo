@@ -638,3 +638,16 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 54 files / 443 passed, `pnpm build` ok; new service tests 7/7, contract schema bounds test, db migration version list updated to v8
 - notes: Model drafts must trace every item to detected signals (frameworks/languages/top imports) or they are dropped; empty/invented drafts fall back to skeleton. First Overview visit on an unindexed project pays one local tree walk, then caches on the code-index files hash. No capture changes.
+## 2026-10-29 — Overview sessions as individual cards (folder-item shape, dusk surface)
+
+- item: project overview "Agent sessions" list restyled from a divided row list to a 2-up grid of standalone `SessionCard`s (`apps/web/src/components/session-card.tsx`, new; `apps/web/src/routes/project-overview.tsx` rewired) — title (2-line clamp) + short-time · events meta + the existing check/high-risk/capture pills; first pass copied the folder sheet's neutral-gray gradient verbatim and clashed with the dusk surfaces, so the landed card keeps the folder item's shape on `bg-dusk-surface` with a 20px radius, drops the noisy full model string from the meta line, and pins badges to the card bottom
+- status: done
+- evidence: `tsc` clean; `biome` exit 0 (1 pre-existing warning + 4 pre-existing infos in untouched server test files); `pnpm test` → 442 passed + 1 sandbox `detectBackends` memoization timeout under 54-worker parallel load, 28/28 green on isolated re-run (flaky under load, untouched by this web-only change); `pnpm build` ok (web + server + cli)
+- notes: UI is vitest-exempt, so no new tests. No browser available here (no headless binary; user's own dev servers on 5173/4783 left untouched) — verified via typecheck + lint + build; the user's live dev server picks the restyle up via HMR. Concurrent-session files (`apps/server/src/index.ts`, `apps/web/src/api.ts`, contracts, eval stamps) and their BuildTracker lines left alone.
+
+## 2026-10-29 — Heal code_edges.id on shipped databases (v9)
+
+- item: migration v9 `ADD COLUMN code_edges.id` (heal-forward for the code-index landing's in-place v7 edit: live DBs created without the column broke every reindex/tech-stack call with `no column named id`); runner's ADD COLUMN skip already covers fresh DBs — SQL kept comment-free so the skip regex matches; live `~/.local/share/echo/echo.sqlite` healed in place; db migration version pins updated
+- status: done
+- evidence: `pnpm exec vitest run packages/db` → 3 files / 25 passed; full `pnpm test` → 54 files / 443 passed; `tsc` clean; `biome` clean; `pnpm build` ok
+- notes: Root cause of the tech-stack 503s on existing projects, found by curling the endpoint (`code_index_missing`) then the reindex route (500 `no column named id`) and confirming via PRAGMA table_info. Daemon was down at diagnosis end — owner restarts it; v9 applies on boot.

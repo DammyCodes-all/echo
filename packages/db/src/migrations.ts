@@ -214,4 +214,14 @@ CREATE TABLE IF NOT EXISTS project_artifacts (
 );
 `,
   },
+  // Heal-forward for the parallel code-index landing: v7's code_edges shipped
+  // without the id column on databases migrated before the column was added
+  // (CREATE TABLE IF NOT EXISTS never re-ran). Existing rows get a
+  // placeholder; the next reindex per project deletes and re-inserts with
+  // real ids. Kept comment-free: the runner skips repeated ADD COLUMNs by
+  // matching statements that START with ALTER TABLE.
+  {
+    version: 9,
+    sql: `ALTER TABLE code_edges ADD COLUMN id TEXT NOT NULL DEFAULT '';`,
+  },
 ];
