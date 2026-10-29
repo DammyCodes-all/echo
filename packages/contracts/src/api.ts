@@ -58,6 +58,30 @@ export const ProjectFilesResponseSchema = z.object({
 });
 export type ProjectFilesResponse = z.infer<typeof ProjectFilesResponseSchema>;
 
+export const ProjectTechStackKindSchema = z.enum([
+  "language",
+  "framework",
+  "build",
+  "data",
+  "infra",
+]);
+export type ProjectTechStackKind = z.infer<typeof ProjectTechStackKindSchema>;
+
+export const ProjectTechStackItemSchema = z.object({
+  name: z.string().min(1).max(40),
+  kind: ProjectTechStackKindSchema,
+});
+export type ProjectTechStackItem = z.infer<typeof ProjectTechStackItemSchema>;
+
+export const ProjectTechStackSchema = z.object({
+  projectId: z.string().min(1),
+  purpose: z.string().min(1).max(280),
+  items: z.array(ProjectTechStackItemSchema).max(8),
+  generator: z.enum(["model", "skeleton"]),
+  generatedAt: z.string().min(1),
+});
+export type ProjectTechStack = z.infer<typeof ProjectTechStackSchema>;
+
 export const SessionCheckStatusSchema = z.enum(["not_checked", "checked", "skipped"]);
 export type SessionCheckStatus = z.infer<typeof SessionCheckStatusSchema>;
 
