@@ -39,8 +39,12 @@ export function ProjectOverviewPage() {
   const techStack = useQuery({
     queryKey: ["tech-stack", projectId],
     queryFn: () => api.techStack(projectId),
+    // Background regens land as a new artifact; poll so the sidebar
+    // converges without a manual refresh. Stale data stays visible meanwhile.
+    refetchInterval: 30_000,
   });
 
+  // Server order is last activity DESC: only genuinely live sessions move.
   const list = sessions.data ?? [];
   const checked = list.filter((s) => s.checkStatus === "checked").length;
   const skipped = list.filter((s) => s.checkStatus === "skipped").length;
@@ -78,10 +82,7 @@ export function ProjectOverviewPage() {
                   />
                 </span>
               ) : (
-                <>
-                  {project.data?.root ?? "…"}
-                  {project.data?.remoteUrl ? ` · ${project.data.remoteUrl}` : ""}
-                </>
+                (project.data?.root ?? "…")
               )}
             </span>
           </p>
