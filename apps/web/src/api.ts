@@ -15,17 +15,32 @@ import type {
   SessionSummary,
 } from "@echo/contracts";
 
+/** Backstop so a stuck server can never stick the UI; above the server's own deadline. */
+const CHECK_REQUEST_TIMEOUT_MS = 200_000;
+
+type FetchOptions = {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+};
+
+function requestSignal(options: FetchOptions): AbortSignal | undefined {
+  if (options.timeoutMs === undefined) return options.signal;
+  const timeout = AbortSignal.timeout(options.timeoutMs);
+  return options.signal === undefined ? timeout : AbortSignal.any([options.signal, timeout]);
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
   return (await response.json()) as T;
 }
 
-async function postJson<T>(url: string, body: unknown): Promise<T> {
+async function postJson<T>(url: string, body: unknown, options: FetchOptions = {}): Promise<T> {
   const response = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: requestSignal(options),
   });
   if (!response.ok) {
     const payload = (await response.json().catch(() => null)) as {
@@ -50,15 +65,17 @@ export const api = {
     getJson<AskThread>(`/api/sessions/${encodeURIComponent(sessionId)}/ask/thread`),
   checksV2State: (sessionId: string) =>
     getJson<ChecksV2Response>(`/api/sessions/${encodeURIComponent(sessionId)}/checks-v2`),
-  generateChecksV2: (sessionId: string) =>
+  generateChecksV2: (sessionId: string, signal?: AbortSignal) =>
     postJson<ChecksV2Response>(
       `/api/sessions/${encodeURIComponent(sessionId)}/checks-v2/generate`,
       {},
+      { signal, timeoutMs: CHECK_REQUEST_TIMEOUT_MS },
     ),
-  checkMe: (sessionId: string, cardId: string) =>
+  checkMe: (sessionId: string, cardId: string, signal?: AbortSignal) =>
     postJson<ChecksV2Response>(
       `/api/sessions/${encodeURIComponent(sessionId)}/checks-v2/check-me`,
       { cardId },
+      { signal, timeoutMs: CHECK_REQUEST_TIMEOUT_MS },
     ),
   answerCheckV2: (
     sessionId: string,
@@ -72,6 +89,7 @@ export const api = {
     postJson<{ attempt: CheckAttemptV2; reveal: { summary: string; evidence: AskEvidence[] } }>(
       `/api/sessions/${encodeURIComponent(sessionId)}/checks-v2/answer`,
       input,
+      { timeoutMs: CHECK_REQUEST_TIMEOUT_MS },
     ),
   skipChecksV2: (sessionId: string) =>
     postJson<{ status: "skipped" }>(

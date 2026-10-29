@@ -43,6 +43,14 @@ import { computeWatermark } from "./story";
 /** Prompt version recorded on model-generated check sets. */
 export const CHECK_PROMPT_VERSION = "check-v1";
 
+/** Default overall deadline for one check action's model calls (drafts, retries, grading). */
+const DEFAULT_CHECK_TIMEOUT_MS = 180_000;
+
+/** Checks carry their own model defaults: short grounded questions need room
+ *  for reasoning output but not deep thought. Explicit env always wins. */
+const CHECKS_DEFAULT_MAX_TOKENS = 10_000;
+const CHECKS_DEFAULT_REASONING_EFFORT = "low";
+
 export interface ChecksV2Logger {
   info: (obj: unknown, message?: string) => void;
   error: (obj: unknown, message?: string) => void;
@@ -58,6 +66,8 @@ export interface ChecksV2ServiceOptions {
   /** Injected for tests; defaults to the global fetch. */
   fetchImpl?: typeof fetch;
   env?: NodeJS.ProcessEnv;
+  /** Overall model-call deadline per user action; defaults to 180s. */
+  timeoutMs?: number;
 }
 
 export interface ChecksV2Outcome {
@@ -302,6 +312,7 @@ export function createChecksV2Service(
   const { db, dataDir, log } = deps;
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
+  const timeoutMs = options.timeoutMs ?? DEFAULT_CHECK_TIMEOUT_MS;
 
   function artifactPath(projectId: string, sessionId: string): string {
     return join(
@@ -424,12 +435,43 @@ export function createChecksV2Service(
     if (env.ECHO_MODEL === "off") {
       throw new ModelError("model_error", "ECHO_MODEL=off");
     }
-    return modelConfigFromEnv(env);
+    const config = modelConfigFromEnv(env);
+    const explicitMax = Number.parseInt(env.META_MAX_TOKENS ?? "", 10);
+    return {
+      ...config,
+      maxTokens:
+        Number.isFinite(explicitMax) && explicitMax > 0
+          ? config.maxTokens
+          : CHECKS_DEFAULT_MAX_TOKENS,
+      reasoningEffort: config.reasoningEffort ?? CHECKS_DEFAULT_REASONING_EFFORT,
+    };
   }
 
   function unavailable(error: unknown): ChecksV2Outcome {
     const message = error instanceof Error ? error.message : "model unavailable";
     return { status: 503, body: { error: { code: "check_unavailable", message } } };
+  }
+
+  /**
+   * Overall deadline for one action's model calls. The race (not just the
+   * abort) decides the outcome, so even a fetch that ignores the signal
+   * cannot stick the request: the HTTP handler always answers.
+   */
+  async function withDeadline<T>(run: (signal: AbortSignal) => Promise<T>): Promise<T> {
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const label = timeoutMs >= 1000 ? `${Math.round(timeoutMs / 1000)}s` : `${timeoutMs}ms`;
+    const expired = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new ModelError("model_error", `check timed out after ${label}`));
+      }, timeoutMs);
+    });
+    try {
+      return await Promise.race([run(controller.signal), expired]);
+    } finally {
+      if (timer !== null) clearTimeout(timer);
+    }
   }
 
   async function loadPatches(sessionId: string, cards: ChangeCard[]): Promise<Map<string, string>> {
@@ -544,6 +586,7 @@ export function createChecksV2Service(
     targets: ChangeCard[],
     story: SessionStory,
     patches: Map<string, string>,
+    signal: AbortSignal,
   ): Promise<{ questions: StoredCheckQuestion[]; errors: string[] }> {
     const targetsById = new Map(targets.map((card) => [card.id, card]));
     const known = knownSetsFor(targets, patches);
@@ -562,6 +605,7 @@ export function createChecksV2Service(
       const result = await requestJson(config, redacted, (value: unknown) => value, {
         fetchImpl,
         retryMaxTokens: Math.max(config.maxTokens * 2, 8192),
+        signal,
       });
       return result.value;
     };
@@ -628,6 +672,7 @@ export function createChecksV2Service(
     story: SessionStory,
     patches: Map<string, string>,
     questions: StoredCheckQuestion[],
+    signal: AbortSignal,
   ): Promise<StoredCheckQuestion[]> {
     if (!needsFreeText(targets, questions)) return questions;
     const highest = [...targets].sort(
@@ -646,6 +691,7 @@ export function createChecksV2Service(
       const result = await requestJson(config, redacted, (value: unknown) => value, {
         fetchImpl,
         retryMaxTokens: Math.max(config.maxTokens * 2, 8192),
+        signal,
       });
       const parsed = CheckDraftSetSchema.safeParse(result.value);
       const draft = parsed.success ? parsed.data.questions[0] : undefined;
@@ -745,11 +791,22 @@ export function createChecksV2Service(
     const patches = await loadPatches(sessionId, targets);
     let drafted: StoredCheckQuestion[];
     try {
-      const first = await draftQuestions(config, targets, story, patches);
-      drafted = await enforceFreeText(config, targets, story, patches, first.questions);
+      const { questions, errors } = await withDeadline(async (signal) => {
+        const first = await draftQuestions(config, targets, story, patches, signal);
+        const finalQuestions = await enforceFreeText(
+          config,
+          targets,
+          story,
+          patches,
+          first.questions,
+          signal,
+        );
+        return { questions: finalQuestions, errors: first.errors };
+      });
+      drafted = questions;
       if (drafted.length === 0) {
         log.error(
-          { session_id: sessionId, errors: first.errors.slice(0, 5) },
+          { session_id: sessionId, errors: errors.slice(0, 5) },
           "checks-v2 draft produced no valid questions",
         );
         return {
@@ -822,7 +879,9 @@ export function createChecksV2Service(
       }
       const patches = await loadPatches(sessionId, [card]);
       try {
-        const drafted = await draftQuestions(config, [card], story, patches);
+        const drafted = await withDeadline((signal) =>
+          draftQuestions(config, [card], story, patches, signal),
+        );
         if (drafted.questions.length === 0) {
           return {
             status: 502,
@@ -860,7 +919,9 @@ export function createChecksV2Service(
     const patches = await loadPatches(sessionId, [card]);
     let drafted: StoredCheckQuestion[];
     try {
-      drafted = (await draftQuestions(config, [card], story, patches)).questions;
+      drafted = (
+        await withDeadline((signal) => draftQuestions(config, [card], story, patches, signal))
+      ).questions;
       if (drafted.length === 0) {
         return {
           status: 502,
@@ -958,17 +1019,19 @@ export function createChecksV2Service(
       }
       let hits: RubricHitInput[];
       try {
-        const result = await requestJson(
-          config,
-          [
-            { role: "system", content: GRADING_PROMPT },
-            {
-              role: "user",
-              content: `Rubric:\n${question.rubric.map((point, index) => `${index + 1}. ${point}`).join("\n")}\n\nUser answer:\n${trimmed}`,
-            },
-          ],
-          (value: unknown) => parseGrading(value, question.rubric),
-          { fetchImpl, retryMaxTokens: Math.max(config.maxTokens * 2, 8192) },
+        const result = await withDeadline((signal) =>
+          requestJson(
+            config,
+            [
+              { role: "system", content: GRADING_PROMPT },
+              {
+                role: "user",
+                content: `Rubric:\n${question.rubric.map((point, index) => `${index + 1}. ${point}`).join("\n")}\n\nUser answer:\n${trimmed}`,
+              },
+            ],
+            (value: unknown) => parseGrading(value, question.rubric),
+            { fetchImpl, retryMaxTokens: Math.max(config.maxTokens * 2, 8192), signal },
+          ),
         );
         hits = result.value;
       } catch (error) {

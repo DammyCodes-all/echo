@@ -16,9 +16,15 @@ const CONFIDENCE_OPTIONS: Array<{ value: AnswerConfidence; label: string }> = [
 const UNAVAILABLE_MESSAGE = "Check unavailable (model off). Your session status is untouched.";
 
 function toMessage(error: unknown): string {
+  if ((error instanceof DOMException || error instanceof Error) && error.name === "TimeoutError") {
+    return "Check timed out — the model is slow or unreachable. Try again.";
+  }
   const raw = error instanceof Error ? error.message : "Check failed.";
   return /unavailable/i.test(raw) ? UNAVAILABLE_MESSAGE : raw;
 }
+
+const PRIMARY =
+  "rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40";
 
 type Reveal = { summary: string; evidence: AskEvidence[] };
 
@@ -178,11 +184,7 @@ export function CheckRunner({
         ) : null}
         {error !== null ? <p className="text-sm text-dusk-fail">{error}</p> : null}
         <div className="flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => setRevealedId(null)}
-            className="rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
-          >
+          <button type="button" onClick={() => setRevealedId(null)} className={PRIMARY}>
             {unanswered.length > 0 ? "Next" : "See your picture"}
           </button>
           <button
@@ -203,11 +205,7 @@ export function CheckRunner({
     return (
       <div className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5">
         <p className="text-sm text-dusk-ink">Check complete — your picture is ready.</p>
-        <button
-          type="button"
-          onClick={onDone}
-          className="rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
-        >
+        <button type="button" onClick={onDone} className={PRIMARY}>
           See your picture
         </button>
       </div>
@@ -251,8 +249,8 @@ export function CheckRunner({
               disabled={pending}
               className={`rounded-dusk-code px-3 py-2 text-sm disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent ${
                 confidence === option.value
-                  ? "bg-dusk-accent font-semibold text-dusk-base"
-                  : "bg-dusk-pill text-dusk-muted hover:text-dusk-ink"
+                  ? "bg-dusk-accent-wash text-dusk-ink"
+                  : "bg-dusk-pill text-dusk-ink"
               }`}
             >
               {option.label}
@@ -309,12 +307,7 @@ export function CheckRunner({
 
       {confidence !== null ? (
         <div className="flex gap-2">
-          <button
-            type="button"
-            onClick={submit}
-            disabled={!canSubmit}
-            className="rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40"
-          >
+          <button type="button" onClick={submit} disabled={!canSubmit} className={PRIMARY}>
             {pending ? "Checking…" : "Submit answer"}
           </button>
         </div>
