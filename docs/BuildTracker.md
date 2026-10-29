@@ -517,3 +517,10 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 191 files clean (4 pre-existing infos), `pnpm test` → 49 files / 411 passed, `pnpm build` ok; built web bundle contains `nimbus-nav` + `fixed right-6 bottom-6` + section labels
 - notes: Adapted the pasted component for repo strictness (typed Uniforms bag, null-guards over `!`, `tone` dep dropped as behavior-neutral, braces in forEach setters); kept intentional extra layout-effect deps + label-index keys + inline `<style>`/decorative canvas behind `biome-ignore` with reasons. Deprecated `hugeicons-react` rejected in favor of maintained `@hugeicons/react`. No browser here: positioning/animation unverified beyond bundle contents. No API/capture changes.
+
+## 2026-10-29 — Story-page project nav pill
+
+- item: shared `ProjectNavPill` (`apps/web/src/components/project-nav-pill.tsx`, `PROJECT_SECTIONS` + fixed bottom-right dark-tone LiquidNavbar) used by both `ProjectLayout` and the session story page (`apps/web/src/routes/story.tsx` renders it with `active={-1}` once `sessionQuery.data.projectId` loads; taps navigate to the parent project's section)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 193 files clean (4 pre-existing infos), `pnpm test` → 49 files / 414 passed, `pnpm build` ok; built web bundle contains `fixed right-6 bottom-6`
+- notes: `ProjectLayout` refactored to the shared pill (no behavior change there). Story page passes `active={-1}` so no section highlights on a non-section route. Import-sort auto-fixed via `biome check --write`. No API/capture changes. User must restart `pnpm dev` (HugeIcons deps) + hard-refresh to see it.
