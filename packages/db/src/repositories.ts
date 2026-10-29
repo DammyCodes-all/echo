@@ -217,7 +217,9 @@ export function upsertSession(
        project_id = excluded.project_id,
        model = excluded.model,
        directory = excluded.directory,
-       title = excluded.title,
+       -- Session titles are stable: the first non-empty title wins. Later
+       -- polls may rename the session upstream; other details still update.
+       title = CASE WHEN sessions.title IS NOT NULL AND sessions.title != '' THEN sessions.title ELSE excluded.title END,
        started_at = excluded.started_at,
        tape_path = excluded.tape_path,
        capture_quality = excluded.capture_quality,
