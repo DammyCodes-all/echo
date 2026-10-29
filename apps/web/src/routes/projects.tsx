@@ -5,16 +5,9 @@ import { useSearchParams } from "react-router";
 import { api } from "../api";
 import { ProjectFolderCard } from "../components/project-folder-card";
 import { ScaffoldPage } from "../components/scaffold-page";
+import type { SortKey } from "../components/search/project-sort";
 import { Skeleton } from "../components/skeleton";
 import { displayProjectName } from "../project-display";
-
-type SortKey = "activity" | "name" | "sessions";
-
-const SORT_OPTIONS: Array<{ value: SortKey; label: string }> = [
-  { value: "activity", label: "Last activity" },
-  { value: "name", label: "Name" },
-  { value: "sessions", label: "Sessions" },
-];
 
 function matchesQuery(project: ProjectSummary, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -41,7 +34,8 @@ export function ProjectsPage() {
   });
   const [searchParams, setSearchParams] = useSearchParams();
   const [query, setQuery] = useState(() => searchParams.get("q") ?? "");
-  const [sort, setSort] = useState<SortKey>("activity");
+  const rawSort = searchParams.get("sort");
+  const sort: SortKey = rawSort === "name" || rawSort === "sessions" ? rawSort : "activity";
 
   // The header search drives the filter through `?q=`; stay in sync when it
   // (or history navigation) changes the param under us.
@@ -107,40 +101,6 @@ export function ProjectsPage() {
             </code>{" "}
             and run an OpenCode session in it. Echo will pick the session up on its next poll.
           </p>
-        </div>
-      ) : null}
-
-      {projects.data && projects.data.length > 0 ? (
-        <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center">
-          <label htmlFor="project-search" className="sr-only">
-            Search projects
-          </label>
-          <input
-            id="project-search"
-            type="search"
-            value={query}
-            onChange={(event) => changeQuery(event.target.value)}
-            placeholder="Search by name, path, or remote…"
-            autoComplete="off"
-            className="min-w-0 flex-1 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink outline-none placeholder:text-dusk-muted"
-          />
-          <div className="flex shrink-0 items-center gap-2">
-            <label htmlFor="project-sort" className="text-sm text-dusk-muted">
-              Sort
-            </label>
-            <select
-              id="project-sort"
-              value={sort}
-              onChange={(event) => setSort(event.target.value as SortKey)}
-              className="rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink outline-none"
-            >
-              {SORT_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </div>
         </div>
       ) : null}
 
