@@ -5,6 +5,13 @@ export {
   readShadowBlob,
   resolveRepositoryIdentity,
 } from "./git";
+export {
+  type WalkFile,
+  type WalkMetadata,
+  type WalkOptions,
+  type WalkResult,
+  walkWorkingTree,
+} from "./ignore";
 export { loadManifest, type ManifestEntry, type SnapshotManifest } from "./manifest";
 export {
   DEFAULT_SNAPSHOT_LIMITS,
