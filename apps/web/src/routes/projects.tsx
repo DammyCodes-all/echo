@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "react-router";
-import { api, formatTime } from "../api";
+import { api } from "../api";
+import { ProjectFolderCard } from "../components/project-folder-card";
 import { ScaffoldPage } from "../components/scaffold-page";
 
 export function ProjectsPage() {
@@ -44,27 +44,9 @@ export function ProjectsPage() {
       ) : null}
 
       {projects.data && projects.data.length > 0 ? (
-        <div className="grid gap-4 md:grid-cols-2">
-          {projects.data.map((project) => (
-            <Link
-              key={project.id}
-              to={`/projects/${project.id}`}
-              className="group rounded-dusk-card bg-dusk-surface px-6 py-[26px] transition-colors hover:bg-dusk-pill"
-            >
-              <p className="font-medium text-dusk-card-title tracking-dusk-card text-dusk-ink">
-                {project.name ?? project.root}
-              </p>
-              <p className="mt-1 truncate font-mono text-xs text-dusk-muted">{project.root}</p>
-              {project.remoteUrl ? (
-                <p className="mt-1 truncate font-mono text-xs text-dusk-muted">
-                  {project.remoteUrl}
-                </p>
-              ) : null}
-              <p className="mt-3 text-dusk-meta leading-6 text-dusk-muted">
-                {project.sessionCount} session{project.sessionCount === 1 ? "" : "s"}
-                {project.lastActivity ? ` · last activity ${formatTime(project.lastActivity)}` : ""}
-              </p>
-            </Link>
+        <div className="grid justify-items-center gap-x-4 gap-y-10 md:grid-cols-2">
+          {projects.data.map((project, index) => (
+            <ProjectFolderCard key={project.id} project={project} index={index} />
           ))}
         </div>
       ) : null}
