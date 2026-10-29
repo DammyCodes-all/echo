@@ -115,9 +115,9 @@ export function ensureIngestProject(
   input: { id: string; root: string; remoteUrl?: string | null; name: string | null },
 ): string {
   const remoteUrl = input.remoteUrl ?? null;
-  const byId = db
-    .prepare("SELECT id, canonical_root FROM projects WHERE id = ?")
-    .get(input.id) as { id: string; canonical_root: string } | undefined;
+  const byId = db.prepare("SELECT id, canonical_root FROM projects WHERE id = ?").get(input.id) as
+    | { id: string; canonical_root: string }
+    | undefined;
   if (byId) {
     // Same id, folder moved under a stable remote: adopt the new root when
     // no other row holds it; otherwise keep the stored root, never crash.
@@ -136,9 +136,9 @@ export function ensureIngestProject(
     );
     return input.id;
   }
-  const byRoot = db
-    .prepare("SELECT id FROM projects WHERE canonical_root = ?")
-    .get(input.root) as { id: string } | undefined;
+  const byRoot = db.prepare("SELECT id FROM projects WHERE canonical_root = ?").get(input.root) as
+    | { id: string }
+    | undefined;
   if (byRoot) {
     db.prepare("UPDATE projects SET remote_url = ?, name = ? WHERE id = ?").run(
       remoteUrl,
@@ -148,9 +148,9 @@ export function ensureIngestProject(
     return byRoot.id;
   }
   if (remoteUrl) {
-    const byRemote = db
-      .prepare("SELECT id FROM projects WHERE remote_url = ?")
-      .get(remoteUrl) as { id: string } | undefined;
+    const byRemote = db.prepare("SELECT id FROM projects WHERE remote_url = ?").get(remoteUrl) as
+      | { id: string }
+      | undefined;
     if (byRemote) {
       db.prepare("UPDATE projects SET canonical_root = ?, name = ? WHERE id = ?").run(
         input.root,
