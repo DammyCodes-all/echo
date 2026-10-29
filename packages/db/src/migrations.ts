@@ -200,4 +200,18 @@ CREATE TABLE IF NOT EXISTS code_index_state (
 );
 `,
   },
+  {
+    version: 8,
+    sql: `
+CREATE TABLE IF NOT EXISTS project_artifacts (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  kind TEXT NOT NULL,
+  path TEXT NOT NULL,
+  watermark TEXT NOT NULL,
+  generator TEXT NOT NULL,
+  generated_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, kind)
+);
+`,
+  },
 ];
