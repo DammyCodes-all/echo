@@ -2,13 +2,19 @@ import type { SessionSummary } from "@echo/contracts";
 import { Link } from "react-router";
 import { formatTime } from "../api";
 
-function shortTime(iso: string | null): string | null {
-  if (!iso) return null;
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return null;
-  const day = date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-  const time = date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
-  return `${day}, ${time}`;
+function timeAgo(iso: string | null): string {
+  if (!iso) return "unknown time";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return "unknown time";
+  const seconds = Math.max(0, Math.floor((Date.now() - then) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr${hours === 1 ? "" : "s"} ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days} day${days === 1 ? "" : "s"} ago`;
+  return new Date(then).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
 function cardTitle(session: SessionSummary): string {
@@ -32,14 +38,13 @@ function checkLabel(checkStatus: SessionSummary["checkStatus"]): string {
 }
 
 /**
- * Session card for the project overview: the folder-preview item's shape
- * (title, time · events meta, triage badges) restyled onto the dusk surface
- * so it sits with the sidebar cards instead of the folder's paper sheet.
+ * Session card for the project overview: title, relative time, and only the
+ * badges that say something — high-risk flags plus the non-default check
+ * states. The default `not_checked` and the capture/event-count details stay
+ * off the card; the story page owns them.
  */
 export function SessionCard({ session }: { session: SessionSummary }) {
-  const when = shortTime(session.startedAt);
   const exactTime = session.startedAt ? formatTime(session.startedAt) : null;
-  const meta = `${when ?? "unknown time"} · ${session.eventCount} event${session.eventCount === 1 ? "" : "s"}`;
 
   return (
     <Link
@@ -50,22 +55,21 @@ export function SessionCard({ session }: { session: SessionSummary }) {
       <span className="line-clamp-2 text-[15px] font-medium leading-snug tracking-tight text-dusk-ink">
         {cardTitle(session)}
       </span>
-      <span className="mt-1.5 font-mono text-xs text-dusk-muted">{meta}</span>
-      <span className="mt-auto flex flex-wrap items-center gap-2 pt-4 text-xs">
-        <span className={checkBadgeClass(session.checkStatus)}>
-          {checkLabel(session.checkStatus)}
+      <span className="mt-1.5 font-mono text-xs text-dusk-muted">{timeAgo(session.startedAt)}</span>
+      {session.checkStatus !== "not_checked" || session.highRiskCount > 0 ? (
+        <span className="mt-auto flex flex-wrap items-center gap-2 pt-4 text-xs">
+          {session.checkStatus !== "not_checked" ? (
+            <span className={checkBadgeClass(session.checkStatus)}>
+              {checkLabel(session.checkStatus)}
+            </span>
+          ) : null}
+          {session.highRiskCount > 0 ? (
+            <span className="rounded-dusk-pill border border-dusk-fail/40 bg-dusk-fail-wash px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dusk-fail">
+              {session.highRiskCount} high-risk
+            </span>
+          ) : null}
         </span>
-        {session.highRiskCount > 0 ? (
-          <span className="rounded-dusk-pill border border-dusk-fail/40 bg-dusk-fail-wash px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dusk-fail">
-            {session.highRiskCount} high-risk
-          </span>
-        ) : null}
-        {session.captureState !== "ready" ? (
-          <span className="rounded-dusk-pill border border-dusk-hairline-strong px-2 py-0.5 font-mono text-[10px] uppercase tracking-widest text-dusk-peach">
-            {session.captureState}
-          </span>
-        ) : null}
-      </span>
+      ) : null}
     </Link>
   );
 }

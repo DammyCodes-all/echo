@@ -49,6 +49,8 @@ interface StackServiceOptions {
 
 const TECH_STACK_KIND = "tech-stack";
 const MAX_ITEMS = 8;
+const MAX_README_CHARS = 1500;
+const MAX_PACKAGE_DESCRIPTION_CHARS = 500;
 
 const LANGUAGE_DISPLAY: Record<string, string> = {
   ts: "TypeScript",
@@ -63,6 +65,41 @@ export interface DetectedSignals {
   frameworks: string[];
   languages: Array<{ language: string; files: number }>;
   modules: Array<{ module: string; fileCount: number }>;
+}
+
+/** Genuinely helpful repo-authored context for the purpose/stack draft. */
+export interface RepoDocs {
+  readmeExcerpt: string | null;
+  packageDescription: string | null;
+}
+
+/** Bounded, best-effort read of repo-authored docs. Missing or unreadable
+ *  files are not a signal — never an error, never fabricated. */
+export function readRepoDocs(root: string): RepoDocs {
+  let readmeExcerpt: string | null = null;
+  for (const name of ["README.md", "readme.md"]) {
+    try {
+      const text = readFileSync(join(root, name), "utf8").trim();
+      if (text.length > 0) {
+        readmeExcerpt = text.slice(0, MAX_README_CHARS);
+        break;
+      }
+    } catch {
+      // Missing or unreadable README: no docs signal.
+    }
+  }
+  let packageDescription: string | null = null;
+  try {
+    const pkg = JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as {
+      description?: unknown;
+    };
+    if (typeof pkg.description === "string" && pkg.description.trim().length > 0) {
+      packageDescription = pkg.description.trim().slice(0, MAX_PACKAGE_DESCRIPTION_CHARS);
+    }
+  } catch {
+    // Not a node repo, or unreadable: no docs signal.
+  }
+  return { readmeExcerpt, packageDescription };
 }
 
 function parseStackSummary(raw: string): {
@@ -251,6 +288,7 @@ export function createProjectTechStackService(
     config: ModelConfig,
     project: ProjectSummary,
     signals: DetectedSignals,
+    docs: RepoDocs,
   ): Promise<ProjectTechStack | null> {
     const languages = signals.languages
       .map(({ language, files }) => `${LANGUAGE_DISPLAY[language] ?? language} (${files} files)`)
@@ -265,6 +303,7 @@ export function createProjectTechStackService(
           "drop one-off mentions and transitive-only noise; every name MUST come from the SIGNALS below, never invent;",
           "purpose is one plain-words line (<=140 chars) saying what someone GETS from this repo — the outcome, not the mechanism;",
           "no jargon in purpose: no stack names, no acronyms, no words like calibrate/snapshot/tape/artifact/pipeline;",
+          "use the REPO DOCS below to ground the purpose in what the repo claims to do; never copy stack names into purpose;",
           "bad: 'TypeScript-first capture with local daemon persistence';",
           "good: 'A workspace that turns coding sessions into short stories you can review.'",
         ].join(" "),
@@ -276,6 +315,10 @@ export function createProjectTechStackService(
           `Languages: ${languages || "none detected"}`,
           `Detected frameworks/tools: ${signals.frameworks.join(", ") || "none"}`,
           `Most imported external modules: ${signals.modules.map((m) => `${m.module} (${m.fileCount})`).join(", ") || "none"}`,
+          ...(docs.packageDescription
+            ? [`Repo description (package.json): ${docs.packageDescription}`]
+            : []),
+          ...(docs.readmeExcerpt ? [`README excerpt:\n${docs.readmeExcerpt}`] : []),
         ].join("\n"),
       },
     ];
@@ -372,7 +415,7 @@ export function createProjectTechStackService(
     } catch {
       return writeSkeleton();
     }
-    const draft = await narrate(config, project, signals);
+    const draft = await narrate(config, project, signals, readRepoDocs(project.root));
     if (!draft) return writeSkeleton();
     if (!persistStack({ projectId, stack: draft, generator: config.model, watermark })) {
       return writeSkeleton();
