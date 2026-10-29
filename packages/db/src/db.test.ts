@@ -15,6 +15,7 @@ import {
   getSessionEventIds,
   getSessionSummary,
   getSnapshotByCommit,
+  getStackRegenState,
   hasEventKind,
   insertSnapshot,
   latestSnapshot,
@@ -30,6 +31,7 @@ import {
   readAllEvents,
   readEvents,
   recordEngagementEvents,
+  saveStackRegenState,
   setSessionCheckStatus,
   setSessionStoryState,
   upsertArtifactRef,
@@ -113,7 +115,7 @@ describe("openEchoDb migrations", () => {
       version: number;
     }>;
     second.close();
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
   });
 
   it("waits on locked writers instead of failing fast", () => {
@@ -149,7 +151,7 @@ describe("openEchoDb migrations", () => {
     const rows = db.prepare("SELECT version FROM schema_migrations").all() as Array<{
       version: number;
     }>;
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
     const checkpoints = db
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reader_checkpoints'",
@@ -222,6 +224,83 @@ describe("repositories", () => {
       eventCount: 1,
     });
     expect(getSessionSummary(db, "ses_missing")).toBeNull();
+    db.close();
+  });
+
+  it("reports lastActivity as the latest observed event, else the session touch", () => {
+    const db = openTestDb();
+    seed(db);
+    appendEvents(db, "ses_1", [
+      makeEvent(1, {
+        event_id: "evt_late",
+        ts: "2026-10-28T12:00:00.000Z",
+        observed_at: "2026-10-28T12:00:00.050Z",
+      }),
+      makeEvent(0, { event_id: "evt_early" }),
+    ]);
+    expect(listSessions(db, "prj_1")[0]?.lastActivity).toBe("2026-10-28T12:00:00.050Z");
+    expect(getSessionSummary(db, "ses_1")?.lastActivity).toBe("2026-10-28T12:00:00.050Z");
+
+    upsertSession(db, {
+      id: "ses_bare",
+      projectId: "prj_1",
+      agent: "opencode",
+      model: null,
+      directory: "/repo",
+      title: null,
+      startedAt: null,
+      tapePath: "/data/bare.jsonl",
+      captureQuality: "import_only",
+    });
+    db.prepare("UPDATE sessions SET updated_at = ? WHERE id = ?").run(
+      "2026-10-26T00:00:00.000Z",
+      "ses_bare",
+    );
+    expect(getSessionSummary(db, "ses_bare")?.lastActivity).toBe("2026-10-26T00:00:00.000Z");
+    db.close();
+  });
+
+  it("orders sessions by lastActivity, newest first, id tiebreak", () => {
+    const db = openTestDb();
+    seed(db);
+    for (const id of ["ses_2", "ses_3"]) {
+      upsertSession(db, {
+        id,
+        projectId: "prj_1",
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: null,
+        startedAt: "2026-10-28T09:00:00.000Z",
+        tapePath: `/data/${id}.jsonl`,
+        captureQuality: "import_only",
+      });
+    }
+    // ses_1 started first but went active last; ses_2/ses_3 tie.
+    appendEvents(db, "ses_1", [
+      makeEvent(0, {
+        event_id: "evt_newest",
+        ts: "2026-10-29T00:00:00.000Z",
+        observed_at: "2026-10-29T00:00:00.050Z",
+      }),
+    ]);
+    appendEvents(db, "ses_2", [
+      makeEvent(0, {
+        event_id: "evt_mid_2",
+        session_id: "ses_2",
+        ts: "2026-10-28T10:00:00.000Z",
+        observed_at: "2026-10-28T10:00:00.050Z",
+      }),
+    ]);
+    appendEvents(db, "ses_3", [
+      makeEvent(0, {
+        event_id: "evt_mid_3",
+        session_id: "ses_3",
+        ts: "2026-10-28T10:00:00.000Z",
+        observed_at: "2026-10-28T10:00:00.050Z",
+      }),
+    ]);
+    expect(listSessions(db, "prj_1").map((row) => row.id)).toEqual(["ses_1", "ses_2", "ses_3"]);
     db.close();
   });
 
@@ -681,6 +760,38 @@ describe("ensureIngestProject", () => {
       });
       expect(effective).toBe("prj_new");
       expect(listProjects(db)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});
+
+describe("project stack regen state", () => {
+  it("round-trips the change counter per project", () => {
+    const db = openTestDb();
+    try {
+      upsertProject(db, { id: "prj_stack", root: "/repo", name: "repo" });
+      expect(getStackRegenState(db, "prj_stack")).toBeNull();
+      saveStackRegenState(db, {
+        projectId: "prj_stack",
+        lastFilesHash: "abc",
+        pendingChanges: 2,
+      });
+      expect(getStackRegenState(db, "prj_stack")).toEqual({
+        projectId: "prj_stack",
+        lastFilesHash: "abc",
+        pendingChanges: 2,
+      });
+      saveStackRegenState(db, {
+        projectId: "prj_stack",
+        lastFilesHash: "def",
+        pendingChanges: 0,
+      });
+      expect(getStackRegenState(db, "prj_stack")).toEqual({
+        projectId: "prj_stack",
+        lastFilesHash: "def",
+        pendingChanges: 0,
+      });
     } finally {
       db.close();
     }
