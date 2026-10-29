@@ -4,6 +4,7 @@ export {
   buildFinalLineOrigins,
   type FileAttempt,
   type FileVersion,
+  type FinalLineOrigin,
   type HunkEvidence,
   hunkFromParsed,
   hunkIdFor,
