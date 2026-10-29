@@ -91,14 +91,44 @@ function nowIso(): string {
   return new Date().toISOString();
 }
 
+// Identity converges on one row per repository even when adapters disagree
+// about the remote (or it appears mid-life): the first row to claim a
+// canonical root wins and keeps its id; a later identity for the same root
+// (or the same remote from a moved folder) adopts that row instead of
+// throwing on the UNIQUE indexes and aborting the ingest poll — which used
+// to strand sessions with advanced reader checkpoints but no session row.
+// Returns the id the caller must use for sessions/tapes/paths; it can
+// differ from input.id when an older row already owns the root or remote.
 export function upsertProject(
   db: EchoDb,
   input: { id: string; root: string; remoteUrl?: string | null; name: string | null },
-): void {
+): string {
+  const byRoot = db.prepare(`SELECT id FROM projects WHERE canonical_root = ?`).get(input.root) as
+    | { id: string }
+    | undefined;
+  if (byRoot && byRoot.id !== input.id) {
+    db.prepare(
+      `UPDATE projects SET remote_url = COALESCE(remote_url, ?), name = COALESCE(?, name) WHERE id = ?`,
+    ).run(input.remoteUrl ?? null, input.name, byRoot.id);
+    return byRoot.id;
+  }
+  const remote = input.remoteUrl ?? null;
+  if (remote !== null) {
+    const byRemote = db.prepare(`SELECT id FROM projects WHERE remote_url = ?`).get(remote) as
+      | { id: string }
+      | undefined;
+    if (byRemote && byRemote.id !== input.id) {
+      db.prepare(
+        `UPDATE projects SET canonical_root = ?, name = COALESCE(?, name) WHERE id = ?`,
+      ).run(input.root, input.name, byRemote.id);
+      return byRemote.id;
+    }
+  }
   db.prepare(
     `INSERT INTO projects (id, canonical_root, remote_url, name, created_at) VALUES (?, ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET canonical_root = excluded.canonical_root, remote_url = excluded.remote_url, name = excluded.name`,
-  ).run(input.id, input.root, input.remoteUrl ?? null, input.name, nowIso());
+     ON CONFLICT(id) DO UPDATE SET canonical_root = excluded.canonical_root, remote_url = COALESCE(excluded.remote_url, projects.remote_url), name = excluded.name`,
+  ).run(input.id, input.root, remote, input.name, nowIso());
+  return input.id;
 }
 
 export function upsertSession(
