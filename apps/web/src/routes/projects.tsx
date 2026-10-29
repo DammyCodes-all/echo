@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "react-router";
 import { api, formatTime } from "../api";
 import { ScaffoldPage } from "../components/scaffold-page";
+import { displayProjectName } from "../project-display";
 
 export function ProjectsPage() {
   const projects = useQuery({
@@ -52,7 +53,7 @@ export function ProjectsPage() {
               className="group rounded-dusk-card bg-dusk-surface px-6 py-[26px] transition-colors hover:bg-dusk-pill"
             >
               <p className="font-medium text-dusk-card-title tracking-dusk-card text-dusk-ink">
-                {project.name ?? project.root}
+                {displayProjectName(project)}
               </p>
               <p className="mt-1 truncate font-mono text-xs text-dusk-muted">{project.root}</p>
               {project.remoteUrl ? (
