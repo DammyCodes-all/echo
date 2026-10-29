@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, formatTime } from "../api";
 import { displayProjectName } from "../project-display";
+import { compactSessionSummary } from "../session-display";
 import GlassFolder, { type ArtRecipe, type FolderFile, hashString } from "./glass-folder-cards";
 
 /** Dusk streak: the workspace at rest, pulled toward the accent. */
@@ -46,7 +47,7 @@ function sessionFile(session: SessionSummary): FolderFile {
   const first = session.model && when ? `${when} · ${session.model}` : (when ?? session.model);
   const captured = captureLine(session);
   return {
-    name: session.summary ?? "Still recording — story pending…",
+    name: compactSessionSummary(session.summary) ?? "Still recording — story pending…",
     meta: `${session.eventCount} event${session.eventCount === 1 ? "" : "s"}`,
     detail: [first, checkLine(session), captured].filter((line): line is string => line !== null),
     href: `/sessions/${session.id}`,

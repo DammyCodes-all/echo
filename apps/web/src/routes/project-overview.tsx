@@ -196,7 +196,7 @@ export function ProjectOverviewPage() {
               <div
                 key={key}
                 aria-hidden
-                className="rounded-[20px] border border-dusk-hairline bg-dusk-surface px-6 py-5 motion-safe:animate-pulse"
+                className="rounded-[20px] border border-transparent bg-dusk-surface px-6 py-5 motion-safe:animate-pulse"
               >
                 <div className="mb-4 h-4 w-3/4 rounded-dusk-code bg-dusk-pill" />
                 <div className="h-4 w-1/2 rounded-dusk-code bg-dusk-pill" />
