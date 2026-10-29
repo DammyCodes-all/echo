@@ -369,8 +369,25 @@ export function StoryPage() {
         title="Loading story…"
         description="The story for this session, in plain words."
       >
-        <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
-          Loading story…
+        <div role="status" aria-label="Loading story" className="max-w-2xl space-y-8">
+          <span className="sr-only">Loading story…</span>
+          <div aria-hidden className="space-y-3 motion-safe:animate-pulse">
+            <div className="h-8 w-3/4 rounded-dusk-code bg-dusk-pill" />
+            <div className="h-4 w-full rounded-dusk-code bg-dusk-pill" />
+            <div className="h-4 w-2/3 rounded-dusk-code bg-dusk-pill" />
+          </div>
+          {[0, 1, 2].map((index) => (
+            <div
+              key={index}
+              aria-hidden
+              className="space-y-3 rounded-dusk-card bg-dusk-surface p-8 motion-safe:animate-pulse"
+            >
+              <div className="h-5 w-1/3 rounded-dusk-code bg-dusk-pill" />
+              <div className="h-4 w-full rounded-dusk-code bg-dusk-pill" />
+              <div className="h-4 w-5/6 rounded-dusk-code bg-dusk-pill" />
+              <div className="h-4 w-4/6 rounded-dusk-code bg-dusk-pill" />
+            </div>
+          ))}
         </div>
       </ScaffoldPage>
     );
@@ -733,7 +750,20 @@ export function StoryPage() {
               <h2 className="text-xl font-semibold tracking-tight">Understanding check</h2>
               {checkError !== null ? <p className="text-sm text-dusk-fail">{checkError}</p> : null}
               {checksQuery.isPending ? (
-                <p className="text-sm text-dusk-muted">Loading check…</p>
+                <div
+                  role="status"
+                  aria-label="Loading check"
+                  className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5"
+                >
+                  <span className="sr-only">Loading check…</span>
+                  <div aria-hidden className="space-y-3 motion-safe:animate-pulse">
+                    <div className="h-4 w-1/3 rounded-dusk-code bg-dusk-pill" />
+                    <div className="h-5 w-3/4 rounded-dusk-code bg-dusk-pill" />
+                    <div className="h-9 w-full rounded-dusk-code bg-dusk-pill" />
+                    <div className="h-9 w-full rounded-dusk-code bg-dusk-pill" />
+                    <div className="h-9 w-5/6 rounded-dusk-code bg-dusk-pill" />
+                  </div>
+                </div>
               ) : checksQuery.isError ? (
                 <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
                   <p>Could not load the check.</p>
