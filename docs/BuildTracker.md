@@ -638,3 +638,39 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 54 files / 443 passed, `pnpm build` ok; new service tests 7/7, contract schema bounds test, db migration version list updated to v8
 - notes: Model drafts must trace every item to detected signals (frameworks/languages/top imports) or they are dropped; empty/invented drafts fall back to skeleton. First Overview visit on an unindexed project pays one local tree walk, then caches on the code-index files hash. No capture changes.
+## 2026-10-29 — Muse sessions missing: root/remote identity split + stranded checkpoints
+
+- item: `upsertProject` now converges on one row per repo (`packages/db/src/repositories.ts` returns the canonical id: existing `canonical_root` wins and absorbs the remote, else existing `remote_url` wins on folder moves, else insert; id-conflict path preserves a stored remote when the new write omits it) and all ingest call sites use the resolved id for sessions/tapes/shadow paths (`apps/server/src/ingest.ts`, `apps/server/src/muse-ingest.ts` spool + scan, `packages/capture-muse/src/import.ts`); archived the orphan `projects/prj_57257f…` dir to `/tmp/opencode/echo-orphan-prj_57257f-backup`
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 207 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 54 files / 437 passed + 8 skipped, `pnpm build` ok, `eval/muse-fixture` green; live DB: 0 → 9 muse rows under `prj_6e4d…` (echo 13 → 48 sessions), echo row gained `remote_url=github.com/DammyCodes-all/echo`; `GET /api/projects/<echo>/sessions` 200 with muse ids; headless Chrome: Echo folder hover opens with 3 real session sheets, Portfolio opens likewise
+- notes: Root cause was a mid-life remote appearance: repo gained `origin https://github.com/DammyCodes-all/echo` so identity flipped root-hash `prj_6e4d…` → remote-hash `prj_57257f…`; `upsertProject` only handled `ON CONFLICT(id)`, so the `canonical_root` UNIQUE throw aborted every ingest poll *after* reader checkpoints advanced — 7 sessions sat at EOF with no session/event rows and never retried, and opencode ingest was silently broken the same way (15 → 31+ sessions after the fix). No checkpoint reset was needed: the live daemon picked up the fix via tsx watch and re-ingested on the next polls. Drive-by: one-line `_service` rename for a committed unused binding in `apps/server/src/project-tech-stack.test.ts` (another author's file, zero behavior change) so the gate passes; formatter-only pass on the 5 touched files. Uncommitted web restyle in the tree (`REST_PEEK`, rest-lift CSS, grid) is not mine and untouched. Low-count sessions (0–2 events on some fresh muse logs) are parser coverage, out of scope.
+## 2026-10-29 — Header top margin
+
+- item: app header (`apps/web/src/layout.tsx`) gets `mt-4` so the Echo wordmark and settings gear sit 16px below the viewport top
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 208 files (4 pre-existing `useLiteralKeys` infos), `pnpm test` → 54 files / 437 passed + 8 skipped, web build ok; headless Chrome: `header.getBoundingClientRect().top` = 16, computed `margin-top` = 16px
+- notes: UI-only, single Tailwind class. HMR picked it up on the running dev server; no other layout touched.
+## 2026-10-29 — Header settings menu (glass, Echo-scoped)
+
+- item: settings entry in `AppLayout` header (`apps/web/src/layout.tsx` + new `apps/web/src/components/settings/settings-sheet.tsx`): gear trigger (`Settings01Icon` via `@hugeicons/react`, no new deps) opening a Dusk-glass dropdown (`blur(22px) saturate(1.5)`, `rounded-dusk-card`, hairline border) that degrades to a bottom sheet with scrim under 640px; contents filtered to real Echo settings — daemon status dot (ready/degraded/offline from `GET /api/health`), captured-repositories row (live `GET /api/projects`), copy-enable-command, Motion Full/Reduced segmented control (localStorage `echo-motion`, defaults to media query, sets `data-echo-motion` kill-switch), copy-support-info (version/mode/repo count, no secrets); dropped from the paste: Profile/Billing/plan/avatar, light/dark/system theme (Dusk is dark-only), presence statuses, Sign out. Full menu keyboard pattern (ArrowUp/Down/Home/End, Left/Right in group, wrap-around, Escape/Tab close + focus return, focus-in only on user intent, outside-pointerdown close, scroll lock for sheet).
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 208 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 54 files / 437 passed + 8 skipped, `pnpm build` ok; browser pass (playwright-core + system Chrome, user's live dev stack — HMR served the new code, no user processes touched): click opens panel, ArrowDown focuses Repositories, Escape closes + focus returns to trigger, wrap-around nav, Reduced radio persists `echo-motion=reduced`, zero page errors; 360px viewport renders bottom sheet, scrim tap closes; screenshots `/tmp/opencode/settings-desktop-open.png`, `/tmp/opencode/settings-mobile-sheet.png`
+- notes: No `motion`/`lucide-react` install (CSS transitions + existing HugeIcons); missing `user-menu.module.css` from the paste recreated as Dusk tokens, not ported; web-only, no API/capture/contract changes; UI exempt from vitest by repo rule. Concurrent session added header `mt-4` on top of this unit's `layout.tsx` edit — no conflict, both kept. Playwright-core lives in `/tmp/opencode/pw` (repo untouched); daemon port was held by the user's own daemon so the temp-dir daemon exited EADDRINUSE and the pass ran against real data.
+## 2026-10-29 — Header top margin mt-4 → mt-5
+
+- item: app header (`apps/web/src/layout.tsx`) bumped to `mt-5` per user request
+- status: done
+- evidence: `tsc` clean, `biome` 208 files (4 pre-existing infos), `pnpm test` → 54 files / 437 passed + 8 skipped; headless Chrome: header top = 20px
+- notes: Single-class follow-up to the mt-4 entry above.
+## 2026-10-29 — Settings pointer cursors
+
+- item: `cursor-pointer` on the settings gear trigger (`apps/web/src/components/settings/settings-sheet.tsx`) + pointer rule for menu rows and Motion radios in both panel and sheet variants
+- status: done
+- evidence: `biome` clean on the file, `tsc` clean; headless-Chrome computed-style check: trigger `pointer`, row `pointer`, radio `pointer`
+- notes: Class/CSS-only. Nothing staged or committed.
+## 2026-10-29 — Settings popover open animation
+
+- item: settings dropdown open motion switched to popover-style (`apps/web/src/components/settings/settings-sheet.tsx`, CSS-only): 150ms ease-out fade + zoom from 95% + 4px slide down from the trigger edge, origin top-right — matching the Radix/Animate-UI popover feel from the pasted reference (Vue + Animate-UI pastes not portable: React codebase, no `@animate-ui/react`/`cn`/shadcn deps installed); spring overshoot removed; mobile sheet keeps its own rise
+- status: done
+- evidence: `biome` clean on the file, `tsc` clean; headless-Chrome computed style confirms `echo-settings-in` at 0.15s, settled panel screenshot clean, zero page errors
+- notes: Nothing staged or committed.
