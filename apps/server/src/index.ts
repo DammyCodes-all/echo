@@ -7,10 +7,12 @@ import {
   CheckV2AnswerRequestSchema,
 } from "@echo/contracts";
 import {
+  getProject,
   getSession,
   getSessionSummary,
   getSnapshotByCommit,
   listProjects,
+  listProjectTouchedFiles,
   listSessions,
   listSnapshotFiles,
   listSnapshots,
@@ -89,9 +91,30 @@ app.get("/api/health", async () => ({
 
 app.get("/api/projects", async () => listProjects(db));
 
+app.get<{ Params: { id: string } }>("/api/projects/:id", async (request, reply) => {
+  const project = getProject(db, request.params.id);
+  if (!project) {
+    return reply.code(404).send({
+      error: { code: "not_found", message: "unknown project" },
+    });
+  }
+  return project;
+});
+
 app.get<{ Params: { id: string } }>("/api/projects/:id/sessions", async (request) =>
   listSessions(db, request.params.id),
 );
+
+app.get<{ Params: { id: string } }>("/api/projects/:id/files", async (request, reply) => {
+  const project = getProject(db, request.params.id);
+  if (!project) {
+    return reply.code(404).send({
+      error: { code: "not_found", message: "unknown project" },
+    });
+  }
+  const { files, truncated } = listProjectTouchedFiles(db, request.params.id);
+  return { projectId: project.id, files, truncated };
+});
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id", async (request, reply) => {
   const summary = getSessionSummary(db, request.params.id);

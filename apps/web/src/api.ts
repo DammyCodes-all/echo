@@ -8,6 +8,7 @@ import type {
   ChecksV2Response,
   EngagementEvent,
   EngagementState,
+  ProjectFilesResponse,
   ProjectSummary,
   SessionHistoryResponse,
   SessionReview,
@@ -53,6 +54,10 @@ async function postJson<T>(url: string, body: unknown, options: FetchOptions = {
 
 export const api = {
   projects: () => getJson<ProjectSummary[]>("/api/projects"),
+  project: (projectId: string) =>
+    getJson<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
+  projectFiles: (projectId: string) =>
+    getJson<ProjectFilesResponse>(`/api/projects/${encodeURIComponent(projectId)}/files`),
   sessions: (projectId: string) =>
     getJson<SessionSummary[]>(`/api/projects/${encodeURIComponent(projectId)}/sessions`),
   session: (sessionId: string) =>
