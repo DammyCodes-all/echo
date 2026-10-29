@@ -8,6 +8,8 @@
   },
   "dependencies": {
     "@echo/contracts": "workspace:*",
-    "@echo/core": "workspace:*"
+    "@echo/core": "workspace:*",
+    "@echo/snapshots": "workspace:*",
+    "oxc-parser": "^0.156.0"
   }
 }
