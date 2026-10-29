@@ -21,6 +21,16 @@ import type {
 /** Backstop so a stuck server can never stick the UI; above the server's own deadline. */
 const CHECK_REQUEST_TIMEOUT_MS = 200_000;
 
+/** Thrown when the session hasn't gone quiet yet — no story exists and none will generate this visit. */
+export class StoryNotReadyError extends Error {
+  readonly sessionId: string;
+  constructor(sessionId: string) {
+    super(`session ${sessionId} has not gone quiet yet`);
+    this.name = "StoryNotReadyError";
+    this.sessionId = sessionId;
+  }
+}
+
 type FetchOptions = {
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -109,6 +119,11 @@ export const api = {
     ),
   story: async (sessionId: string): Promise<SessionStory> => {
     const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/story`);
+    if (response.status === 202) {
+      // The session hasn't gone quiet yet: no story to show, and none will
+      // generate until a minute of tape silence has passed.
+      throw new StoryNotReadyError(sessionId);
+    }
     if (!response.ok) {
       const payload = (await response.json().catch(() => null)) as {
         error?: { message?: string };

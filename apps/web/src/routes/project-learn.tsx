@@ -1,6 +1,8 @@
+import { capStorySummary } from "@echo/contracts";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
+import { compactSessionSummary } from "../session-display";
 
 const BUCKET_LABELS: Record<string, string> = {
   solid: "Solid",
@@ -150,8 +152,12 @@ export function ProjectLearnPage() {
               to={`/sessions/${encodeURIComponent(session.sessionId)}`}
               className="rounded-[20px] border border-transparent bg-dusk-surface px-6 py-5 transition-colors hover:border-dusk-hairline-strong"
             >
-              <p className="line-clamp-2 min-h-[3rem] text-sm leading-6 text-pretty break-words text-dusk-ink">
-                {session.title ?? session.summary ?? "Untitled session"}
+              <p className="line-clamp-3 min-h-[3rem] text-sm leading-6 text-pretty break-words text-dusk-ink">
+                {session.title ??
+                  (session.summary
+                    ? capStorySummary(compactSessionSummary(session.summary) ?? session.summary)
+                    : null) ??
+                  "Untitled session"}
               </p>
               <div className="mt-4 flex items-center justify-between gap-4 border-t border-dusk-hairline pt-3.5 text-xs text-dusk-muted">
                 <span>

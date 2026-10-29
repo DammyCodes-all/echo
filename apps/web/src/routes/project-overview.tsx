@@ -215,7 +215,9 @@ export function ProjectOverviewPage() {
         ) : null}
         {sessions.data && sessions.data.length === 0 ? (
           <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
-            No sessions captured for this project yet.
+            {project.data && project.data.sessionCount > 0
+              ? "No sessions to show right now — active sessions appear a minute after they go quiet."
+              : "No sessions captured for this project yet."}
           </div>
         ) : null}
         {list.length > 0 ? (

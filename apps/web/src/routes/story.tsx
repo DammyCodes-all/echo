@@ -11,7 +11,7 @@ import type {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router";
-import { api } from "../api";
+import { api, StoryNotReadyError } from "../api";
 import { AskThreadPanel } from "../components/ask-thread-panel";
 import { CheckOffer } from "../components/check-offer";
 import { CheckPicture } from "../components/check-picture";
@@ -396,21 +396,24 @@ export function StoryPage() {
 
   if (storyQuery.isError || story === undefined) {
     const notFound = isNotFound(storyQuery.error);
+    const waiting = storyQuery.error instanceof StoryNotReadyError;
     return (
       <ScaffoldPage
         eyebrow="Session story"
-        title="Story unavailable"
+        title={waiting ? "Session still active" : "Story unavailable"}
         description="The story for this session, in plain words."
       >
         <div className="rounded-dusk-card border border-dusk-fail/40 bg-dusk-fail-wash p-8 text-sm text-dusk-fail">
           <p>
-            {notFound
-              ? "Story not ready yet — the session may still be recording."
-              : storyQuery.error instanceof Error
-                ? storyQuery.error.message
-                : "Could not load the story."}
+            {waiting
+              ? "This session hasn't gone quiet yet — its story generates a minute after the tape goes silent. Check back soon."
+              : notFound
+                ? "Story not ready yet — the session may still be recording."
+                : storyQuery.error instanceof Error
+                  ? storyQuery.error.message
+                  : "Could not load the story."}
           </p>
-          {notFound ? (
+          {notFound || waiting ? (
             <button
               type="button"
               onClick={() => {

@@ -1,3 +1,5 @@
+import { capStorySummary } from "@echo/contracts";
+
 const SKELETON_CHANGES_PREFIX = "Prompts, changes in ";
 
 /**
@@ -22,7 +24,9 @@ export function compactSessionSummary(summary: string | null): string | null {
  * Card display title: our model narration wins; when that didn't run
  * (skeleton fallback or nothing yet), the agent's own session title is the
  * default. The compacted skeleton text is last resort before the
- * recording/empty placeholders.
+ * recording/empty placeholders. Every content branch runs through the shared
+ * headline cap so summaries stored before the cap still render as one short
+ * sentence; the full text stays on the card hover title and the story page.
  */
 export function sessionDisplayTitle(session: {
   summary: string | null;
@@ -30,10 +34,11 @@ export function sessionDisplayTitle(session: {
   title: string | null;
   captureState: string;
 }): string {
-  if (session.summary && !session.summarySkeleton) return session.summary;
+  if (session.summary && !session.summarySkeleton) return capStorySummary(session.summary);
   const agentTitle = session.title?.trim();
-  if (agentTitle) return agentTitle;
-  if (session.summary) return compactSessionSummary(session.summary) ?? session.summary;
+  if (agentTitle) return capStorySummary(agentTitle);
+  if (session.summary)
+    return capStorySummary(compactSessionSummary(session.summary) ?? session.summary);
   if (session.captureState === "recording") return "Still recording — story pending…";
   return "No summary";
 }

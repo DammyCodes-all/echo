@@ -79,7 +79,7 @@ export const SessionCard = memo(function SessionCard({ session }: { session: Ses
       className="flex h-full flex-col rounded-[20px] border border-transparent bg-dusk-surface px-6 py-5 transition-colors hover:border-dusk-accent/40 hover:bg-dusk-pill/30 focus-visible:outline-2 focus-visible:outline-dusk-accent"
     >
       <span
-        className="mb-4 line-clamp-2 min-h-[3rem] break-words text-pretty text-[15px] font-medium leading-6 tracking-tight text-dusk-ink"
+        className="mb-4 line-clamp-3 min-h-[3rem] break-words text-pretty text-[15px] font-medium leading-6 tracking-tight text-dusk-ink"
         title={session.summary ?? undefined}
       >
         {cardTitle(session)}
