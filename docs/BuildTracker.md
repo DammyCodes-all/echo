@@ -631,3 +631,10 @@ notes.
 - status: done
 - evidence: post-merge gate green — `tsc` clean, `biome` 204 files (4 pre-existing useLiteralKeys infos in untouched checks-v2.test.ts), `pnpm test` → 53 files / 427 passed + 8 skipped, `pnpm build` ok (web + server + cli); `pnpm install` pulled `oxc-parser` (prebuilt NAPI, no approval needed)
 - notes: Merge left open (uncommitted) per user-owns-history. Trade-off: remote's link-card sub-lines (root path, remoteUrl, session counts) stay dropped — folders show name/sessions/activity only, per the earlier local call. Inbox folder titles now render through `displayProjectName`, same as the overview header.
+
+## 2026-10-29 — AI project tech stack + purpose
+
+- item: per-project `GET /api/projects/:id/tech-stack` (read-through cache, model-curated `{purpose, items[<=8]}` with kind enum language/framework/build/data/infra, deterministic skeleton fallback, redaction gate on persist, new `project_artifacts` table via migration v8); endpoint ensures the code index inline so existing projects backfill on first view; sidebar reads it live — Project summary card shows the AI purpose, Tech stack block lists items with kind icons, hidden while pending/on 503
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 54 files / 443 passed, `pnpm build` ok; new service tests 7/7, contract schema bounds test, db migration version list updated to v8
+- notes: Model drafts must trace every item to detected signals (frameworks/languages/top imports) or they are dropped; empty/invented drafts fall back to skeleton. First Overview visit on an unindexed project pays one local tree walk, then caches on the code-index files hash. No capture changes.

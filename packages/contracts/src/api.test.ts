@@ -7,6 +7,7 @@ import {
   ChecksV2ResponseSchema,
   EngagementStateSchema,
   HunkIdSchema,
+  ProjectTechStackSchema,
   PublicCheckQuestionSchema,
   RecordEngagementRequestSchema,
   SessionStorySchema,
@@ -265,5 +266,28 @@ describe("story-first contracts", () => {
       }).success,
     ).toBe(false);
     expect(RecordEngagementRequestSchema.safeParse({ events: [one] }).success).toBe(true);
+  });
+
+  it("bounds project tech stack items to 8 with known kinds", () => {
+    const base = {
+      projectId: "prj_1",
+      purpose: "Code review workspace.",
+      items: [{ name: "TypeScript", kind: "language" }],
+      generator: "model",
+      generatedAt: "2026-10-29T00:00:00.000Z",
+    };
+    expect(ProjectTechStackSchema.safeParse(base).success).toBe(true);
+    expect(
+      ProjectTechStackSchema.safeParse({
+        ...base,
+        items: [{ name: "X", kind: "database" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      ProjectTechStackSchema.safeParse({
+        ...base,
+        items: Array.from({ length: 9 }, (_, i) => ({ name: `Stack${i}`, kind: "data" })),
+      }).success,
+    ).toBe(false);
   });
 });
