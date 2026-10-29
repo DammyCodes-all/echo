@@ -13,6 +13,7 @@ export {
   type ParsedDiffHunk,
   type ParsedFileDiff,
   parseUnifiedDiffs,
+  pathMentions,
   type RelatedEvent,
   type ReviewHunk,
 } from "./review-index";

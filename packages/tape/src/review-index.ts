@@ -797,7 +797,7 @@ export function buildFinalLineOrigins(input: {
   });
 }
 
-function pathMentions(text: string | null, path: string): boolean {
+export function pathMentions(text: string | null, path: string): boolean {
   if (!text) return false;
   return text.includes(path) || text.includes(path.split("/").slice(-1)[0] ?? "");
 }
