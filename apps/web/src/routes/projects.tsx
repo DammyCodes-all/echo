@@ -44,7 +44,7 @@ export function ProjectsPage() {
       ) : null}
 
       {projects.data && projects.data.length > 0 ? (
-        <div className="grid justify-items-center gap-x-4 gap-y-10 md:grid-cols-2">
+        <div className="grid grid-cols-[auto] justify-center justify-items-center gap-x-4 gap-y-10 md:grid-cols-[repeat(2,auto)] md:justify-between xl:grid-cols-[repeat(3,auto)]">
           {projects.data.map((project, index) => (
             <ProjectFolderCard key={project.id} project={project} index={index} />
           ))}
