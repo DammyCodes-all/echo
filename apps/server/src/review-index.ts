@@ -9,13 +9,17 @@ import {
 } from "@echo/contracts";
 import {
   type EchoDb,
+  getReviewTransition,
   getSession,
   listSnapshotFiles,
   listSnapshots,
+  putReviewTransition,
+  REVIEW_CACHE_VERSION,
   readAllEvents,
   type SnapshotFileRow,
 } from "@echo/db";
-import { diffShadowCommits, readShadowBlob } from "@echo/snapshots";
+import { redactJson } from "@echo/redaction";
+import { diffShadowCommits, diffShadowTrees, readShadowBlob } from "@echo/snapshots";
 import {
   buildFileAttempts,
   buildFinalLineOrigins,
@@ -24,7 +28,9 @@ import {
   hunkFromParsed,
   linkHunkEvidence,
   type ParsedDiffHunk,
+  type ParsedFileDiff,
   parseUnifiedDiffs,
+  pathMentions,
   type RelatedEvent,
   type ReviewHunk as TapeReviewHunk,
 } from "@echo/tape";
@@ -39,7 +45,7 @@ export interface SessionReviewOptions {
   budgetMs?: number;
 }
 
-const REVIEW_BUDGET_MS_DEFAULT = 10_000;
+const REVIEW_BUDGET_MS_DEFAULT = 20_000;
 
 function textDecoder(): TextDecoder {
   return new TextDecoder("utf-8", { fatal: true });
@@ -56,6 +62,78 @@ function markPathUncertain(versions: FileVersion[]): void {
       version.captured = false;
       version.reason = "review_diff_failed";
     }
+  }
+}
+
+/**
+ * Split one parsed whole-tree diff into per-path hunk lists by file entry.
+ * Renames stay disabled, so a moved file arrives as delete+add entries: the
+ * old path owns the deletion hunks and the new path the addition hunks,
+ * exactly like per-path diffs.
+ */
+function distributeHunks(files: ParsedFileDiff[]): Map<string, ParsedDiffHunk[]> {
+  const byPath = new Map<string, ParsedDiffHunk[]>();
+  for (const file of files) {
+    const key = file.newPath ?? file.oldPath;
+    if (key === null) continue;
+    const existing = byPath.get(key);
+    if (existing) existing.push(...file.hunks);
+    else byPath.set(key, [...file.hunks]);
+  }
+  return byPath;
+}
+
+/**
+ * Read one cached transition: exact commit pair plus matching code version,
+ * structurally sane. Anything else is a miss — the pair recomputes and
+ * overwrites, so a corrupt row self-heals without ever failing the review.
+ */
+function readCachedTransition(
+  db: EchoDb,
+  sessionId: string,
+  parentCommit: string,
+  childCommit: string,
+): Map<string, ParsedDiffHunk[]> | null {
+  const row = getReviewTransition(db, sessionId, parentCommit, childCommit);
+  if (!row || row.codeVersion !== REVIEW_CACHE_VERSION) return null;
+  try {
+    const parsed = JSON.parse(row.hunksJson) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const grouped = new Map<string, ParsedDiffHunk[]>();
+    for (const [path, hunks] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!Array.isArray(hunks)) return null;
+      grouped.set(path, hunks as ParsedDiffHunk[]);
+    }
+    return grouped;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Persist one computed transition for future regens. Best effort by design:
+ * a redaction failure or write error skips caching while the in-memory
+ * review proceeds untouched — the cache is pure acceleration, never load
+ * bearing, so there is nothing to surface downstream.
+ */
+function storeCachedTransition(
+  db: EchoDb,
+  sessionId: string,
+  parentCommit: string,
+  childCommit: string,
+  grouped: Map<string, ParsedDiffHunk[]>,
+): void {
+  try {
+    const redacted = redactJson(Object.fromEntries(grouped)).value;
+    putReviewTransition(db, {
+      sessionId,
+      parentCommit,
+      childCommit,
+      hunksJson: JSON.stringify(redacted),
+      codeVersion: REVIEW_CACHE_VERSION,
+    });
+  } catch {
+    // Cache miss next time; the review itself is unaffected.
   }
 }
 
@@ -224,6 +302,54 @@ export async function buildSessionReview(
   const hunks: TapeReviewHunk[] = [];
   const deadline = Date.now() + (options.budgetMs ?? REVIEW_BUDGET_MS_DEFAULT);
   let budgetExceeded = false;
+  // One whole-tree diff per consecutive snapshot pair, parsed once and
+  // distributed by file entry; a path the diff omits is unchanged. A pair
+  // whose diff fails falls back to per-path diffs in the loop below.
+  // Transitions already computed on a previous run come from the
+  // review_transition_cache (one row per commit pair, keyed immutable), so
+  // steady-state regens only pay for new snapshots.
+  const transitionHunksByPath: Array<Map<string, ParsedDiffHunk[]>> = [];
+  const failedTransitions = new Set<number>();
+  for (let index = 0; index < snapshots.length - 1; index += 1) {
+    if (Date.now() > deadline) {
+      budgetExceeded = true;
+      break;
+    }
+    const parent = snapshots[index];
+    const child = snapshots[index + 1];
+    if (!parent || !child || parent.commitOid === child.commitOid) {
+      transitionHunksByPath.push(new Map());
+      continue;
+    }
+    const cached = readCachedTransition(db, sessionId, parent.commitOid, child.commitOid);
+    if (cached) {
+      transitionHunksByPath.push(cached);
+      continue;
+    }
+    try {
+      const diff = diffShadowTrees(shadowDir, parent.commitOid, child.commitOid);
+      const grouped = distributeHunks(parseUnifiedDiffs(diff));
+      transitionHunksByPath.push(grouped);
+      storeCachedTransition(db, sessionId, parent.commitOid, child.commitOid, grouped);
+    } catch (error) {
+      void error;
+      failedTransitions.add(index);
+      transitionHunksByPath.push(new Map());
+    }
+  }
+  // Baseline-to-final hunks come from a single whole-tree diff distributed
+  // the same way; a failed diff falls back to per-path diffs below.
+  let finalHunksByPath = new Map<string, ParsedDiffHunk[]>();
+  let finalDiffFailed = false;
+  if (!budgetExceeded && baseline.commitOid !== final.commitOid) {
+    try {
+      const diff = diffShadowTrees(shadowDir, baseline.commitOid, final.commitOid);
+      finalHunksByPath = distributeHunks(parseUnifiedDiffs(diff));
+    } catch (error) {
+      void error;
+      finalDiffFailed = true;
+    }
+  }
   for (const path of changedPaths) {
     if (Date.now() > deadline) {
       budgetExceeded = true;
@@ -231,7 +357,12 @@ export async function buildSessionReview(
     }
     const versions: FileVersion[] = [];
     let abandoned = false;
-    for (const snapshot of snapshots) {
+    // Blob reads are spawn-free but latency-bound; 32 in flight saturates
+    // local disk without exhausting file descriptors. Promise.all preserves
+    // input order, so attribution sees the same snapshot sequence as the
+    // old sequential reads. Overshoot past the deadline is one batch.
+    const READ_CONCURRENCY = 32;
+    for (let start = 0; start < snapshots.length; start += READ_CONCURRENCY) {
       // Mid-path check: one file with hundreds of versions must not spend
       // minutes past the deadline; an abandoned path contributes nothing,
       // exactly like a path that never started.
@@ -239,16 +370,23 @@ export async function buildSessionReview(
         abandoned = true;
         break;
       }
-      const file = filesBySnapshot.get(snapshot.id)?.get(path);
-      versions.push({
-        snapshotId: snapshot.id,
-        commitOid: snapshot.commitOid,
-        trigger: snapshot.trigger,
-        eventId: snapshot.eventId,
-        takenAt: snapshot.takenAt,
-        text: await readVersionText(shadowDir, cache, file),
-        captured: file?.captured ?? false,
-        reason: file?.reason ?? (file ? null : "absent"),
+      const batch = snapshots
+        .slice(start, start + READ_CONCURRENCY)
+        .map((snapshot) => ({ snapshot, file: filesBySnapshot.get(snapshot.id)?.get(path) }));
+      const texts = await Promise.all(
+        batch.map(({ file }) => readVersionText(shadowDir, cache, file)),
+      );
+      batch.forEach(({ snapshot, file }, offset) => {
+        versions.push({
+          snapshotId: snapshot.id,
+          commitOid: snapshot.commitOid,
+          trigger: snapshot.trigger,
+          eventId: snapshot.eventId,
+          takenAt: snapshot.takenAt,
+          text: texts[offset] ?? null,
+          captured: file?.captured ?? false,
+          reason: file?.reason ?? (file ? null : "absent"),
+        });
       });
     }
     if (abandoned) {
@@ -260,6 +398,19 @@ export async function buildSessionReview(
       if (Date.now() > deadline) {
         abandoned = true;
         break;
+      }
+      const transitionHunks = transitionHunksByPath[index];
+      if (transitionHunks && !failedTransitions.has(index)) {
+        hunksByTransition.push(transitionHunks.get(path) ?? []);
+        continue;
+      }
+      // This pair's whole-tree diff failed, so recover the path alone when
+      // budget remains; otherwise the path degrades to uncertain.
+      if (Date.now() > deadline) {
+        diagnostics.push(pathDiagnostic(path));
+        markPathUncertain(versions);
+        hunksByTransition.push([]);
+        continue;
       }
       const parent = versions[index] as FileVersion;
       const child = versions[index + 1] as FileVersion;
@@ -291,16 +442,25 @@ export async function buildSessionReview(
       budgetExceeded = true;
       break;
     }
-    try {
-      const diff = diffShadowCommits(shadowDir, baseline.commitOid, final.commitOid, path);
-      const parsed = parseUnifiedDiffs(diff);
-      for (const hunk of parsed[0]?.hunks ?? []) {
+    if (!finalDiffFailed) {
+      for (const hunk of finalHunksByPath.get(path) ?? []) {
         hunks.push(hunkFromParsed(path, hunk));
       }
-    } catch (error) {
+    } else if (Date.now() > deadline) {
       diagnostics.push(pathDiagnostic(path));
-      void error;
       markPathUncertain(versions);
+    } else {
+      try {
+        const diff = diffShadowCommits(shadowDir, baseline.commitOid, final.commitOid, path);
+        const parsed = parseUnifiedDiffs(diff);
+        for (const hunk of parsed[0]?.hunks ?? []) {
+          hunks.push(hunkFromParsed(path, hunk));
+        }
+      } catch (error) {
+        diagnostics.push(pathDiagnostic(path));
+        void error;
+        markPathUncertain(versions);
+      }
     }
     // Attempt/origin tracing is pure CPU over this path's own complete data.
     // A path this heavy already spent its git allowance above; if the clock
@@ -361,13 +521,17 @@ export async function buildSessionReview(
     }
     const fileAttempts = attemptsByPath.get(path) ?? [];
     const origins = originsByPath.get(path) ?? [];
+    // Related events mention paths by substring; matching once per path
+    // instead of once per hunk is output-identical (linkHunkEvidence skips
+    // non-mentioning events) and turns H×E string scans into P×E.
+    const pathEvents = relatedEvents.filter((event) => pathMentions(event.text, path));
     attempts.push(...fileAttempts);
     for (const hunk of scoredHunks.filter((entry) => entry.path === path)) {
       evidenceByHunk[hunk.id] = linkHunkEvidence({
         hunk,
         origins,
         attempts: fileAttempts,
-        relatedEvents,
+        relatedEvents: pathEvents,
       });
     }
   }
