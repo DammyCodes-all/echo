@@ -1,4 +1,4 @@
-export { importOpenCodeSession, type SessionImport } from "./map";
+export { importOpenCodeSession, type SessionImport, type SubagentLane } from "./map";
 export {
   listOpenCodeSessions,
   type OpenCodeMessageRead,

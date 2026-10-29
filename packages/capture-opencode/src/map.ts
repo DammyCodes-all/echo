@@ -151,9 +151,19 @@ function sanitizeEvidence(value: unknown): unknown {
   return value;
 }
 
+export interface SubagentLane {
+  /** Echo session that owns the tape: the top-level OpenCode session. */
+  parentSessionId: string;
+  /** Task-spawned child whose messages are folded into the parent tape. */
+  subagentId: string;
+}
+
 export interface SessionImportOptions {
   /** Canonical project id resolved by the server; defaults to directory identity. */
   projectId?: string;
+  /** When set, the session is a subagent: its messages land on the parent
+   * tape with subagent linkage instead of opening their own session. */
+  lane?: SubagentLane;
 }
 
 export function importOpenCodeSession(
@@ -163,13 +173,21 @@ export function importOpenCodeSession(
   options: SessionImportOptions = {},
 ): SessionImport {
   const projectId = options.projectId ?? projectIdForDirectory(session.directory ?? "unknown");
+  const lane = options.lane ?? null;
+  // Lane imports are attributed to the parent: same tape order, same dedupe
+  // domain, stable keys across polls. The child id survives in the record key
+  // and the subagent link, never as a session row.
+  const effectiveSessionId = lane?.parentSessionId ?? session.id;
   const observedIso = observedAt.toISOString();
   const events: TapeEvent[] = [];
   let tapeSeq = 0;
   let baselineOid: string | null = null;
   let degraded = false;
 
-  const recordKeyFor = (suffix: string): string => `opencode:${session.id}:${suffix}`;
+  const recordKeyFor = (suffix: string): string =>
+    lane
+      ? `opencode:${lane.parentSessionId}:subagent:${lane.subagentId}:${suffix}`
+      : `opencode:${session.id}:${suffix}`;
 
   const push = (input: PushInput): void => {
     let payload: unknown = input.payload;
@@ -188,7 +206,7 @@ export function importOpenCodeSession(
     const eventId = `evt_${createHash("sha256")
       .update(
         stableJson({
-          session_id: session.id,
+          session_id: effectiveSessionId,
           record_key: input.recordKey,
           kind: input.kind,
           source_ts: input.ts,
@@ -207,7 +225,7 @@ export function importOpenCodeSession(
         tape_seq: tapeSeq++,
         event_id: eventId,
         record_key: input.recordKey,
-        session_id: session.id,
+        session_id: effectiveSessionId,
         project_id: projectId,
         kind: input.kind,
         ts: input.ts ?? observedIso,
@@ -224,7 +242,13 @@ export function importOpenCodeSession(
           durability: null,
           origin: "import",
         },
-        links: input.links ?? emptyLinks(),
+        links: lane
+          ? {
+              ...(input.links ?? emptyLinks()),
+              parent_session_id: lane.parentSessionId,
+              subagent_id: lane.subagentId,
+            }
+          : (input.links ?? emptyLinks()),
         payload,
         redaction: { version: "r1", findings },
         diagnostics,
@@ -232,22 +256,42 @@ export function importOpenCodeSession(
     );
   };
 
-  push({
-    kind: "session.started",
-    payload: {
-      title: session.title,
-      directory: session.directory,
-      model: session.model,
-      model_label: sessionModelLabel(session.model),
-      agent: session.agent,
-      time_created: session.timeCreated,
-      time_updated: session.timeUpdated,
-    },
-    recordType: "session_v2",
-    sequence: null,
-    ts: isoFromMs(session.timeCreated),
-    recordKey: recordKeyFor("session"),
-  });
+  push(
+    lane
+      ? {
+          kind: "subagent.started",
+          payload: {
+            subagent_id: lane.subagentId,
+            title: session.title,
+            directory: session.directory,
+            model: session.model,
+            model_label: sessionModelLabel(session.model),
+            agent: session.agent,
+            time_created: session.timeCreated,
+            time_updated: session.timeUpdated,
+          },
+          recordType: "session_v2",
+          sequence: null,
+          ts: isoFromMs(session.timeCreated),
+          recordKey: recordKeyFor("subagent"),
+        }
+      : {
+          kind: "session.started",
+          payload: {
+            title: session.title,
+            directory: session.directory,
+            model: session.model,
+            model_label: sessionModelLabel(session.model),
+            agent: session.agent,
+            time_created: session.timeCreated,
+            time_updated: session.timeUpdated,
+          },
+          recordType: "session_v2",
+          sequence: null,
+          ts: isoFromMs(session.timeCreated),
+          recordKey: recordKeyFor("session"),
+        },
+  );
 
   const read = readOpenCodeMessages(db, session.id);
   type OrderedRow =

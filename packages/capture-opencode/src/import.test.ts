@@ -20,14 +20,14 @@ function makeStore(): DatabaseSync {
   db.exec(`
     CREATE TABLE session_v2 (
       id TEXT PRIMARY KEY, title TEXT, directory TEXT, model TEXT, agent TEXT,
-      time_created INTEGER, time_updated INTEGER
+      time_created INTEGER, time_updated INTEGER, parent_id TEXT
     );
     CREATE TABLE session_message (
       id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER,
       time_created INTEGER, data TEXT
     );
   `);
-  db.prepare("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?)").run(
+  db.prepare("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
     SESSION_ID,
     "echo-capture-spike",
     "/home/dev-aluminate/dev/echo-spike-scratch",
@@ -35,6 +35,7 @@ function makeStore(): DatabaseSync {
     "build",
     1793097340000,
     1793097400000,
+    null,
   );
 
   const insert = db.prepare("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?)");
@@ -395,5 +396,81 @@ describe("importOpenCodeSession", () => {
     db.close();
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.directory).toBe("/home/dev-aluminate/dev/echo-spike-scratch");
+  });
+
+  it("surfaces parent linkage for Task-spawned children", () => {
+    const db = makeStore();
+    db.prepare("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+      "ses_child",
+      "child work",
+      "/home/dev-aluminate/dev/echo-spike-scratch",
+      null,
+      "general",
+      1793097400000,
+      1793097410000,
+      SESSION_ID,
+    );
+    const sessions = listOpenCodeSessions(db);
+    const child = readOpenCodeSession(db, "ses_child");
+    db.close();
+    expect(sessions).toHaveLength(2);
+    expect(sessions.find((session) => session.id === SESSION_ID)?.parentId).toBeNull();
+    expect(sessions.find((session) => session.id === "ses_child")?.parentId).toBe(SESSION_ID);
+    expect(child?.parentId).toBe(SESSION_ID);
+  });
+
+  it("folds a child into the parent tape as a subagent lane", () => {
+    const db = makeStore();
+    const childId = "ses_child_lane";
+    db.prepare("INSERT INTO session_v2 VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(
+      childId,
+      "child work",
+      "/home/dev-aluminate/dev/echo-spike-scratch",
+      null,
+      "general",
+      1793097400000,
+      1793097410000,
+      SESSION_ID,
+    );
+    db.prepare("INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?)").run(
+      "msg_child_user",
+      childId,
+      "user",
+      1,
+      1793097401000,
+      JSON.stringify({ text: "do the sub part", files: [], time: { created: 1793097401000 } }),
+    );
+    const child = readOpenCodeSession(db, childId);
+    if (!child) throw new Error("fixture child missing");
+    const first = importOpenCodeSession(db, child, new Date("2026-10-27T09:00:00.000Z"), {
+      projectId: "prj_lane",
+      lane: { parentSessionId: SESSION_ID, subagentId: childId },
+    });
+    // Stable keys across polls: a second import dedupes byte-identically.
+    const second = importOpenCodeSession(db, child, new Date("2026-10-27T09:05:00.000Z"), {
+      projectId: "prj_lane",
+      lane: { parentSessionId: SESSION_ID, subagentId: childId },
+    });
+    db.close();
+
+    expect(first.events[0]?.kind).toBe("subagent.started");
+    expect(first.events[0]?.record_key).toBe(`opencode:${SESSION_ID}:subagent:${childId}:subagent`);
+    expect(first.events.map((event) => event.kind)).toEqual([
+      "subagent.started",
+      "prompt.submitted",
+    ]);
+    for (const event of first.events) {
+      expect(event.session_id).toBe(SESSION_ID);
+      expect(event.project_id).toBe("prj_lane");
+      expect(event.record_key?.startsWith(`opencode:${SESSION_ID}:subagent:${childId}:`)).toBe(
+        true,
+      );
+      expect(event.links.parent_session_id).toBe(SESSION_ID);
+      expect(event.links.subagent_id).toBe(childId);
+    }
+    expect(first.events[1]?.payload).toMatchObject({ text: "do the sub part" });
+    expect(second.events.map((event) => event.event_id)).toEqual(
+      first.events.map((event) => event.event_id),
+    );
   });
 });

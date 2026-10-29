@@ -2,6 +2,8 @@ import type { DatabaseSync } from "node:sqlite";
 
 export interface OpenCodeSessionSummary {
   id: string;
+  /** Owning session for Task-spawned subagents; null for top-level sessions. */
+  parentId: string | null;
   title: string | null;
   directory: string | null;
   model: string | null;
@@ -60,11 +62,12 @@ function num(value: unknown): number | null {
 export function listOpenCodeSessions(db: DatabaseSync): OpenCodeSessionSummary[] {
   const rows = db
     .prepare(
-      "SELECT id, title, directory, model, agent, time_created, time_updated FROM session_v2 ORDER BY time_created DESC",
+      "SELECT id, parent_id, title, directory, model, agent, time_created, time_updated FROM session_v2 ORDER BY time_created DESC",
     )
     .all() as Array<Record<string, unknown>>;
   return rows.map((row) => ({
     id: String(row.id),
+    parentId: str(row.parent_id),
     title: str(row.title),
     directory: str(row.directory),
     model: str(row.model),
@@ -80,12 +83,13 @@ export function readOpenCodeSession(
 ): OpenCodeSessionSummary | null {
   const row = db
     .prepare(
-      "SELECT id, title, directory, model, agent, time_created, time_updated FROM session_v2 WHERE id = ?",
+      "SELECT id, parent_id, title, directory, model, agent, time_created, time_updated FROM session_v2 WHERE id = ?",
     )
     .get(sessionId) as Record<string, unknown> | undefined;
   if (!row) return null;
   return {
     id: String(row.id),
+    parentId: str(row.parent_id),
     title: str(row.title),
     directory: str(row.directory),
     model: str(row.model),
