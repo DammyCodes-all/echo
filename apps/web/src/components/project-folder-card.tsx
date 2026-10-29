@@ -1,5 +1,5 @@
 import type { ProjectSummary, SessionSummary } from "@echo/contracts";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router";
 import { api, formatTime } from "../api";
 import GlassFolder, { type ArtRecipe, type FolderFile, hashString } from "./glass-folder-cards";
@@ -59,33 +59,130 @@ function metaLine(project: ProjectSummary, total: number): string {
     : sessions;
 }
 
+/** Hover preview is a fine-pointer affordance; touch taps navigate directly. */
+function canHover(): boolean {
+  return window.matchMedia("(hover: hover)").matches;
+}
+
+const HOVER_OPEN_DELAY_MS = 150;
+
 export function ProjectFolderCard({ project, index }: { project: ProjectSummary; index: number }) {
   const navigate = useNavigate();
   const [files, setFiles] = useState<FolderFile[] | null>(null);
   const [total, setTotal] = useState(project.sessionCount);
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
+  // The fetch resolves after the pointer may have left; only open when still wanted.
+  const wantOpen = useRef(false);
+  const fetching = useRef(false);
+  const openTimer = useRef(0);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+  // Mirrors files-loaded in a ref so the open handler stays stable: rebinding
+  // listeners on load would drop a hover timer queued mid-flight.
+  const loadedRef = useRef(false);
+  // The folder remounts when files arrive (it owns its list after mount), which
+  // drops focus to the body; restore it so keyboard users stay in the preview.
+  const refocusOnLoad = useRef(false);
 
-  const handleOpenChange = (next: boolean) => {
-    if (next && files === null) {
-      void api.sessions(project.id).then(
-        (sessions) => {
-          setTotal(sessions.length);
-          setFiles(sessions.slice(0, 3).map(sessionFile));
-          setOpen(true);
-        },
-        () => {
-          setFailed(true);
-          setOpen(true);
-        },
-      );
-      return;
+  const handleOpenChange = useCallback(
+    (next: boolean) => {
+      wantOpen.current = next;
+      if (next && !loadedRef.current) {
+        // A second open while the fetch is in flight opens via the resolver below.
+        if (!fetching.current) {
+          fetching.current = true;
+          void api.sessions(project.id).then(
+            (sessions) => {
+              fetching.current = false;
+              loadedRef.current = true;
+              // Only the folder subtree remounts; focus elsewhere (e.g. the
+              // view-all link) survives and must not be stolen.
+              refocusOnLoad.current =
+                wantOpen.current &&
+                (wrapRef.current?.querySelector(".gf-root")?.contains(document.activeElement) ??
+                  false);
+              setTotal(sessions.length);
+              setFiles(sessions.slice(0, 3).map(sessionFile));
+              setFailed(false);
+              if (wantOpen.current) setOpen(true);
+            },
+            () => {
+              fetching.current = false;
+              setFailed(true);
+              if (wantOpen.current) setOpen(true);
+            },
+          );
+        }
+        return;
+      }
+      setOpen(next);
+    },
+    [project.id],
+  );
+
+  useEffect(() => {
+    const should = files !== null && refocusOnLoad.current && open;
+    refocusOnLoad.current = false;
+    if (should) {
+      wrapRef.current?.querySelector<HTMLElement>(".gf-hit")?.focus({ preventScroll: true });
     }
-    setOpen(next);
-  };
+  }, [files, open]);
+
+  // Hover/focus only previews; every action stays on a real button or link.
+  // Native listeners, like the folder's own pointer tracking, keep the
+  // static wrapper out of the operable-element lint.
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const queueOpen = () => {
+      window.clearTimeout(openTimer.current);
+      openTimer.current = window.setTimeout(() => handleOpenChange(true), HOVER_OPEN_DELAY_MS);
+    };
+    const close = () => {
+      window.clearTimeout(openTimer.current);
+      handleOpenChange(false);
+    };
+    const onEnter = (event: PointerEvent) => {
+      if (event.pointerType === "touch" || !canHover()) return;
+      queueOpen();
+    };
+    const onLeave = (event: PointerEvent) => {
+      if (event.pointerType === "touch" || !canHover()) return;
+      // DOM churn under a stationary cursor (load remount, link mount) fires
+      // phantom boundary events; only a pointer truly outside closes.
+      const under = document.elementFromPoint(event.clientX, event.clientY);
+      if (under instanceof Node && el.contains(under)) return;
+      close();
+    };
+    const onFocusIn = () => {
+      if (!canHover()) return;
+      window.clearTimeout(openTimer.current);
+      handleOpenChange(true);
+    };
+    const onFocusOut = (event: FocusEvent) => {
+      // The load remount destroys the focused element; the refocus effect owns
+      // that transition, so a blur it causes must not close the preview.
+      if (refocusOnLoad.current) return;
+      if (el.contains(event.relatedTarget as Node | null)) return;
+      close();
+    };
+    el.addEventListener("pointerenter", onEnter);
+    el.addEventListener("pointerleave", onLeave);
+    el.addEventListener("focusin", onFocusIn);
+    el.addEventListener("focusout", onFocusOut);
+    return () => {
+      window.clearTimeout(openTimer.current);
+      el.removeEventListener("pointerenter", onEnter);
+      el.removeEventListener("pointerleave", onLeave);
+      el.removeEventListener("focusin", onFocusIn);
+      el.removeEventListener("focusout", onFocusOut);
+    };
+  }, [handleOpenChange]);
+
+  const openProject = () => navigate(`/projects/${project.id}`);
 
   return (
-    <div className="flex flex-col items-center gap-3">
+    <div ref={wrapRef} className="flex flex-col items-center gap-3">
       <GlassFolder
         key={files === null ? "shell" : "ready"}
         label={project.name ?? project.root}
@@ -95,9 +192,10 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
         seed={hashString(project.id)}
         files={files ?? []}
         action="more"
-        menu={[{ label: "Open project", onSelect: () => navigate(`/projects/${project.id}`) }]}
+        menu={[{ label: "Open project", onSelect: openProject }]}
         open={open}
         onOpenChange={handleOpenChange}
+        onHitActivate={openProject}
         width={320}
         appear
         appearDelay={index * 120}
