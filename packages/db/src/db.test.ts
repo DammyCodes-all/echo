@@ -1144,3 +1144,92 @@ describe("subagent orphan cleanup", () => {
     }
   });
 });
+
+describe("upsertSession timestamp stability", () => {
+  function updatedAt(db: ReturnType<typeof openTestDb>, id: string): string {
+    const row = db.prepare("SELECT updated_at FROM sessions WHERE id = ?").get(id) as {
+      updated_at: string;
+    };
+    return row.updated_at;
+  }
+
+  it("leaves updated_at alone when nothing changed", () => {
+    const db = openTestDb();
+    try {
+      seed(db);
+      const before = updatedAt(db, "ses_1");
+      upsertSession(db, {
+        id: "ses_1",
+        projectId: "prj_1",
+        agent: "opencode",
+        model: '{"id":"gpt-6.1-sol"}',
+        directory: "/repo",
+        title: "renamed upstream",
+        startedAt: "2026-10-27T09:00:00.000Z",
+        tapePath: "/data/tape.jsonl",
+        captureQuality: "import_only",
+      });
+      // Stored title is non-empty so the rename is ignored, and with nothing
+      // else different the row — including updated_at — is untouched.
+      expect(updatedAt(db, "ses_1")).toBe(before);
+      expect(getSessionSummary(db, "ses_1")?.title).toBe("spike");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("bumps updated_at only on a real change", () => {
+    const db = openTestDb();
+    try {
+      seed(db);
+      const before = updatedAt(db, "ses_1");
+      upsertSession(db, {
+        id: "ses_1",
+        projectId: "prj_1",
+        agent: "opencode",
+        model: '{"id":"gpt-6.1-sol"}',
+        directory: "/repo",
+        title: "spike",
+        startedAt: "2026-10-27T09:00:00.000Z",
+        tapePath: "/data/tape.jsonl",
+        captureQuality: "partial",
+      });
+      expect(getSessionSummary(db, "ses_1")?.captureQuality).toBe("partial");
+      expect(updatedAt(db, "ses_1") >= before).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("adopts the first non-empty title on a later poll", () => {
+    const db = openTestDb();
+    try {
+      seed(db);
+      upsertSession(db, {
+        id: "ses_bare",
+        projectId: "prj_1",
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: null,
+        startedAt: null,
+        tapePath: "/data/bare.jsonl",
+        captureQuality: "import_only",
+      });
+      upsertSession(db, {
+        id: "ses_bare",
+        projectId: "prj_1",
+        agent: "opencode",
+        model: null,
+        directory: "/repo",
+        title: "named later",
+        startedAt: null,
+        tapePath: "/data/bare.jsonl",
+        captureQuality: "import_only",
+      });
+      expect(getSessionSummary(db, "ses_bare")?.title).toBe("named later");
+    } finally {
+      db.close();
+    }
+  });
+});

@@ -212,32 +212,75 @@ export function upsertSession(
   },
 ): void {
   const now = nowIso();
+  const current = db
+    .prepare(
+      `SELECT project_id, agent, model, directory, title, started_at, tape_path, capture_quality
+     FROM sessions WHERE id = ?`,
+    )
+    .get(input.id) as
+    | {
+        project_id: unknown;
+        agent: unknown;
+        model: unknown;
+        directory: unknown;
+        title: unknown;
+        started_at: unknown;
+        tape_path: unknown;
+        capture_quality: unknown;
+      }
+    | undefined;
+  if (!current) {
+    db.prepare(
+      `INSERT INTO sessions (id, project_id, agent, model, directory, title, started_at, status, tape_path, capture_quality, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'imported', ?, ?, ?, ?)`,
+    ).run(
+      input.id,
+      input.projectId,
+      input.agent,
+      input.model,
+      input.directory,
+      input.title,
+      input.startedAt,
+      input.tapePath,
+      input.captureQuality,
+      now,
+      now,
+    );
+    return;
+  }
+  // Session titles are stable: the first non-empty title wins. Later polls
+  // may rename the session upstream; other details still update.
+  const title =
+    current.title !== null && current.title !== "" ? String(current.title) : input.title;
+  const same =
+    String(current.project_id) === input.projectId &&
+    String(current.agent) === input.agent &&
+    (current.model === null ? null : String(current.model)) === (input.model ?? null) &&
+    (current.directory === null ? null : String(current.directory)) === (input.directory ?? null) &&
+    (current.title === null || current.title === "" ? null : String(current.title)) ===
+      (title ?? null) &&
+    (current.started_at === null ? null : String(current.started_at)) ===
+      (input.startedAt ?? null) &&
+    String(current.tape_path) === input.tapePath &&
+    String(current.capture_quality) === input.captureQuality;
+  // A no-op poll must not touch updated_at: project/session ordering keys
+  // off it, and rewriting it every 5s reshuffles the inbox and / grid while
+  // nothing happened.
+  if (same) return;
   db.prepare(
-    `INSERT INTO sessions (id, project_id, agent, model, directory, title, started_at, status, tape_path, capture_quality, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'imported', ?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET
-       project_id = excluded.project_id,
-       model = excluded.model,
-       directory = excluded.directory,
-       -- Session titles are stable: the first non-empty title wins. Later
-       -- polls may rename the session upstream; other details still update.
-       title = CASE WHEN sessions.title IS NOT NULL AND sessions.title != '' THEN sessions.title ELSE excluded.title END,
-       started_at = excluded.started_at,
-       tape_path = excluded.tape_path,
-       capture_quality = excluded.capture_quality,
-       updated_at = excluded.updated_at`,
+    `UPDATE sessions SET project_id = ?, agent = ?, model = ?, directory = ?, title = ?,
+       started_at = ?, tape_path = ?, capture_quality = ?, updated_at = ? WHERE id = ?`,
   ).run(
-    input.id,
     input.projectId,
     input.agent,
     input.model,
     input.directory,
-    input.title,
+    title,
     input.startedAt,
     input.tapePath,
     input.captureQuality,
     now,
-    now,
+    input.id,
   );
 }
 

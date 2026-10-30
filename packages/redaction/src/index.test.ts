@@ -31,6 +31,43 @@ describe("redactText", () => {
   });
 });
 
+describe("redactJson escape boundaries", () => {
+  it("survives a secret glued to a JSON escape (quoted assignment in code)", () => {
+    // Regression: the scanner used to run on the serialized blob, so a secret
+    // match could swallow the backslash of a nearby \" escape and emit
+    // unparseable JSON. Real shape: repo diffs containing quoted KEY=... lines.
+    const input = {
+      text: 'writeFileSync(join(root, ".env.local"), "ECHO_TEST_LOAD_KEY=from-env-value-here");',
+    };
+    const result = redactJson(input);
+    const value = result.value as { text: string };
+    expect(value.text).not.toContain("from-env-value-here");
+    expect(value.text).toContain("[REDACTED:env-assignment:");
+    expect(() => JSON.stringify(result.value)).not.toThrow();
+  });
+
+  it("survives re-scanning an already-redacted placeholder inside quotes", () => {
+    // Capture-time redaction leaves [REDACTED:...] placeholders on tape; the
+    // story request re-scan must not choke when one sits next to an escape.
+    const input = {
+      text: 'writeFileSync(join(root, ".env.local"), "ECHO_TEST_LOAD_KEY=[REDACTED:env-assignment:365c]");',
+    };
+    const result = redactJson(input);
+    expect(() => JSON.stringify(result.value)).not.toThrow();
+    expect(JSON.stringify(result.value)).not.toContain("365c]");
+  });
+
+  it("round-trips lone surrogates from mid-emoji cap slices", () => {
+    // cap() slices UTF-16, so a cut emoji leaves a lone surrogate. That never
+    // broke the scan (JSON escapes it); pin the behavior so nobody "fixes"
+    // cap() for this.
+    const result = redactJson([{ content: "emoji slice \uD83D tail" }]);
+    expect((result.value as Array<{ content: string }>)[0]?.content).toBe(
+      "emoji slice \uD83D tail",
+    );
+  });
+});
+
 describe("redactJson", () => {
   it("scrubs secrets inside nested payloads and counts findings", () => {
     const result = redactJson({
