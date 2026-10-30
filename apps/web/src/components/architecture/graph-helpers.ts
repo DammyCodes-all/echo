@@ -2,11 +2,16 @@ import type { Architecture } from "@echo/contracts";
 import type { RoutedPoint } from "./elk-layout";
 
 /** A node with more incident edges than this is a shared service: its edges
- *  hide by default behind a "used by N" badge. */
+ *  render lighter at rest and it carries a "used by N" hint badge. Every edge
+ *  still draws — hubs dim, never hide. */
 export const HUB_DEGREE_THRESHOLD = 4;
 
 /** Corner radius for routed edge polylines. */
 export const EDGE_CORNER_RADIUS = 8;
+
+/** Arrowhead size: length back from the tip, half-width across. */
+export const ARROWHEAD_LENGTH = 9;
+export const ARROWHEAD_HALF_WIDTH = 4;
 
 export function computeHubs(architecture: Architecture): Set<string> {
   const degree = new Map<string, number>();
@@ -29,33 +34,6 @@ export function neighborCount(architecture: Architecture, nodeId: string): numbe
     if (edge.to === nodeId && edge.from !== nodeId) neighbors.add(edge.from);
   }
   return neighbors.size;
-}
-
-/** Hubs whose edges are visible: the hovered hub itself plus every hub
- *  connected to the hovered node. */
-export function revealedHubs(
-  architecture: Architecture,
-  hubs: Set<string>,
-  hoveredId: string | null,
-): Set<string> {
-  const revealed = new Set<string>();
-  if (hoveredId === null) return revealed;
-  if (hubs.has(hoveredId)) revealed.add(hoveredId);
-  for (const edge of architecture.edges) {
-    if (edge.from === hoveredId && hubs.has(edge.to)) revealed.add(edge.to);
-    if (edge.to === hoveredId && hubs.has(edge.from)) revealed.add(edge.from);
-  }
-  return revealed;
-}
-
-/** Hub edges hide unless their hub is revealed; plain edges always show. */
-export function isEdgeVisible(
-  edge: { from: string; to: string },
-  hubs: Set<string>,
-  revealed: Set<string>,
-): boolean {
-  if (!hubs.has(edge.from) && !hubs.has(edge.to)) return true;
-  return revealed.has(edge.from) || revealed.has(edge.to);
 }
 
 function round2(value: number): number {

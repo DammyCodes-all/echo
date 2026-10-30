@@ -200,4 +200,92 @@ describe("layoutArchitecture", () => {
     const again = await layoutArchitecture(fixture());
     expect(again).toEqual(layout);
   });
+
+  test("returns one route per input edge, in input order", async () => {
+    const layout = await laid;
+    const input = fixture().edges;
+    expect(layout.edges.map((edge) => `${edge.from}→${edge.to}`)).toEqual(
+      input.map((edge) => `${edge.from}→${edge.to}`),
+    );
+  });
+});
+
+describe("collectRoutedEdges", () => {
+  function laidTree(): ElkNode {
+    return {
+      id: "root",
+      children: [
+        {
+          id: "g",
+          x: 100,
+          y: 50,
+          children: [{ id: "g/a" }, { id: "g/b" }],
+          edges: [
+            {
+              id: "e0",
+              sections: [{ startPoint: { x: 10, y: 10 }, bendPoints: [], endPoint: { x: 20, y: 30 } }],
+            },
+          ],
+        },
+        { id: "h", x: 400, y: 50, children: [{ id: "h/c" }] },
+      ],
+      edges: [
+        {
+          id: "e1",
+          sections: [{ startPoint: { x: 200, y: 200 }, bendPoints: [], endPoint: { x: 300, y: 300 } }],
+        },
+        { id: "e2" },
+      ],
+    };
+  }
+
+  test("finds nested edges and frames same-group routes by the group", () => {
+    const { edges, unrouted } = collectRoutedEdges(laidTree(), [
+      { from: "a", to: "b" },
+      { from: "a", to: "c" },
+      { from: "b", to: "c" },
+    ]);
+    expect(edges).toHaveLength(3);
+    // e0 nests under g and both endpoints live in g: group offset applies.
+    expect(edges[0]).toEqual({
+      id: "e0",
+      from: "a",
+      to: "b",
+      points: [
+        { x: 110, y: 60 },
+        { x: 120, y: 80 },
+      ],
+    });
+    // e1 sits at the root across groups: root frame, no offset.
+    expect(edges[1]?.points).toEqual([
+      { x: 200, y: 200 },
+      { x: 300, y: 300 },
+    ]);
+    // e2 has no sections: identity kept, empty points, reported unrouted.
+    expect(edges[2]).toEqual({ id: "e2", from: "b", to: "c", points: [] });
+    expect(unrouted).toEqual([2]);
+  });
+
+  test("reports input edges ELK never returned", () => {
+    const { edges, unrouted } = collectRoutedEdges({ id: "root" }, [{ from: "a", to: "b" }]);
+    expect(edges).toEqual([{ id: "e0", from: "a", to: "b", points: [] }]);
+    expect(unrouted).toEqual([0]);
+  });
+
+  test("ignores non-edge ids and out-of-range routes", () => {
+    const laid: ElkNode = {
+      id: "root",
+      children: [{ id: "g", children: [{ id: "g/a" }, { id: "g/b" }] }],
+      edges: [
+        { id: "ports" },
+        {
+          id: "e7",
+          sections: [{ startPoint: { x: 1, y: 1 }, bendPoints: [], endPoint: { x: 2, y: 2 } }],
+        },
+      ],
+    };
+    const { edges, unrouted } = collectRoutedEdges(laid, [{ from: "a", to: "b" }]);
+    expect(edges).toEqual([{ id: "e0", from: "a", to: "b", points: [] }]);
+    expect(unrouted).toEqual([0]);
+  });
 });
