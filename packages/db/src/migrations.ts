@@ -248,4 +248,17 @@ CREATE TABLE IF NOT EXISTS review_transition_cache (
 );
 `,
   },
+  {
+    version: 12,
+    sql: `
+CREATE TABLE IF NOT EXISTS project_architecture_versions (
+  project_id TEXT NOT NULL REFERENCES projects(id),
+  version INTEGER NOT NULL,
+  payload_json TEXT NOT NULL,
+  generator TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (project_id, version)
+);
+`,
+  },
 ];

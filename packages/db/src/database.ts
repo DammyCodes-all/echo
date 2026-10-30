@@ -42,6 +42,18 @@ function backfillRenumberedV3(db: EchoDb, applied: Set<number>): void {
   }
 }
 
+// The architecture branch shipped project_architecture_versions as v11 while
+// main shipped review_transition_cache as v11; the architecture table moved
+// to v12. Databases migrated on the architecture branch recorded v11
+// without ever creating review_transition_cache. Backfill the missing table
+// so the cache (and its callers) works on those databases.
+function backfillRenumberedV11(db: EchoDb, applied: Set<number>): void {
+  if (applied.has(11) && !tableExists(db, "review_transition_cache")) {
+    const v11 = MIGRATIONS.find((migration) => migration.version === 11);
+    if (v11) db.exec(v11.sql);
+  }
+}
+
 const ADD_COLUMN_PATTERN = /^alter\s+table\s+["'`[]?(\w+)["'`\]]?\s+add\s+column\s+["'`[]?(\w+)/i;
 
 function migrate(db: EchoDb): void {
@@ -53,6 +65,7 @@ function migrate(db: EchoDb): void {
   }>;
   const applied = new Set(appliedRows.map((row) => row.version));
   backfillRenumberedV3(db, applied);
+  backfillRenumberedV11(db, applied);
   for (const migration of MIGRATIONS) {
     if (applied.has(migration.version)) continue;
     db.exec("BEGIN");

@@ -2,6 +2,8 @@ import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import {
+  ArchitectureApplyRequestSchema,
+  ArchitectureChatRequestSchema,
   AskRequestSchema,
   CheckMeRequestSchema,
   CheckV2AnswerRequestSchema,
@@ -20,6 +22,7 @@ import {
   readEvents,
 } from "@echo/db";
 import Fastify, { type FastifyReply } from "fastify";
+import { createArchitectureService } from "./architecture";
 import { createAskService } from "./ask";
 import { createChecksV2Service } from "./checks-v2";
 import { createCodeIndexService } from "./code-index";
@@ -87,6 +90,14 @@ const engagement = createEngagementService(db);
 const history = createHistoryService(db, paths.dataDir);
 const codeIndex = createCodeIndexService({ db });
 const learn = createLearnService({ db, dataDir: paths.dataDir });
+const architecture = createArchitectureService(
+  { db, log: app.log },
+  {
+    ensureIndex: (projectId) => {
+      codeIndex.reindex(projectId);
+    },
+  },
+);
 const techStack = createProjectTechStackService(
   { db, dataDir: paths.dataDir, log: app.log },
   {
@@ -299,6 +310,86 @@ app.get<{ Params: { id: string }; Querystring: { root?: string; depth?: string; 
       }
       throw error;
     }
+  },
+);
+
+app.get<{ Params: { id: string } }>("/api/projects/:id/architecture", async (request, reply) => {
+  const outcome = architecture.get(request.params.id);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.post<{ Params: { id: string } }>(
+  "/api/projects/:id/architecture/generate",
+  async (request, reply) => {
+    const outcome = await architecture.generate(request.params.id);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.get<{ Params: { id: string } }>(
+  "/api/projects/:id/architecture/stream",
+  async (request, reply) => {
+    const project = getProject(db, request.params.id);
+    if (!project) {
+      return reply.code(404).send({
+        error: { code: "not_found", message: "unknown project" },
+      });
+    }
+    // Hijacked: the socket stays open and the service pushes generation
+    // progress plus version broadcasts until the client goes away.
+    reply.hijack();
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      Connection: "keep-alive",
+    });
+    reply.raw.write(": connected\n\n");
+    const unsubscribe = architecture.subscribe(request.params.id, (event) => {
+      reply.raw.write(`data: ${JSON.stringify(event)}\n\n`);
+    });
+    request.raw.on("close", () => {
+      unsubscribe();
+    });
+  },
+);
+
+app.post<{ Params: { id: string } }>(
+  "/api/projects/:id/architecture/chat",
+  async (request, reply) => {
+    const parsed = ArchitectureChatRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "message is required (max 2000 chars)" },
+      });
+    }
+    const outcome = await architecture.chat(
+      request.params.id,
+      parsed.data.message,
+      parsed.data.pinnedNodeId,
+    );
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.post<{ Params: { id: string } }>(
+  "/api/projects/:id/architecture/apply",
+  async (request, reply) => {
+    const parsed = ArchitectureApplyRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: { code: "invalid_request", message: "patch is required" },
+      });
+    }
+    const outcome = architecture.applyPatch(request.params.id, parsed.data.patch);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
+app.post<{ Params: { id: string } }>(
+  "/api/projects/:id/architecture/undo",
+  async (request, reply) => {
+    const outcome = architecture.undo(request.params.id);
+    return reply.code(outcome.status).send(outcome.body);
   },
 );
 

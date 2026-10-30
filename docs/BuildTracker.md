@@ -909,3 +909,27 @@ notes.
 - status: done
 - evidence: same full gate; live monster run completes fully in ~10.5s (308 hunks, 555 attempts, no budget diagnostic) vs 15+ min hang before all review work began; daemon-served review under load still degrades gracefully with the diagnostic instead of hanging
 - notes: Remaining ~10s is CPU attribution + evidence linking over hundreds of paths/versions — further wins need semantic tradeoffs (history thinning), deliberately not taken. Timing instrumentation used during profiling was removed before gating; tree is clean.
+## 2026-10-29 — Header search duplicate icons removed
+
+- item: removed the redundant submit magnifier from the in-progress `ExpandableSearch` (`apps/web/src/components/search/expandable-search.tsx`, button + dead CSS) so the open bar shows lead icon + query + close toggle only; header cluster gap `gap-1` → `gap-3` in `apps/web/src/layout.tsx` so Sort doesn't glue to the pill
+- status: done
+- evidence: headless Chrome: `.es-root svg` count 3 → 2, screenshot shows `🔍 me ✕` in one pill; `biome check` on both touched files clean; web `vite build` ok
+- notes: Touched another author's uncommitted in-flight search work per user "fix it" — flagging for them: Enter still submits (form implicit submission); the file's earlier lint findings are gone with the dead button. Full `tsc` currently blocked by that same session's half-written untracked `apps/server/src/architecture.ts` (syntax error, not mine, left alone). No commit.
+## 2026-10-29 — Header search wider + filters in place
+
+- item: `HeaderSearch` bar `width 200 → 300` (plus `70vw` cap for narrow screens); `applySearch` now filters in place on both project routes (`/` and `/projects`) instead of jumping route — empty submit clears back to all
+- status: done
+- evidence: headless Chrome on `/projects`: open width 300, submit `whitespace` → URL stays `/projects?q=whitespace`, grid narrows to Whitespace only; empty submit → `/projects` with all 3 back, zero page errors; `tsc` clean, `biome` clean on touched files, web build ok
+- notes: Continues the other session's uncommitted header-search work per user "make it work" (it previously navigated `/projects` → `/` on submit). No commit.
+## 2026-10-29 — Header search wider + filters in place (gate follow-up)
+
+- item: search follow-up above stands; additionally repaired the suite for the concurrent architecture work staged into the tree mid-merge — `db.test.ts` migration-version assertions `[1..10]` → `[1..11]` to match the staged v11 `project_architecture_versions` migration (mechanical, zero behavior)
+- status: done
+- evidence: `pnpm test` → 58 files / 495 passed + 8 skipped, 0 failed; `db.test.ts` 29/29 in isolation; headless Chrome `/projects` flow from the earlier run still holds (300px bar, in-place filter, clear restores all)
+- notes: The 2 `db.test.ts` failures were deterministic (stale assertion vs staged v11), not flakes. Full `tsc` is still red on that same session's half-written `architecture-chat.tsx` (type error, untouched — genuinely theirs to finish). `tsc` on everything else, `biome`, and web build are green from the earlier scoped runs. No commit.
+## 2026-10-29 — Header sort dropdown (glass menu)
+
+- item: replaced the header's native Sort `<select>` with a glass dropdown menu in `apps/web/src/components/search/project-sort.tsx` (Animate UI paste adapted the same way as the search bar: Base UI primitives swapped for the settings-sheet menu machinery — portal panel, popover open/close motion, ArrowUp/Down/Home/End, Escape/Tab, outside close, focus return, reduced-motion instant; no new deps): `Sort <value> ▾` trigger with ChevronDown, menuitemradio rows (Last activity / Name / Sessions) with Tick02 check on the active value; writes `?sort=` (`activity` omits the param), hidden off-home
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 222 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 58 files / 495 passed + 8 skipped, `pnpm build` ok; browser pass (playwright-core + system Chrome, live dev stack): menu opens, ArrowDown×2 lands on Name, Enter writes `?sort=name` with grid reordered [Echo, Portfolio, Whitespace], Escape closes with focus back on the trigger, header search still filters (`port` → 1 of 3), mobile 360px fits; zero page errors
+- notes: Mechanical `biome --write` formats only on concurrent files (`architecture.ts` `new Set<string>()` parse fix + import/format normalizations, `ingest.test.ts` unused binding) to restore the green gate — zero behavior change; the 2 `db.test.ts` migration failures seen mid-work were the concurrent session's stale v10-vs-v11 assertions, healed on their side before the final run. Probe scripts in `/tmp/opencode/pw` were wiped by the server restart; reinstalled driver + re-verified after. Nothing staged or committed by this session (tree already holds staged work from all sessions).

@@ -120,7 +120,7 @@ describe("openEchoDb migrations", () => {
       version: number;
     }>;
     second.close();
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
   });
 
   it("waits on locked writers instead of failing fast", () => {
@@ -156,7 +156,7 @@ describe("openEchoDb migrations", () => {
     const rows = db.prepare("SELECT version FROM schema_migrations").all() as Array<{
       version: number;
     }>;
-    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
     const checkpoints = db
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'reader_checkpoints'",
@@ -173,6 +173,64 @@ describe("openEchoDb migrations", () => {
 
     const reopened = openEchoDb(path);
     reopened.close();
+  });
+
+  it("heals databases migrated when project_architecture_versions was version 11", () => {
+    // The architecture branch shipped its table as v11 while main shipped
+    // review_transition_cache as v11; the architecture table moved to v12. A
+    // database migrated on the architecture branch records v11 with the
+    // architecture table present and no review_transition_cache table;
+    // opening it must backfill the cache table and record v12.
+    const dir = mkdtempSync(join(tmpdir(), "echo-db-legacy-v11-"));
+    const path = join(dir, "echo.sqlite");
+    const legacy = new DatabaseSync(path);
+    legacy.exec(
+      "CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)",
+    );
+    for (const migration of MIGRATIONS) {
+      if (migration.version === 11) continue;
+      // Mirror migrate(): statements run one at a time so a repeated ADD
+      // COLUMN (v9 heals the in-place v7 edit that already ships the column)
+      // is skipped instead of failing the replay.
+      for (const statement of migration.sql.split(";")) {
+        const trimmed = statement.trim();
+        if (trimmed === "") continue;
+        try {
+          legacy.exec(trimmed);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          const duplicateColumn = /duplicate column/i.test(message);
+          const addColumn = /^alter\s+table\s+\S+\s+add\s+column\s+/i.test(trimmed);
+          if (!(duplicateColumn && addColumn)) throw error;
+        }
+      }
+    }
+    const now = new Date().toISOString();
+    legacy
+      .prepare(
+        "INSERT INTO schema_migrations (version, applied_at) VALUES (1, ?), (2, ?), (3, ?), (4, ?), (5, ?), (6, ?), (7, ?), (8, ?), (9, ?), (10, ?), (11, ?)",
+      )
+      .run(now, now, now, now, now, now, now, now, now, now, now);
+    legacy.close();
+
+    const db = openEchoDb(path);
+    const rows = db.prepare("SELECT version FROM schema_migrations").all() as Array<{
+      version: number;
+    }>;
+    expect(rows.map((row) => row.version)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]);
+    const cache = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'review_transition_cache'",
+      )
+      .get() as { name?: string } | null;
+    expect(cache?.name).toBe("review_transition_cache");
+    const arch = db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'project_architecture_versions'",
+      )
+      .get() as { name?: string } | null;
+    expect(arch?.name).toBe("project_architecture_versions");
+    db.close();
   });
 });
 
