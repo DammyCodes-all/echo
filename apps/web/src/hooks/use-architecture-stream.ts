@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 
 export type ArchitectureStreamEvent =
   | { type: "generation.progress"; stage: string; progress: number }
-  | { type: "generation.done"; version: number }
+  | { type: "generation.done"; version: number; warnings: string[] }
   | { type: "generation.error"; message: string }
   | { type: "architecture.updated"; version: number };
 

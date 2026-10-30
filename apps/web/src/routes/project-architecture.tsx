@@ -45,6 +45,7 @@ export function ProjectArchitecturePage() {
   const [generating, setGenerating] = useState(false);
   const [progress, setProgress] = useState<{ stage: string; progress: number } | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
+  const [warnings, setWarnings] = useState<string[]>([]);
   const [undoError, setUndoError] = useState<string | null>(null);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [pulseIds, setPulseIds] = useState<string[]>([]);
@@ -70,6 +71,14 @@ export function ProjectArchitecturePage() {
         setProgress({ stage: event.stage, progress: event.progress });
         break;
       case "generation.done":
+        setGenerating(false);
+        setProgress(null);
+        setGenerateError(null);
+        // Generation emits done then updated in sequence: updated must not
+        // clear the warnings, or they would flash and vanish.
+        setWarnings(event.warnings ?? []);
+        void queryClient.invalidateQueries({ queryKey: ["architecture", projectId] });
+        break;
       case "architecture.updated":
         setGenerating(false);
         setProgress(null);
@@ -88,6 +97,7 @@ export function ProjectArchitecturePage() {
     mutationFn: () => api.generateArchitecture(projectId),
     onMutate: () => {
       setGenerateError(null);
+      setWarnings([]);
       setGenerating(true);
       setProgress({ stage: "starting", progress: 0 });
     },
@@ -103,6 +113,7 @@ export function ProjectArchitecturePage() {
     onMutate: () => setUndoError(null),
     onSuccess: () => {
       setPulseIds([]);
+      setWarnings([]);
       void queryClient.invalidateQueries({ queryKey: ["architecture", projectId] });
     },
     onError: (error) => {
@@ -197,22 +208,43 @@ export function ProjectArchitecturePage() {
             </div>
           </div>
         ) : architecture ? (
-          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
-            <ArchitectureDiagram
-              architecture={architecture}
-              evidence={arch.data?.evidence ?? {}}
-              highlightedIds={highlightedIds}
-              pulseIds={pulseIds}
-              pinnedId={pinned?.id ?? null}
-              onPin={setPinned}
-            />
-            <ArchitectureChat
-              projectId={projectId}
-              pinned={pinned}
-              onClearPin={() => setPinned(null)}
-              onHighlight={setHighlightedIds}
-              onPatched={onPatched}
-            />
+          <div className="space-y-4">
+            {warnings.length > 0 ? (
+              <div
+                role="status"
+                className="flex items-start justify-between gap-3 rounded-dusk-code bg-dusk-peach-wash px-4 py-2.5 text-[13px] leading-5 text-dusk-peach"
+              >
+                <div>
+                  {warnings.map((warning) => (
+                    <p key={warning}>{warning}</p>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setWarnings([])}
+                  className="shrink-0 font-semibold underline underline-offset-2"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
+            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+              <ArchitectureDiagram
+                architecture={architecture}
+                evidence={arch.data?.evidence ?? {}}
+                highlightedIds={highlightedIds}
+                pulseIds={pulseIds}
+                pinnedId={pinned?.id ?? null}
+                onPin={setPinned}
+              />
+              <ArchitectureChat
+                projectId={projectId}
+                pinned={pinned}
+                onClearPin={() => setPinned(null)}
+                onHighlight={setHighlightedIds}
+                onPatched={onPatched}
+              />
+            </div>
           </div>
         ) : null}
         {generateError ? <p className="text-sm text-dusk-fail">{generateError}</p> : null}
