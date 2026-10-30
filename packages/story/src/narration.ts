@@ -6,7 +6,7 @@ import type { Fact, FactSet } from "./facts";
  * rendering: facts in, messages out. The server re-redacts the rendered
  * prompt before sending and records this prompt version on the story.
  */
-export const STORY_PROMPT_VERSION = "story-v1";
+export const STORY_PROMPT_VERSION = "story-v2";
 
 /** Per-field render caps. Truncation is marked so silence never poses as
  *  absence; the validator still checks claims against the full facts. */
@@ -74,8 +74,12 @@ const SYSTEM_PROMPT = [
   "Every claim MUST cite fact IDs (F1, F2, …). Never invent file paths, numbers or names:",
   "each number, path and quoted span in a claim must appear in the cited facts.",
   "Group final-diff hunks into behaviour cards: one behaviour per card, consequential",
-  "non-file actions included. Detours cover abandoned attempts only; blindSpots cover",
-  "capture gaps only; routineSummary is set only when every hunk is mechanical, else null.",
+  "non-file actions included. Card headlines are verb-first, at most 12 words, never a",
+  "path list — paths live in touches, not the headline. Detours cover abandoned attempts",
+  "only; blindSpots cover capture gaps only; routineSummary is set only when every hunk",
+  "is mechanical, else null. Map asked to delivered or missing only when the hunk path,",
+  "quoted text, or tool call lexically overlaps the prompt; otherwise leave delivered and",
+  "missing empty and put the uncertainty in gaps.",
   "Set verification to nothing, highRisk to false, riskReasons to [] and verifiedCounts",
   "to zeros — the server recomputes them deterministically. Set skeleton to false and echo",
   "the session id and watermark; the server restamps them.",
