@@ -239,7 +239,7 @@ function modelDraft(shortText: string): SessionStory {
     schemaVersion: 1,
     sessionId: "ses_story",
     generatedAt: "2026-10-28T12:00:00.000Z",
-    generator: { kind: "model", model: "test-model", promptVersion: "story-v1" },
+    generator: { kind: "model", model: "test-model", promptVersion: "story-v2" },
     tapeWatermark: { eventCount: 4, sha256: "draft-sha" },
     summary: "add a greeting line",
     skeleton: false,
@@ -387,10 +387,10 @@ describe("maybeGenerateStory", () => {
       const outcome = await service.maybeGenerateStory(sessionId);
       expect(outcome.outcome).toBe("generated");
       expect(calls()).toBe(1);
-      expect(bodies()[0]).toContain("story-v1");
+      expect(bodies()[0]).toContain("story-v2");
       const story = SessionStorySchema.parse(outcome.story);
       expect(story.skeleton).toBe(false);
-      expect(story.generator).toMatchObject({ kind: "model", promptVersion: "story-v1" });
+      expect(story.generator).toMatchObject({ kind: "model", promptVersion: "story-v2" });
       expect(story.shortVersion.map((claim) => claim.text)).toEqual(["add a greeting line"]);
       expect(story.tapeWatermark).toEqual(computeWatermark(readAllEvents(db, sessionId)));
       const ref = getArtifactRef(db, sessionId, "story");
@@ -524,7 +524,7 @@ describe("maybeGenerateStory", () => {
       expect(outcome.outcome).toBe("generated");
       expect(outcome.story?.generator).toMatchObject({
         kind: "model",
-        promptVersion: "story-v1",
+        promptVersion: "story-v2",
       });
       expect(outcome.story?.tapeWatermark.eventCount).toBeGreaterThan(0);
     } finally {

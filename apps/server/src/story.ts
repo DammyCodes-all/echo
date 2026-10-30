@@ -546,11 +546,17 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     const prevGenerator = getArtifactRef(db, input.sessionId, "story")?.generator ?? null;
     const prevIsSkeleton = prevGenerator?.startsWith("skeleton-") ?? false;
     const nextIsSkeleton = input.generator.startsWith("skeleton-");
-    const summary = capStorySummary(
-      prevSummary !== null && prevSummary !== "" && (nextIsSkeleton || !prevIsSkeleton)
-        ? prevSummary
-        : input.story.summary,
-    );
+    // Skeleton-shaped titles are never sticky: a carried-over "Prompts, ..."
+    // or "No prompts recorded" title yields to fresh model prose even when
+    // generator metadata is missing (e.g. pre-artifact-ref stories).
+    const prevLooksSkeleton =
+      prevSummary !== null && /^(Prompts,|No prompts recorded|No verified)/i.test(prevSummary);
+    const usePrev =
+      prevSummary !== null &&
+      prevSummary !== "" &&
+      (nextIsSkeleton || !prevIsSkeleton) &&
+      !(prevLooksSkeleton && !nextIsSkeleton);
+    const summary = capStorySummary(usePrev && prevSummary ? prevSummary : input.story.summary);
     const titled = summary === input.story.summary ? input.story : { ...input.story, summary };
     let scanned: unknown;
     try {

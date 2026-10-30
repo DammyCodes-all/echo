@@ -94,6 +94,25 @@ export function ClaimItem({
   );
 }
 
+/**
+ * Path-soup headlines read like file lists, not behavior. When the stored
+ * headline names two paths (or echoes the skeleton shape) and the card
+ * carries a why-line, show the why-line as the title — full headline stays
+ * on hover. Pure presentational fallback; artifact data untouched.
+ */
+export function displayHeadline(card: Pick<ChangeCard, "headline" | "why">): string {
+  const headline = card.headline;
+  const pathHits = headline.match(/[\w./-]+\.\w+/g) ?? [];
+  const looksLikeList =
+    pathHits.length >= 2 || /^(Prompts, changes in|Prompts,|No verified)/i.test(headline);
+  const fallback = card.why[0]?.text.trim();
+  if (looksLikeList && fallback) {
+    const words = fallback.split(/\s+/);
+    return words.length > 14 ? `${words.slice(0, 14).join(" ")}…` : fallback;
+  }
+  return headline;
+}
+
 export function StoryCard({
   card,
   reviewHunks,
@@ -171,8 +190,11 @@ export function StoryCard({
   const related = historyEntries.filter((entry) =>
     entry.sharedFiles.some((file) => card.touches.includes(file)),
   );
-  const shownTouches = card.touches.slice(0, 4);
-  const hiddenTouchCount = card.touches.length - shownTouches.length;
+  // Closed-card files repeat the headline when it is already path soup;
+  // open-card "What it touches" keeps the full list.
+  const headlineHidesPaths = displayHeadline(card) !== card.headline;
+  const shownTouches = headlineHidesPaths ? [] : card.touches.slice(0, 4);
+  const hiddenTouchCount = headlineHidesPaths ? 0 : card.touches.length - shownTouches.length;
 
   return (
     <article
@@ -213,8 +235,9 @@ export function StoryCard({
         type="button"
         onClick={toggleExpanded}
         className="mt-2 block text-left text-dusk-body text-dusk-ink"
+        title={card.headline}
       >
-        {card.headline}
+        {displayHeadline(card)}
       </button>
       {shownTouches.length > 0 ? (
         <div className="mt-2 flex flex-wrap items-center gap-1">

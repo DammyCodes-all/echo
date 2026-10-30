@@ -487,3 +487,41 @@ describe("createIngest subagent lanes", () => {
     }
   });
 });
+
+describe("createIngest poll stability", () => {
+  it("does not touch session timestamps when a poll captures nothing new", async () => {
+    const { workDir } = await makeGitProject();
+    const source = makeSource("ses_stable", workDir);
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-opencode-stable-data-"));
+    const configDir = mkdtempSync(join(tmpdir(), "echo-opencode-stable-config-"));
+    writeFileSync(
+      join(configDir, "config.json"),
+      JSON.stringify({ projects: [workDir], opencode_db: source, poll_interval_ms: 250 }),
+    );
+    const previousConfigDir = process.env.ECHO_CONFIG_DIR;
+    process.env.ECHO_CONFIG_DIR = configDir;
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    try {
+      const first = await createIngest({ dataDir, db, log }).runOnce();
+      expect(first.capturedSessions).toBe(1);
+      const row = db.prepare("SELECT updated_at FROM sessions WHERE id = ?").get("ses_stable") as {
+        updated_at: string;
+      };
+      const second = await createIngest({ dataDir, db, log }).runOnce();
+      expect(second.eventsAdded).toBe(0);
+      // No fresh events, no snapshots, no row rewrite: the / grid and inbox
+      // order stay put instead of reshuffling every 5s.
+      expect(
+        (
+          db.prepare("SELECT updated_at FROM sessions WHERE id = ?").get("ses_stable") as {
+            updated_at: string;
+          }
+        ).updated_at,
+      ).toBe(row.updated_at);
+    } finally {
+      db.close();
+      if (previousConfigDir === undefined) delete process.env.ECHO_CONFIG_DIR;
+      else process.env.ECHO_CONFIG_DIR = previousConfigDir;
+    }
+  });
+});
