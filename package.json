@@ -8,10 +8,10 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel --filter @echo/server --filter @echo/web dev",
+    "dev": "node api.js && pnpm -r --parallel --filter @echo/server --filter @echo/web dev",
     "dev:server": "pnpm --filter @echo/server dev",
     "dev:web": "pnpm --filter @echo/web dev",
-    "build": "pnpm --filter @echo/web build && pnpm --filter @echo/server build && pnpm --filter @echo/cli build",
+    "build": "node api.js && pnpm --filter @echo/web build && pnpm --filter @echo/server build && pnpm --filter @echo/cli build",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",

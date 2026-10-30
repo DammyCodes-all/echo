@@ -1002,3 +1002,24 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 220 files (4 pre-existing useLiteralKeys infos in untouched checks-v2.test.ts), `pnpm test` → 59 files / 539 passed (new: 3 redaction escape-boundary tests, verified 2 fail on the old scanner; server cap-slice guard + verdict-kind logging test; 8 session-display priority tests), `pnpm build` ok; regen 10:19–10:23 local: ses_e81ec7e6 generated 8 cards 45s, ses_e80f7f22 generated 9 cards 112s (schema-parse retry, then clean), 01a17d7e generated 3 cards 81s (schema-parse retry, then clean), 01a1898d generated 4 cards 113s (schema-parse retry + 3 first-draft number-not-in-evidence blindSpot verdicts logged content-free, regen fixed them); failure rate 5/22 → 3/22 skeletons (19/22 model)
 - notes: Class-A prime suspect disproven by bisection: not lone surrogates from cap() slicing (they round-trip fine) but the scanner consuming escape backslashes next to quoted `KEY=...` lines in repo diffs (capture-redacted placeholders re-matched the same way). Class-B verdicts now captured: all three Class-B sessions needed a schema-parse retry; 01a1898d also logged 3 number-not-in-evidence blindSpot verdicts on the first draft. The 4 regen stories are intact on disk (refs 09:19–09:23Z). Display: 12/22 sessions carry agent titles (all ses_*, good quality) and now show them with zero model title calls — normal flow has no title-only model path (verified by grep; the /tmp retitle pass was one-off). persistStory behavior unchanged (first-wins lock; never reads/clears sessions.title). Left open, not mine: ses_e7630e7f still skeleton (model_error at 10:02 and again 10:38, transient — single retry would likely clear it); ses_e81a8a6b + ses_e7925784 flipped model→skeleton (model_error) at ~10:08 by an unknown concurrent writer while this unit ran; ses_e7806a0abffe3 rewritten as model at 10:12 by same unknown activity (not this unit — this unit wrote only the 4 targets). /tmp/opencode scratch (regen scripts, progress logs, backups) was wiped by the server restart mid-unit; outcomes above are from on-disk artifact state. Nothing committed (user owns history).
+
+## 2026-10-30 — Search field text/X overlap + header spacing
+
+- item: reserved 44px on the right of the expandable search input and hint so typed text and the placeholder ellipsis stop sliding under the close X; header control cluster gap widened so the open pill no longer crowds the sort control
+- status: done
+- evidence: `tsc` clean, biome clean, `pnpm test` → 59 files / 539 passed, `pnpm build` ok
+- notes: UI verified via build only, no browser pass. Nothing committed (user owns history).
+
+## 2026-10-29 — Keep prior model story on failed regen (no more downgrades)
+
+- item: `keepPriorOrSkeleton` in `apps/server/src/story.ts` — model-off, missing-key, narrate-failure, and artifact-redaction-failure paths now return the existing model story as new `stale` outcome instead of persisting a skeleton over it; skeletons persist only when no model story exists. Route needs no change (non-null story is served). Tests: lock test now expects `stale` + byte-identical file, new `keeps the prior model story when the model call fails` test
+- status: done
+- evidence: `tsc` clean, `biome` 229 files clean (4 pre-existing infos), `pnpm test` → 62 files / 577 passed, `pnpm build` ok
+- notes: Direct fix for the dev-daemon clobbering (model_error regens overwrote 2 good stories at 10:52). tsx-watch daemon picks the fix up on save with no restart. Daemon's own model_error root cause (auth/quota/network on its side) still open — keep-old only stops the data loss, not the failure.
+
+## 2026-10-29 — Model client IPv4 fallback for broken-IPv6 hosts
+
+- item: `fetchWithIpv4Fallback` in `packages/model` — transport-level fetch rejections retry once with an IPv4-pinned undici dispatcher, reporting the original error if both fail; HTTP error statuses keep the existing path (no retry). New undici dep on `@echo/model`. Tests: retry-then-success carries a dispatcher, double-failure reports the original error; tech-stack backoff test updated for 2 attempts on transport failure
+- status: done
+- evidence: `tsc` clean, `biome` clean (exit 0; only pre-existing checks-v2.test.ts infos), `pnpm test` → 62 files / 579 passed, `pnpm build` ok; daemon-path probe (`loadLocalEnv` + `modelConfigFromEnv` + tiny `requestJson`) → PROBE OK with real token usage, after consistent `fetch failed` pre-fix
+- notes: Root cause of all daemon `model_error`s: dead IPv6 route on this host (ENETUNREACH; VPN-related), undici fast-fails instead of falling back like curl. Success paths unchanged (zero overhead when first attempt works). Trigger is machine-specific; the fallback protects any host with broken v6.
