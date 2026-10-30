@@ -103,6 +103,40 @@ describe("model client", () => {
     ).rejects.toMatchObject({ code: "model_error", status: 401 });
   });
 
+  it("retries a transport failure once with an IPv4 fallback dispatcher", async () => {
+    // Broken-IPv6 hosts: undici can fail the whole request on a dead v6
+    // route instead of falling back to v4. The retry must carry a
+    // dispatcher; success-path callers never see one.
+    const fetchImpl = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        throw new TypeError("fetch failed");
+      })
+      .mockImplementationOnce(async () => jsonResponse(completion("hello")));
+    const result = await chatCompletions(config, [{ role: "user", content: "hi" }], {
+      fetchImpl: fetchImpl as typeof fetch,
+    });
+    expect(result.content).toBe("hello");
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const [, retryOptions] = fetchImpl.mock.calls[1] as unknown as [
+      string,
+      RequestInit & { dispatcher?: unknown },
+    ];
+    expect(retryOptions).toMatchObject({ dispatcher: expect.anything() });
+  });
+
+  it("reports the original error when the IPv4 fallback also fails", async () => {
+    const fetchImpl = vi.fn(async () => {
+      throw new TypeError("fetch failed");
+    });
+    await expect(
+      chatCompletions(config, [{ role: "user", content: "q" }], {
+        fetchImpl: fetchImpl as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ code: "model_error", message: "fetch failed" });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
   it("sends reasoning_effort from config and lets the call override it", async () => {
     const withEffort: ModelConfig = { ...config, reasoningEffort: "low" };
     const fetchImpl = vi.fn(async () => jsonResponse(completion("hello")));
