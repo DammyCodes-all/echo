@@ -278,12 +278,16 @@ function LooseEndGroup({
 }
 
 function DetourItem({ detour }: { detour: Detour }) {
-  const [open, setOpen] = useState(false);
+  const plainReason =
+    detour.costReason === "repeated_attempt"
+      ? "Repeated tries"
+      : detour.costReason === "reverted"
+        ? "Reverted"
+        : "Side effect";
+  const attemptNoun = detour.attemptIds.length === 1 ? "try" : "tries";
   return (
     <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-      <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-        {detour.costReason.replace("_", " ")}
-      </p>
+      <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">{plainReason}</p>
       <p className="mt-2 text-dusk-body text-dusk-ink">{detour.headline}</p>
       {detour.claims.length > 0 ? (
         <ul className="mt-3 space-y-1 text-sm">
@@ -292,22 +296,10 @@ function DetourItem({ detour }: { detour: Detour }) {
           ))}
         </ul>
       ) : null}
-      <p className="mt-3 text-sm text-dusk-muted">The full dead-end tree:</p>
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className="mt-1 text-sm text-dusk-muted underline underline-offset-4"
-      >
-        {open ? "Hide attempt nodes" : `Show ${detour.attemptIds.length} attempt nodes`}
-      </button>
-      {open ? (
-        // attemptIds ARE the tree nodes: each id names one dead-end attempt.
-        <ul className="mt-2 space-y-1 font-mono text-xs text-dusk-muted">
-          {detour.attemptIds.map((attemptId) => (
-            <li key={attemptId}>{attemptId}</li>
-          ))}
-        </ul>
-      ) : null}
+      <p className="mt-3 text-sm text-dusk-muted">
+        Tried and dropped after {detour.attemptIds.length} {attemptNoun} — nothing from{" "}
+        {detour.attemptIds.length === 1 ? "it" : "these"} survived.
+      </p>
     </div>
   );
 }
@@ -433,7 +425,14 @@ export function StoryPage() {
     reviewQuery.data?.hunks.map((hunk): [string, ReviewHunk] => [hunk.id, hunk]) ?? [],
   );
   const historyEntries = toHistoryEntries(historyQuery.data);
-  const looseEndGroups = groupLooseEndsByBehavior(story.looseEnds, story.cards);
+  // Untested loose ends exist iff the session ran nothing, so one shared
+  // notice replaces the per-card line. Filtered here (not in the artifact)
+  // so Ask/citations keep the full data while the UI shows it once.
+  const noPassingRun = story.looseEnds.some((end) => end.kind === "untested");
+  const visibleLooseEnds = noPassingRun
+    ? story.looseEnds.filter((end) => end.kind !== "untested")
+    : story.looseEnds;
+  const looseEndGroups = groupLooseEndsByBehavior(visibleLooseEnds, story.cards);
   const hasAskVsResult =
     story.askVsResult.asked.length +
       story.askVsResult.delivered.length +
@@ -462,10 +461,6 @@ export function StoryPage() {
       return next;
     });
   };
-  // Untested loose ends exist iff the session ran nothing, so one shared
-  // notice replaces the per-card line.
-  const noPassingRun = story.looseEnds.some((end) => end.kind === "untested");
-
   const handleAsk = (asked: { id: string; headline: string }) => {
     track("ask_opened", asked.id);
     setAskCard(asked);
@@ -702,7 +697,7 @@ export function StoryPage() {
             </section>
           ) : null}
 
-          {story.looseEnds.length > 0 || story.blindSpots.length > 0 ? (
+          {visibleLooseEnds.length > 0 || story.blindSpots.length > 0 ? (
             <section id="loose-ends" className="scroll-mt-8 space-y-3">
               <h2 className="text-xl font-semibold tracking-tight">Loose ends</h2>
               {looseEndGroups.length > 0 ? (

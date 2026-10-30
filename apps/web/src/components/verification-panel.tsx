@@ -65,6 +65,17 @@ export function VerificationPanel({
   starting,
   compact = false,
 }: VerificationPanelProps) {
+  const total = counts.total;
+  const plain =
+    total <= 0
+      ? "Nothing shipped to verify."
+      : counts.observed === total
+        ? `All ${total} ${total === 1 ? "change" : "changes"} fully observed.`
+        : counts.observed > 0
+          ? `${counts.observed} of ${total} changes fully observed, ${total - counts.observed} need a look.`
+          : total === counts.partlyObserved && counts.partlyObserved > 0
+            ? `All ${total} changes partly observed — no passing run on the tape.`
+            : `${total - counts.observed} of ${total} changes still need verification.`;
   return (
     <div
       className={compact ? "space-y-2" : "space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-5"}
@@ -72,24 +83,30 @@ export function VerificationPanel({
       <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
         How much is verified
       </p>
-      <div className="flex flex-wrap items-baseline gap-x-6 gap-y-3">
-        {SEGMENTS.map(({ badge }) => {
-          const style = VERIFICATION_BADGE[badge];
-          return (
-            <span key={badge} title={style.title} className="flex items-baseline gap-2">
-              <span className="text-2xl font-semibold text-dusk-ink">
-                {countFor(counts, badge)}
-              </span>
-              <span
-                className={`rounded-dusk-code px-2 py-0.5 text-xs font-semibold ${style.className}`}
-              >
-                {style.label}
-              </span>
-            </span>
-          );
-        })}
-      </div>
+      <p className="text-sm text-dusk-ink">{plain}</p>
       <VerifiedStackedBar counts={counts} />
+      <details className="text-xs text-dusk-muted">
+        <summary className="cursor-pointer underline underline-offset-4">
+          What do these levels mean?
+        </summary>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {SEGMENTS.map(({ badge }) => {
+            const style = VERIFICATION_BADGE[badge];
+            return (
+              <span key={badge} title={style.title} className="flex items-baseline gap-2">
+                <span className="text-sm font-semibold text-dusk-ink">
+                  {countFor(counts, badge)}
+                </span>
+                <span
+                  className={`rounded-dusk-code px-2 py-0.5 text-xs font-semibold ${style.className}`}
+                >
+                  {style.label}
+                </span>
+              </span>
+            );
+          })}
+        </div>
+      </details>
       <nav aria-label="Story sections" className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
         <a
           href="#what-changed"
