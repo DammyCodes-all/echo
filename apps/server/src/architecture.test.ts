@@ -18,7 +18,10 @@ import {
   applyPatch,
   computeEvidence,
   createArchitectureService,
+  edgeCapFor,
+  findTransitiveEdges,
   mergeRegenerate,
+  trimEdgesToCap,
 } from "./architecture";
 
 const silentLog = { info: () => {}, error: () => {} };
@@ -163,6 +166,21 @@ describe("applyPatch", () => {
     expect(structure.edges).toEqual([{ from: "reader", to: "tape", label: "appends" }]);
   });
 
+  test("addEdge on an existing pair updates bidirectional when set", () => {
+    const { structure } = applyPatch(archFixture(), [
+      { op: "addEdge", edge: { from: "reader", to: "tape", bidirectional: true } },
+    ]);
+    expect(structure.edges).toEqual([{ from: "reader", to: "tape", bidirectional: true }]);
+  });
+
+  test("addEdge reversing an existing pair merges into one bidirectional edge", () => {
+    const { structure, droppedEdges } = applyPatch(archFixture(), [
+      { op: "addEdge", edge: { from: "tape", to: "reader", label: "reads" } },
+    ]);
+    expect(droppedEdges).toEqual([]);
+    expect(structure.edges).toEqual([{ from: "reader", to: "tape", bidirectional: true }]);
+  });
+
   test.each([
     ["duplicate node", [{ op: "addNode", node: { ...archFixture().nodes[0] } }]],
     [
@@ -246,6 +264,111 @@ describe("mergeRegenerate", () => {
   });
 });
 
+describe("edgeCapFor", () => {
+  test("scales at ~1.3 edges per node, rounded up", () => {
+    expect(edgeCapFor(1)).toBe(2);
+    expect(edgeCapFor(8)).toBe(11);
+    expect(edgeCapFor(10)).toBe(13);
+    expect(edgeCapFor(12)).toBe(16);
+    expect(edgeCapFor(15)).toBe(20);
+  });
+});
+
+describe("findTransitiveEdges", () => {
+  test("flags the shortcut in a triangle, keeps the path", () => {
+    const edges = [
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
+      { from: "a", to: "c" },
+    ];
+    expect(findTransitiveEdges(edges)).toEqual([2]);
+  });
+
+  test("flags only the full-span edge in a diamond", () => {
+    const edges = [
+      { from: "a", to: "b" },
+      { from: "a", to: "c" },
+      { from: "b", to: "d" },
+      { from: "c", to: "d" },
+      { from: "a", to: "d" },
+    ];
+    expect(findTransitiveEdges(edges)).toEqual([4]);
+  });
+
+  test("keeps cycles, forks, and lone self-loops", () => {
+    expect(
+      findTransitiveEdges([
+        { from: "a", to: "b" },
+        { from: "b", to: "a" },
+      ]),
+    ).toEqual([]);
+    expect(
+      findTransitiveEdges([
+        { from: "a", to: "b" },
+        { from: "a", to: "c" },
+      ]),
+    ).toEqual([]);
+    expect(findTransitiveEdges([{ from: "a", to: "a" }])).toEqual([]);
+  });
+
+  test("keeps a self-loop even when a return cycle exists", () => {
+    expect(
+      findTransitiveEdges([
+        { from: "a", to: "a" },
+        { from: "a", to: "b" },
+        { from: "b", to: "a" },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("trimEdgesToCap", () => {
+  test("leaves an under-cap graph untouched", () => {
+    const edges = [
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
+    ];
+    const trimmed = trimEdgesToCap(edges, 4);
+    expect(trimmed.edges).toEqual(edges);
+    expect(trimmed.droppedDuplicates).toBe(0);
+    expect(trimmed.droppedTransitive).toBe(0);
+    expect(trimmed.droppedOverflow).toBe(0);
+  });
+
+  test("drops duplicates and transitive edges before the cap bites", () => {
+    const edges = [
+      { from: "a", to: "b" },
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
+      { from: "a", to: "c" },
+    ];
+    const trimmed = trimEdgesToCap(edges, 4);
+    expect(trimmed.edges).toEqual([
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
+    ]);
+    expect(trimmed.droppedDuplicates).toBe(1);
+    expect(trimmed.droppedTransitive).toBe(1);
+    expect(trimmed.droppedOverflow).toBe(0);
+  });
+
+  test("keeps the head when still over after transitive removal", () => {
+    const edges = [
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
+      { from: "c", to: "a" },
+      { from: "a", to: "d" },
+    ];
+    const trimmed = trimEdgesToCap(edges, 2);
+    expect(trimmed.edges).toEqual([
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
+    ]);
+    expect(trimmed.droppedTransitive).toBe(0);
+    expect(trimmed.droppedOverflow).toBe(2);
+  });
+});
+
 describe("computeEvidence", () => {
   test("unions sessions across globs with the latest touch", () => {
     const evidence = computeEvidence(
@@ -281,6 +404,26 @@ describe("computeEvidence", () => {
     expect(evidence.bad).toEqual({ sessions: 0, totalSessions: 3, lastTouched: null });
   });
 });
+
+function graphFixture(nodeIds: string[], edges: Array<[string, string]>) {
+  return {
+    groups: [{ id: "core", label: "Core", order: 0 }],
+    nodes: nodeIds.map((id) => ({
+      id,
+      label: `Node ${id}`,
+      group: "core",
+      description: "Does things.",
+      paths: ["src/**"],
+      status: "existing",
+    })),
+    edges: edges.map(([from, to]) => ({ from, to })),
+  };
+}
+
+function seedRepo(dir: string): void {
+  mkdirSync(join(dir, "repo"), { recursive: true });
+  writeFileSync(join(dir, "repo", "README.md"), "# Test repo");
+}
 
 describe("service", () => {
   test("get: 404, empty state, and evidence", () => {
@@ -559,8 +702,305 @@ describe("service", () => {
       expect((outcome as { status: number }).status).toBe(202);
       await done;
       expect(events.map((event) => event.type)).toContain("generation.progress");
-      expect(events).toContainEqual({ type: "generation.done", version: 1 });
+      expect(events).toContainEqual({ type: "generation.done", version: 1, warnings: [] });
       expect(events).toContainEqual({ type: "architecture.updated", version: 1 });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("generate repairs an over-cap draft once and saves the repair", async () => {
+    const { db, dir } = seedDb();
+    try {
+      seedRepo(dir);
+      seedCodeIndex(db);
+      // Acyclic: 4 nodes cap at 6 but a DAG on 4 nodes holds at most 6,
+      // so over-cap drafts need 5 nodes (cap 7).
+      const over = graphFixture(
+        ["a", "b", "c", "d", "e"],
+        [
+          ["a", "b"],
+          ["b", "c"],
+          ["c", "d"],
+          ["d", "e"],
+          ["a", "c"],
+          ["a", "d"],
+          ["a", "e"],
+          ["b", "d"],
+          ["b", "e"],
+        ],
+      );
+      // Plain path: 4 edges, acyclic, none transitive, under the cap.
+      const repaired = graphFixture(
+        ["a", "b", "c", "d", "e"],
+        [
+          ["a", "b"],
+          ["b", "c"],
+          ["c", "d"],
+          ["d", "e"],
+        ],
+      );
+      const { fetchImpl, calls } = stubFetchQueue([over, repaired]);
+      const service = createArchitectureService(
+        { db, log: silentLog },
+        { env: ENV, fetchImpl, background: false },
+      );
+      const outcome = await service.generate("prj_1");
+      expect(outcome.status).toBe(200);
+      expect(calls()).toBe(2);
+      expect(outcome.body).toEqual({ version: 1, warnings: [] });
+      const latest = getLatestArchitectureVersion(db, "prj_1");
+      const saved = JSON.parse(latest?.payloadJson ?? "{}") as Architecture;
+      expect(saved.edges).toHaveLength(4);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("generate trims with a warning when the repair still exceeds the cap", async () => {
+    const { db, dir } = seedDb();
+    try {
+      seedRepo(dir);
+      seedCodeIndex(db);
+      const over = graphFixture(
+        ["a", "b", "c", "d", "e"],
+        [
+          ["a", "b"],
+          ["b", "c"],
+          ["c", "d"],
+          ["d", "e"],
+          ["a", "c"],
+          ["a", "d"],
+          ["a", "e"],
+          ["b", "d"],
+          ["b", "e"],
+        ],
+      );
+      const stillOver = graphFixture(
+        ["a", "b", "c", "d", "e"],
+        [
+          ["a", "b"],
+          ["b", "c"],
+          ["c", "d"],
+          ["d", "e"],
+          ["a", "c"],
+          ["a", "d"],
+          ["a", "e"],
+          ["b", "e"],
+        ],
+      );
+      const { fetchImpl, calls } = stubFetchQueue([over, stillOver]);
+      const service = createArchitectureService(
+        { db, log: silentLog },
+        { env: ENV, fetchImpl, background: false },
+      );
+      const outcome = await service.generate("prj_1");
+      expect(outcome.status).toBe(200);
+      expect(calls()).toBe(2);
+      const body = outcome.body as { version: number; warnings: string[] };
+      expect(body.warnings).toHaveLength(1);
+      expect(body.warnings[0]).toMatch(/kept \d+ of 8 edges \(cap 7 for 5 nodes\)/);
+      const latest = getLatestArchitectureVersion(db, "prj_1");
+      const saved = JSON.parse(latest?.payloadJson ?? "{}") as Architecture;
+      expect(saved.edges.length).toBeLessThanOrEqual(7);
+      expect(saved.edges.length).toBeLessThan(8);
+      for (const edge of saved.edges) {
+        expect(stillOver.edges).toContainEqual(edge);
+      }
+      expect(findTransitiveEdges(saved.edges)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("generate trims the fresh draft when the repair is invalid", async () => {
+    const { db, dir } = seedDb();
+    try {
+      seedRepo(dir);
+      seedCodeIndex(db);
+      const over = graphFixture(
+        ["a", "b", "c", "d", "e"],
+        [
+          ["a", "b"],
+          ["b", "c"],
+          ["c", "d"],
+          ["d", "e"],
+          ["a", "c"],
+          ["a", "d"],
+          ["a", "e"],
+          ["b", "d"],
+          ["b", "e"],
+        ],
+      );
+      const { fetchImpl, calls } = stubFetchQueue([over, "NOT-AN-ARCHITECTURE"]);
+      const service = createArchitectureService(
+        { db, log: silentLog },
+        { env: ENV, fetchImpl, background: false },
+      );
+      const outcome = await service.generate("prj_1");
+      expect(outcome.status).toBe(200);
+      expect(calls()).toBe(2);
+      const body = outcome.body as { version: number; warnings: string[] };
+      expect(body.warnings).toHaveLength(1);
+      expect(body.warnings[0]).toMatch(/kept \d+ of 9 edges \(cap 7 for 5 nodes\)/);
+      const latest = getLatestArchitectureVersion(db, "prj_1");
+      const saved = JSON.parse(latest?.payloadJson ?? "{}") as Architecture;
+      expect(saved.edges.length).toBeLessThanOrEqual(7);
+      expect(saved.edges.length).toBeLessThan(9);
+      expect(findTransitiveEdges(saved.edges)).toEqual([]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("generate streams trim warnings on generation.done", async () => {
+    const { db, dir } = seedDb();
+    try {
+      mkdirSync(join(dir, "repo"), { recursive: true });
+      seedCodeIndex(db);
+      const over = graphFixture(
+        ["a", "b"],
+        [
+          ["a", "b"],
+          ["a", "b"],
+          ["a", "b"],
+          ["a", "b"],
+        ],
+      );
+      const { fetchImpl } = stubFetchQueue([over, over]);
+      const service = createArchitectureService({ db, log: silentLog }, { env: ENV, fetchImpl });
+      const events: Array<{ type: string }> = [];
+      const done = new Promise<void>((resolve) => {
+        service.subscribe("prj_1", (event) => {
+          events.push(event);
+          if (event.type === "generation.done") resolve();
+        });
+      });
+      const outcome = service.generate("prj_1");
+      expect((outcome as { status: number }).status).toBe(202);
+      await done;
+      const doneEvent = events.find((event) => event.type === "generation.done") as unknown as {
+        version: number;
+        warnings: string[];
+      };
+      expect(doneEvent.version).toBe(1);
+      expect(doneEvent.warnings).toHaveLength(1);
+      expect(doneEvent.warnings[0]).toMatch(
+        /kept 1 of 4 edges \(cap 3 for 2 nodes\); dropped 3 duplicates/,
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("generate merges an opposite pair with an acyclic warning, no repair", async () => {
+    const { db, dir } = seedDb();
+    try {
+      seedRepo(dir);
+      seedCodeIndex(db);
+      const fresh = graphFixture(
+        ["a", "b", "c", "d"],
+        [
+          ["a", "b"],
+          ["b", "a"],
+          ["c", "d"],
+        ],
+      );
+      const { fetchImpl, calls } = stubFetchQueue([fresh]);
+      const service = createArchitectureService(
+        { db, log: silentLog },
+        { env: ENV, fetchImpl, background: false },
+      );
+      const outcome = await service.generate("prj_1");
+      expect(outcome.status).toBe(200);
+      expect(calls()).toBe(1);
+      const body = outcome.body as { version: number; warnings: string[] };
+      expect(body.warnings).toHaveLength(1);
+      expect(body.warnings[0]).toMatch(
+        /kept the graph acyclic \(merged 1 opposite pairs into bidirectional edges\)/,
+      );
+      const latest = getLatestArchitectureVersion(db, "prj_1");
+      const saved = JSON.parse(latest?.payloadJson ?? "{}") as Architecture;
+      expect(saved.edges).toEqual([
+        { from: "a", to: "b", bidirectional: true },
+        { from: "c", to: "d" },
+      ]);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("generate trims after carrying proposed parts over the cap", async () => {
+    const { db, dir } = seedDb();
+    try {
+      seedRepo(dir);
+      seedCodeIndex(db);
+      insertArchitectureVersion(db, {
+        projectId: "prj_1",
+        version: 1,
+        payloadJson: JSON.stringify({
+          version: 1,
+          generatedAt: "2026-10-29T00:00:00.000Z",
+          groups: [{ id: "core", label: "Core", order: 0 }],
+          nodes: ["a", "b", "c", "d"]
+            .map((id) => ({
+              id,
+              label: `Node ${id}`,
+              group: "core",
+              description: "Does things.",
+              paths: ["src/**"],
+              status: "existing",
+            }))
+            .concat(
+              ["p", "q"].map((id) => ({
+                id,
+                label: `Node ${id}`,
+                group: "core",
+                description: "Does things.",
+                paths: [],
+                status: "proposed",
+              })),
+            ),
+          // Proposed cross edges only: every carried edge touches p or q, so
+          // all five survive the merge.
+          edges: [
+            { from: "p", to: "c" },
+            { from: "p", to: "d" },
+            { from: "a", to: "q" },
+            { from: "b", to: "q" },
+            { from: "p", to: "q" },
+          ],
+        }),
+        generator: "test",
+      });
+      // K_{2,2} across {a,b} -> {c,d}: acyclic, nothing transitive.
+      const fresh = graphFixture(
+        ["a", "b", "c", "d"],
+        [
+          ["a", "c"],
+          ["a", "d"],
+          ["b", "c"],
+          ["b", "d"],
+        ],
+      );
+      const { fetchImpl } = stubFetchQueue([fresh]);
+      const service = createArchitectureService(
+        { db, log: silentLog },
+        { env: ENV, fetchImpl, background: false },
+      );
+      const outcome = await service.generate("prj_1");
+      expect(outcome.status).toBe(200);
+      const body = outcome.body as { version: number; warnings: string[] };
+      // Fresh is under cap (4 edges, cap 6, nothing transitive): no fresh
+      // warning. Merged is a 9-edge K_{3,3} across {a,b,p} -> {c,d,q} over an
+      // 8 cap with no length-2 path anywhere (nothing transitive): the
+      // carried-over tail edge drops with a warning.
+      expect(body.warnings).toHaveLength(1);
+      expect(body.warnings[0]).toMatch(/kept 8 of 9 edges \(cap 8 for 6 nodes\)/);
+      const latest = getLatestArchitectureVersion(db, "prj_1");
+      const saved = JSON.parse(latest?.payloadJson ?? "{}") as Architecture;
+      expect(saved.edges).toHaveLength(8);
+      expect(saved.edges).not.toContainEqual({ from: "p", to: "q" });
     } finally {
       db.close();
     }

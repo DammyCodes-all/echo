@@ -1,15 +1,18 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
+  ARCHITECTURE_EDGE_CAP_RATIO,
   type Architecture,
   type ArchitectureChatModelOutput,
   ArchitectureChatModelOutputSchema,
+  type ArchitectureEdge,
   type ArchitectureModelOutput,
   ArchitectureModelOutputSchema,
   type ArchitectureNodeEvidence,
   type ArchitecturePatch,
   type ArchitecturePatchOp,
   ArchitectureSchema,
+  enforceAcyclicEdges,
 } from "@echo/contracts";
 import {
   type EchoDb,
@@ -32,7 +35,7 @@ import {
 import { redactJson } from "@echo/redaction";
 import { Minimatch } from "minimatch";
 
-export const ARCHITECTURE_PROMPT_VERSION = "architecture-v1";
+export const ARCHITECTURE_PROMPT_VERSION = "architecture-v3";
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_TOKENS = 16_000;
 const DEFAULT_REASONING_EFFORT = "low";
@@ -73,7 +76,11 @@ export function applyPatch(current: Architecture, patch: ArchitecturePatch): App
   if (!parsed.success) {
     throw new ArchitecturePatchError(`patched architecture is invalid: ${parsed.error.message}`);
   }
-  return { structure: parsed.data, droppedEdges };
+  // Same invariant as generation: opposite pairs merge visibly (the diagram
+  // draws both arrowheads), longer cycles lose their closer. No warnings
+  // channel on this path — the drawn graph shows the result.
+  const acyclic = enforceAcyclicEdges(parsed.data.edges);
+  return { structure: { ...parsed.data, edges: acyclic.edges }, droppedEdges };
 
   function applyOp(op: ArchitecturePatchOp): void {
     switch (op.op) {
@@ -131,6 +138,9 @@ export function applyPatch(current: Architecture, patch: ArchitecturePatch): App
         const existing = edges.find((edge) => edge.from === op.edge.from && edge.to === op.edge.to);
         if (existing) {
           existing.label = op.edge.label;
+          if (op.edge.bidirectional !== undefined) {
+            existing.bidirectional = op.edge.bidirectional;
+          }
           return;
         }
         edges.push({ ...op.edge });
@@ -187,6 +197,88 @@ export function mergeRegenerate(
     }
   }
   return ArchitectureModelOutputSchema.parse({ groups, nodes, edges });
+}
+
+export function edgeCapFor(nodeCount: number): number {
+  return Math.max(1, Math.ceil(nodeCount * ARCHITECTURE_EDGE_CAP_RATIO));
+}
+
+/** Indices of transitive edges: A -> C is transitive when a path A -> ... -> C
+ *  exists without it. Computed against the full set, removed all at once, so
+ *  diamonds and triangles resolve in one pass. Cycles are never flagged, and
+ *  neither are self-loops: a part's direct self-dependence is not implied by
+ *  a longer return cycle, so dropping it would lose meaning. */
+export function findTransitiveEdges(edges: ArchitectureEdge[]): number[] {
+  const dropped: number[] = [];
+  for (let i = 0; i < edges.length; i++) {
+    const edge = edges[i] as ArchitectureEdge;
+    if (edge.from === edge.to) continue;
+    const seen = new Set<string>([edge.from]);
+    const queue = [edge.from];
+    let found = false;
+    while (queue.length > 0 && !found) {
+      const current = queue.shift() as string;
+      for (let j = 0; j < edges.length; j++) {
+        if (j === i) continue;
+        const candidate = edges[j] as ArchitectureEdge;
+        if (candidate.from !== current || seen.has(candidate.to)) continue;
+        if (candidate.to === edge.to) {
+          found = true;
+          break;
+        }
+        seen.add(candidate.to);
+        queue.push(candidate.to);
+      }
+    }
+    if (found) dropped.push(i);
+  }
+  return dropped;
+}
+
+export interface TrimmedEdges {
+  edges: ArchitectureEdge[];
+  droppedDuplicates: number;
+  droppedTransitive: number;
+  droppedOverflow: number;
+}
+
+/** Deterministic trim: exact duplicates first, then transitive edges, then the
+ *  tail (the model lists important edges first, so the head is kept). */
+export function trimEdgesToCap(edges: ArchitectureEdge[], cap: number): TrimmedEdges {
+  const seen = new Set<string>();
+  const deduped = edges.filter((edge) => {
+    const key = `${edge.from}→${edge.to}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+  const transitive = new Set(findTransitiveEdges(deduped));
+  const kept = deduped.filter((_, index) => !transitive.has(index));
+  if (kept.length <= cap) {
+    return {
+      edges: kept,
+      droppedDuplicates: edges.length - deduped.length,
+      droppedTransitive: deduped.length - kept.length,
+      droppedOverflow: 0,
+    };
+  }
+  return {
+    edges: kept.slice(0, cap),
+    droppedDuplicates: edges.length - deduped.length,
+    droppedTransitive: deduped.length - kept.length,
+    droppedOverflow: kept.length - cap,
+  };
+}
+
+/** Counts only — safe to log and to send over the wire unredacted. */
+function trimWarning(had: number, trimmed: TrimmedEdges, cap: number, nodeCount: number): string {
+  const parts = [
+    `kept ${trimmed.edges.length} of ${had} edges (cap ${cap} for ${nodeCount} nodes)`,
+  ];
+  if (trimmed.droppedDuplicates > 0) parts.push(`dropped ${trimmed.droppedDuplicates} duplicates`);
+  if (trimmed.droppedTransitive > 0) parts.push(`dropped ${trimmed.droppedTransitive} transitive`);
+  if (trimmed.droppedOverflow > 0) parts.push(`dropped ${trimmed.droppedOverflow} more to fit`);
+  return parts.join("; ");
 }
 
 export function computeEvidence(
@@ -292,7 +384,7 @@ export function readArchitectureDocs(root: string): ArchitectureDocs {
 
 export type ArchitectureStreamEvent =
   | { type: "generation.progress"; stage: string; progress: number }
-  | { type: "generation.done"; version: number }
+  | { type: "generation.done"; version: number; warnings: string[] }
   | { type: "generation.error"; message: string }
   | { type: "architecture.updated"; version: number };
 
@@ -326,14 +418,14 @@ export interface ArchitectureOutcome {
 }
 
 const GENERATION_SYSTEM = `You describe a codebase's FUNCTIONAL architecture: what the system does, grouped by purpose (capture, processing, storage, interfaces). NOT a file tree, NOT an import graph.
-Return ONLY JSON: {"groups":[{"id","label"}],"nodes":[{"id","label","group","description","paths","status":"existing"}],"edges":[{"from","to","label?"}]}.
-Rules: 8 to 15 nodes; labels of 3 words or fewer; one-line descriptions; every node in a known group; every edge between known nodes; paths are repo-relative globs (e.g. "packages/capture-*/**") mapping the part to the code it owns. No coordinates, no markdown.`;
+Return ONLY JSON: {"groups":[{"id","label","order"}],"nodes":[{"id","label","group","description","paths","status":"existing"}],"edges":[{"from","to","label?","bidirectional?"}]}.
+Rules: 8 to 15 nodes; labels of 3 words or fewer; one-line descriptions; every node in a known group; every edge between known nodes; paths are repo-relative globs (e.g. "packages/capture-*/**") mapping the part to the code it owns. Groups carry order (0-based flow rank, upstream first: capture before processing before storage before interfaces). Edges are primary data or control flow only — not uses/imports, no transitive edges (if A -> B -> C, never add A -> C). One edge per node pair, directed by write/data flow and never forming a cycle: a read from storage goes in the reader's description, never as a backward edge — set bidirectional true only when the return flow is important enough to draw. Keep edges under ~1.3 per node (e.g. at most 15 edges for 12 nodes). No coordinates, no markdown.`;
 
 const CHAT_SYSTEM = `You answer questions about a project's functional architecture and optionally change it.
 The current architecture JSON, the pinned node (if any), and conversation context are in the user message.
 Return ONLY JSON: {"answer": string, "patch"?: Op[], "autoApply": boolean, "relatedNodeIds": string[]}.
-Op is one of: {"op":"addNode","node":{...,"status":"proposed"}} | {"op":"updateNode","id","patch"} | {"op":"removeNode","id"} | {"op":"addEdge","edge":{"from","to","label?"}} | {"op":"removeEdge","from","to"} | {"op":"addGroup","group":{"id","label"}}.
-New nodes keep within the same constraints (label 3 words max, known group, one-line description, globs for paths). Added nodes use status "proposed" unless you verified the part exists in the code.
+Op is one of: {"op":"addNode","node":{...,"status":"proposed"}} | {"op":"updateNode","id","patch"} | {"op":"removeNode","id"} | {"op":"addEdge","edge":{"from","to","label?","bidirectional?"}} | {"op":"removeEdge","from","to"} | {"op":"addGroup","group":{"id","label","order?"}}.
+New nodes keep within the same constraints (label 3 words max, known group, one-line description, globs for paths). Added nodes use status "proposed" unless you verified the part exists in the code. Added edges must be primary data or control flow, never transitive; never add the reverse of an existing edge — one edge per pair, directed by write/data flow (reads live in descriptions), bidirectional true only when the return flow matters; added groups include order (flow rank, upstream first).
 Set autoApply true ONLY when the user message is a clear, specific architecture change. When the request is ambiguous, exploratory, or a question, return the patch you would apply with autoApply false (the UI shows an Apply button) or no patch at all for pure questions.
 relatedNodeIds lists the node ids your answer refers to.`;
 
@@ -492,9 +584,53 @@ export function createArchitectureService(
     return sections.join("\n\n");
   }
 
-  async function runGeneration(projectId: string, root: string): Promise<void> {
+  function repairPrompt(fresh: ArchitectureModelOutput, cap: number): string {
+    return [
+      `Your graph has ${fresh.edges.length} edges for ${fresh.nodes.length} nodes, over the cap of ${cap}.`,
+      `Return the SAME groups and nodes with at most ${cap} edges: keep only primary data or control flow, drop every transitive edge (A -> C whenever A -> B -> C exists), then drop the least important until under the cap.`,
+      `Return ONLY the same JSON shape, no markdown.`,
+      `Previous output:`,
+      JSON.stringify(fresh),
+    ].join("\n");
+  }
+
+  function trimmedWithWarning(
+    structure: ArchitectureModelOutput,
+    warnings: string[],
+  ): ArchitectureModelOutput {
+    const cap = edgeCapFor(structure.nodes.length);
+    const trimmed = trimEdgesToCap(structure.edges, cap);
+    const dropped = trimmed.droppedDuplicates + trimmed.droppedTransitive + trimmed.droppedOverflow;
+    if (dropped === 0) return structure;
+    warnings.push(trimWarning(structure.edges.length, trimmed, cap, structure.nodes.length));
+    return { ...structure, edges: trimmed.edges };
+  }
+
+  function acyclicWithWarning(
+    structure: ArchitectureModelOutput,
+    warnings: string[],
+  ): ArchitectureModelOutput {
+    const acyclic = enforceAcyclicEdges(structure.edges);
+    if (acyclic.merged === 0 && acyclic.dropped === 0) return structure;
+    const parts = [];
+    if (acyclic.merged > 0) {
+      const pair = acyclic.merged === 1 ? "pair" : "pairs";
+      parts.push(`merged ${acyclic.merged} opposite ${pair} into bidirectional edges`);
+    }
+    if (acyclic.dropped > 0) {
+      const edge = acyclic.dropped === 1 ? "edge" : "edges";
+      parts.push(`dropped ${acyclic.dropped} cycle-closing ${edge}`);
+    }
+    warnings.push(`kept the graph acyclic (${parts.join("; ")})`);
+    return { ...structure, edges: acyclic.edges };
+  }
+
+  async function runGeneration(projectId: string, root: string): Promise<string[]> {
     const progress = (stage: string, value: number) =>
       publish(projectId, { type: "generation.progress", stage, progress: value });
+    const warnings: string[] = [];
+    const parseArchitecture = (raw: unknown): ArchitectureModelOutput =>
+      ArchitectureModelOutputSchema.parse(raw);
     try {
       progress("reading", 0.1);
       const context = buildGenerationContext(projectId, root);
@@ -505,23 +641,67 @@ export function createArchitectureService(
       ];
       const redacted = redactJson(messages).value as ChatMessage[];
       progress("drafting", 0.3);
-      const { value } = await withDeadline((signal) =>
-        requestJson(config, redacted, (raw) => ArchitectureModelOutputSchema.parse(raw), {
-          fetchImpl,
-          retryMaxTokens: Math.max(config.maxTokens * 2, 8192),
-          reasoningEffort: config.reasoningEffort,
-          signal,
-        }),
-      );
+      const fresh = (
+        await withDeadline((signal) =>
+          requestJson(config, redacted, parseArchitecture, {
+            fetchImpl,
+            retryMaxTokens: Math.max(config.maxTokens * 2, 8192),
+            reasoningEffort: config.reasoningEffort,
+            signal,
+          }),
+        )
+      ).value;
+      // Normalize before the cap check: merges and cycle drops shrink the
+      // count, so an over-cap draft can settle without a repair round-trip.
+      let candidate = acyclicWithWarning(fresh, warnings);
+      if (candidate.edges.length > edgeCapFor(candidate.nodes.length)) {
+        // One repair attempt, best-effort: anything short of a valid,
+        // under-cap output falls through to the deterministic trim below.
+        progress("trimming", 0.6);
+        try {
+          const repairMessages: ChatMessage[] = [
+            { role: "system", content: GENERATION_SYSTEM },
+            {
+              role: "user",
+              content: repairPrompt(candidate, edgeCapFor(candidate.nodes.length)),
+            },
+          ];
+          const repairRedacted = redactJson(repairMessages).value as ChatMessage[];
+          const repaired = (
+            await withDeadline((signal) =>
+              requestJson(config, repairRedacted, parseArchitecture, {
+                fetchImpl,
+                retryMaxTokens: Math.max(config.maxTokens * 2, 8192),
+                reasoningEffort: config.reasoningEffort,
+                signal,
+              }),
+            )
+          ).value;
+          candidate = acyclicWithWarning(repaired, warnings);
+        } catch (error) {
+          log.info(
+            { project_id: projectId, err: String(error) },
+            "architecture repair skipped; trimming fresh output",
+          );
+        }
+      }
       progress("saving", 0.85);
+      const merged = mergeRegenerate(
+        currentArchitecture(projectId),
+        trimmedWithWarning(candidate, warnings),
+      );
       const saved = saveVersion(
         projectId,
-        mergeRegenerate(currentArchitecture(projectId), value),
+        trimmedWithWarning(acyclicWithWarning(merged, warnings), warnings),
         `model/${ARCHITECTURE_PROMPT_VERSION}`,
       );
+      if (warnings.length > 0) {
+        log.info({ project_id: projectId, warnings }, "architecture generation adjusted edges");
+      }
       progress("done", 1);
-      publish(projectId, { type: "generation.done", version: saved.version });
+      publish(projectId, { type: "generation.done", version: saved.version, warnings });
       publish(projectId, { type: "architecture.updated", version: saved.version });
+      return warnings;
     } catch (error) {
       // Content-free over the wire: the detail stays in the daemon log.
       const message =
@@ -534,6 +714,7 @@ export function createArchitectureService(
               : "generation failed";
       log.error({ err: String(error), project_id: projectId }, "architecture generation failed");
       publish(projectId, { type: "generation.error", message });
+      return warnings;
     } finally {
       generating.delete(projectId);
     }
@@ -580,7 +761,7 @@ export function createArchitectureService(
       if (!background) {
         return (async () => {
           generating.add(projectId);
-          await runGeneration(projectId, project.root);
+          const warnings = await runGeneration(projectId, project.root);
           const latest = getLatestArchitectureVersion(db, projectId);
           if (!latest) {
             return {
@@ -590,7 +771,10 @@ export function createArchitectureService(
               },
             } satisfies ArchitectureOutcome;
           }
-          return { status: 200, body: { version: latest.version } } satisfies ArchitectureOutcome;
+          return {
+            status: 200,
+            body: { version: latest.version, warnings },
+          } satisfies ArchitectureOutcome;
         })();
       }
       generating.add(projectId);
