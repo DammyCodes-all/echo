@@ -129,11 +129,6 @@ export function ProjectArchitecturePage() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            {architecture ? (
-              <span className="font-mono text-xs text-dusk-muted">
-                v{architecture.version} · {formatTime(architecture.generatedAt)}
-              </span>
-            ) : null}
             <button
               type="button"
               onClick={() => undo.mutate()}
