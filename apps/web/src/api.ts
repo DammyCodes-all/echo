@@ -1,5 +1,8 @@
 import type {
   AnswerConfidence,
+  ArchitectureChatResponse,
+  ArchitectureGetResponse,
+  ArchitecturePatch,
   AskEvidence,
   AskRequest,
   AskResponse,
@@ -145,6 +148,49 @@ export const api = {
     postJson<{ sessionId: string; inserted: number }>(
       `/api/sessions/${encodeURIComponent(sessionId)}/engagement`,
       { events },
+    ),
+  architecture: (projectId: string) =>
+    getJson<ArchitectureGetResponse>(`/api/projects/${encodeURIComponent(projectId)}/architecture`),
+  generateArchitecture: (projectId: string) =>
+    postJson<{ started: boolean }>(
+      `/api/projects/${encodeURIComponent(projectId)}/architecture/generate`,
+      {},
+    ),
+  chatArchitecture: async (
+    projectId: string,
+    input: { message: string; pinnedNodeId: string | null },
+  ): Promise<ArchitectureChatResponse> => {
+    // Custom shape (not postJson): an invalid patch still carries the model's
+    // answer in the error details, and the UI shows both.
+    const response = await fetch(
+      `/api/projects/${encodeURIComponent(projectId)}/architecture/chat`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      },
+    );
+    const body = (await response.json().catch(() => null)) as {
+      error?: { message?: string; details?: unknown };
+    } | null;
+    if (!response.ok) {
+      const error = new Error(
+        body?.error?.message ?? `${response.status} ${response.statusText}`,
+      ) as Error & { details?: unknown };
+      error.details = body?.error?.details;
+      throw error;
+    }
+    return body as ArchitectureChatResponse;
+  },
+  applyArchitecturePatch: (projectId: string, patch: ArchitecturePatch) =>
+    postJson<{ version: number; droppedEdges: Array<{ from: string; to: string }> }>(
+      `/api/projects/${encodeURIComponent(projectId)}/architecture/apply`,
+      { patch },
+    ),
+  undoArchitecture: (projectId: string) =>
+    postJson<{ version: number }>(
+      `/api/projects/${encodeURIComponent(projectId)}/architecture/undo`,
+      {},
     ),
 };
 

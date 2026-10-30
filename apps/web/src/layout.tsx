@@ -11,7 +11,7 @@ export function AppLayout() {
           <NavLink to="/" className="flex items-center">
             <span className="text-lg font-semibold tracking-tight">Echo</span>
           </NavLink>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-3">
             <HeaderSearch />
             <ProjectSort />
             <SettingsMenu />
