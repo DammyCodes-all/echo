@@ -48,17 +48,37 @@ export function redactText(text: string): RedactionResult<string> {
 }
 
 export function redactJson(value: unknown): RedactionResult<unknown> {
-  let serialized: string;
+  let parsed: unknown;
   try {
-    serialized = JSON.stringify(value) ?? "null";
+    // Serialize first so unserializable inputs (BigInt, circular refs) still
+    // refuse here, then work on the parsed tree: redacting inside real string
+    // values and keys means regex matches can never span a JSON escape
+    // boundary (e.g. a secret glued to `\"`), which used to consume the
+    // backslash and emit unparseable JSON. Stringify of the scrubbed tree is
+    // then always valid, so valid input never fails the scan.
+    const serialized = JSON.stringify(value) ?? "null";
+    parsed = JSON.parse(serialized) as unknown;
   } catch {
     throw new Error("unserializable payload; refusing to store");
   }
-  const result = redactText(serialized);
-  try {
-    return { value: JSON.parse(result.value), findings: result.findings };
-  } catch {
-    // redaction must never mangle JSON into something unparseable; treat as failure
-    throw new Error("redaction produced invalid JSON; refusing to store");
-  }
+  const findings: RedactionFinding[] = [];
+  const scrub = (node: unknown): unknown => {
+    if (typeof node === "string") {
+      const result = redactText(node);
+      findings.push(...result.findings);
+      return result.value;
+    }
+    if (Array.isArray(node)) return node.map(scrub);
+    if (node !== null && typeof node === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [key, entry] of Object.entries(node)) {
+        const scrubbedKey = redactText(key);
+        findings.push(...scrubbedKey.findings);
+        out[scrubbedKey.value] = scrub(entry);
+      }
+      return out;
+    }
+    return node;
+  };
+  return { value: scrub(parsed), findings };
 }

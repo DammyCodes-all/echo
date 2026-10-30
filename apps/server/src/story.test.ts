@@ -23,9 +23,16 @@ import {
   upsertProject,
   upsertSession,
 } from "@echo/db";
+import { redactJson } from "@echo/redaction";
 import type { SnapshotResult } from "@echo/snapshots";
 import { snapshotWorkingTree } from "@echo/snapshots";
-import { buildSkeletonStory, extractFacts, SKELETON_PROMPT_VERSION } from "@echo/story";
+import {
+  buildNarrationMessages,
+  buildSkeletonStory,
+  extractFacts,
+  type FactSet,
+  SKELETON_PROMPT_VERSION,
+} from "@echo/story";
 import type { FileAttempt } from "@echo/tape";
 import { describe, expect, it } from "vitest";
 import {
@@ -446,6 +453,36 @@ describe("maybeGenerateStory", () => {
       expect(calls()).toBe(2);
       expect(outcome.story?.shortVersion).toEqual([]);
       expect(outcome.story?.gaps).toEqual(["Echo couldn't verify this: Does 99 things"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("logs content-free verdict kinds for failing drafts", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const { fetchImpl } = stubFetchSequence([
+        modelDraft("Does 99 things"),
+        modelDraft("Does 99 things"),
+      ]);
+      const errors: Array<{ obj: unknown; message?: string }> = [];
+      const log = {
+        info: () => {},
+        error: (obj: unknown, message?: string) => {
+          errors.push({ obj, message });
+        },
+      };
+      const service = createStoryService({ db, dataDir, log }, { env: MODEL_ENV, fetchImpl });
+      const outcome = await service.maybeGenerateStory(sessionId);
+      expect(outcome.outcome).toBe("generated");
+      const verdictLogs = errors.filter((entry) => entry.message === "story draft claim verdicts");
+      expect(verdictLogs.length).toBeGreaterThan(0);
+      const logged = JSON.stringify(verdictLogs.map((entry) => entry.obj));
+      expect(logged).toContain("number-not-in-evidence");
+      // Claim text never leaves the process: neither the failed sentence
+      // nor the offending token may appear in the log payload.
+      expect(logged).not.toContain("Does 99 things");
+      expect(logged).not.toContain("99");
     } finally {
       db.close();
     }
@@ -1107,7 +1144,7 @@ describe("session title stability", () => {
     }
   });
 
-  it("lets the first model narration replace a skeleton title, then freezes", async () => {
+  it("locks the first model title: skeleton upgrades in, later models and skeletons keep it", async () => {
     const { dataDir, db, sessionId, projectId } = await seedSession();
     try {
       const skeletonService = createStoryService(
@@ -1137,9 +1174,47 @@ describe("session title stability", () => {
       expect(renamed.outcome).toBe("generated");
       expect(renamed.story?.summary).toBe("Real model title");
       expect(getSessionSummary(db, sessionId)?.summary).toBe("Real model title");
+
+      // A later skeleton fallback keeps the locked model title instead of
+      // rewriting it with deterministic prose.
+      growTape(db, sessionId, projectId, "evt_late_fallback");
+      const fallback = await skeletonService.maybeGenerateStory(sessionId);
+      expect(fallback.outcome).toBe("skeleton");
+      expect(fallback.story?.summary).toBe("Real model title");
     } finally {
       db.close();
     }
+  });
+});
+
+describe("story request redaction scan", () => {
+  it("accepts cap-sliced emoji/CJK fact text", () => {
+    // Class-A guard: cap() may cut mid-surrogate-pair, but JSON escapes lone
+    // surrogates, so the request scan must accept the rendered prompt. (The
+    // actual Class-A killer was escape-boundary matches in the scanner,
+    // pinned in packages/redaction.)
+    const facts: FactSet = {
+      sessionId: "ses_test",
+      tapeEventCount: 2,
+      facts: [
+        { kind: "prompt", id: "F1", eventId: "evt1", tapeSeq: 1, text: "😀".repeat(3000) },
+        {
+          kind: "agent_text",
+          id: "F2",
+          eventId: "evt2",
+          tapeSeq: 2,
+          text: "日本語テスト".repeat(1000),
+        },
+      ],
+    };
+    const messages = buildNarrationMessages(facts, "ses_test");
+    expect(messages.user).toContain("…(+");
+    expect(() =>
+      redactJson([
+        { role: "system", content: messages.system },
+        { role: "user", content: messages.user },
+      ]),
+    ).not.toThrow();
   });
 });
 
