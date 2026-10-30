@@ -939,3 +939,66 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 228 files (4 pre-existing `useLiteralKeys` infos), `pnpm test` → 61 files / 551 passed + 8 skipped, `pnpm build` ok (incl. server esbuild, which was the original red signal — conflict markers lexed as valid TS so `tsc` stayed green while `esbuild` failed); `db.test.ts` 37/37 in isolation (heal test watched red twice before the fix, green after)
 - notes: The other active session's sort-dropdown entry landed mid-window; its 58/495 counts are superseded by this run (61 files incl. the architecture suites + heal test). Untracked architecture feature files (`contracts/architecture*`, `server/architecture*`, `db/architecture.test*`, web `components/architecture/*`, `hooks/use-architecture-stream.ts`) and the other session's staged/unstaged web edits untouched — architecture feature completeness still theirs to checkpoint. `git status` shows staged resolutions + other sessions' in-flight edits; `git stash list` still holds the pre-merge stash as a backstop.
+
+## 2026-10-30 — Stable / grid order (upsertSession no-op guard)
+
+- item: `upsertSession` in `packages/db` now skips the write when every field matches (first-non-empty title rule preserved) so `updated_at` only moves on real change; previously every 5s ingest poll rewrote every session row, churning project `lastActivity` and reshuffling the / grid and inbox order on each poll
+- status: done
+- evidence: `tsc` clean, biome clean on 3 touched files, `pnpm test` → 58 files / 526 passed (new: 3 db timestamp-stability cases + 1 ingest double-poll case), `pnpm build` ok; live proof: `/api/projects` order flipped every poll before (echo/spike swapping as both timestamps bumped within one poll), now identical across 3 polls with frozen real timestamps
+- notes: `setSessionStoryState`/`setSessionCheckStatus` still bump `updated_at` (genuine activity). No heartbeat reader depends on per-poll bumps (verified: only display ordering reads it). Nothing committed (user owns history).
+
+## 2026-10-29 — Story readability pass (council fix batch)
+
+- item: story UI dedupe + plain language (DetourItem raw attemptIds replaced with "Tried and dropped after N tries" + plain reason; untested loose ends collapsed to the shared no-passing-run banner, per-card todo/assumption ends kept; card headline fallback to why-line when headline is path soup + closed-card touches hidden in that case; VerificationPanel counts folded behind plain sentence + "What do these levels mean?" disclosure); story-v2 prompt (verb-first 12-word headlines, silence-default ask mapping) + skeleton-title yield on skeleton-shaped carryover
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 219 files clean (4 pre-existing infos), `pnpm test` → 58 files / 526 passed, `pnpm build` ok; story-v1→v2 test pins updated (4 asserts); built web bundle grep: "Tried and dropped" + "What do these levels mean" + "partly observed — no passing" present
+- notes: Artifact data untouched (filtering is display-only); verification/risk still deterministic server-side; old cached stories keep v1 text until watermark regen; no browser pass available here — bundle-content verified only.
+
+## 2026-10-29 — Story failure reasons (silent fallback fix)
+
+- item: `narrateFailureGap` in `apps/server/src/story.ts` — narrate failures now persist a content-free reason gap on the skeleton (`output budget exhausted` / `draft failed validation twice` / `model call failed (<code>)` / `request could not be built or scanned`) plus a structured `log.error` with session id + reason; previously all fell back silently
+- status: done
+- evidence: `tsc` clean, `biome` 219 files clean (4 pre-existing infos), `pnpm test` → 58 files / 526 passed, `pnpm build` ok
+- notes: No contract change (reason rides the existing gaps array, surfaced under "What Echo couldn't verify"); error text capped, never payloads. Redo of the 5 run-1 skeleton sessions launched with per-call tracking to attribute each fallback class.
+
+## 2026-10-30 — Home page: drop Projects eyebrow, folder-fidelity skeleton
+
+- item: `/` renders title + description only (eyebrow prop removed from `ProjectsPage`); loading state replaced with `ProjectFolderSkeleton` — 320px folder silhouette (tab + art zone + slivers + bottom-left label lines at the real gf-label offsets) on the exact loaded grid classes, so content swaps in place with no layout shift
+- status: done
+- evidence: `tsc` clean, biome clean on touched files, `pnpm test` → 58 files / 526 passed, `pnpm build` ok; grid classes byte-match the loaded grid (`grid-cols-[auto]` / `md:repeat(2,auto)` / `xl:repeat(3,auto)`), skeleton height (~307px) matches the GlassFolder (H + HEADROOM) * k box at width 320
+- notes: UI verified via build only, no browser pass. Nothing committed (user owns history).
+
+## 2026-10-30 — Home skeleton restyle + 3 cards
+
+- item: simplified `ProjectFolderSkeleton` (tab + single art block + bottom-left label lines, softer tones, hairline border) and cut the loading grid to 3 cards
+- status: done
+- evidence: `tsc` clean, biome clean, `pnpm test` → 58 files / 529 passed (one unrelated narration flake under parallel load, green alone and on full re-run), `pnpm build` ok
+- notes: UI verified via build only, no browser pass. Nothing committed (user owns history).
+
+## 2026-10-30 — Folder skeleton width fix
+
+- item: `ProjectFolderSkeleton` uses a fixed 320px frame (was `w-full` + absolute-only innards, which collapsed the `auto` grid track to label width and rendered thin portrait blobs); added menu-pill block to mirror the card's bottom-right button
+- status: done
+- evidence: `tsc` clean, biome clean, `pnpm test` → 58 files / 531 passed, `pnpm build` ok; screenshot comparison showed skeletons ~160px wide vs 320px real folders
+- notes: UI verified via build only, no browser pass. Nothing committed (user owns history).
+
+## 2026-10-30 — Header search fixes: no overlapping icon, per-page filtering
+
+- item: removed the redundant submit magnifier that stacked under the close X on the opened `ExpandableSearch` (Enter still submits, X/Escape clears+closes); header search `?q=` now filters the page being viewed (home filters projects, project pages filter sessions/touched files) instead of always jumping home
+- status: done
+- evidence: `tsc` clean, biome clean on touched files, `pnpm test` → 58 files / 531 passed, `pnpm build` ok
+- notes: UI verified via build only, no browser pass. Nothing committed (user owns history).
+
+## 2026-10-30 — Header search only on searchable pages
+
+- item: `AppLayout` renders `HeaderSearch` only on `/`, `/projects`, and project overview/architecture tabs; learn, story, demo, and 404 pages no longer show a dead search box
+- status: done
+- evidence: `tsc` clean, biome clean, `pnpm test` → 58 files / 531 passed, `pnpm build` ok
+- notes: UI verified via build only, no browser pass. Nothing committed (user owns history).
+
+## 2026-10-30 — Story skeleton root-cause fix + verdict capture + 4-session regen + agent-first display titles
+
+- item: Class-A invalid-JSON root cause fixed in `packages/redaction` (`redactJson` now redacts inside the parsed string tree instead of the serialized blob, so secret matches can never swallow a JSON escape backslash); content-free claim-verdict logging in `apps/server/src/story.ts` (`validateOrRegenerate` logs area/key/field/index + error-kind tokens only, plus a schema-parse-retry marker); first-model-title lock made explicit in `persistStory` with story.test.ts pins (model→model keeps first, skeleton→model takes new, model→skeleton keeps model title); `sessionDisplayTitle` in `apps/web/src/session-display.ts` now prefers the agent session title over the locked model summary over skeleton text over placeholders; regen of the 4 still-failing sessions to model stories
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 220 files (4 pre-existing useLiteralKeys infos in untouched checks-v2.test.ts), `pnpm test` → 59 files / 539 passed (new: 3 redaction escape-boundary tests, verified 2 fail on the old scanner; server cap-slice guard + verdict-kind logging test; 8 session-display priority tests), `pnpm build` ok; regen 10:19–10:23 local: ses_e81ec7e6 generated 8 cards 45s, ses_e80f7f22 generated 9 cards 112s (schema-parse retry, then clean), 01a17d7e generated 3 cards 81s (schema-parse retry, then clean), 01a1898d generated 4 cards 113s (schema-parse retry + 3 first-draft number-not-in-evidence blindSpot verdicts logged content-free, regen fixed them); failure rate 5/22 → 3/22 skeletons (19/22 model)
+- notes: Class-A prime suspect disproven by bisection: not lone surrogates from cap() slicing (they round-trip fine) but the scanner consuming escape backslashes next to quoted `KEY=...` lines in repo diffs (capture-redacted placeholders re-matched the same way). Class-B verdicts now captured: all three Class-B sessions needed a schema-parse retry; 01a1898d also logged 3 number-not-in-evidence blindSpot verdicts on the first draft. The 4 regen stories are intact on disk (refs 09:19–09:23Z). Display: 12/22 sessions carry agent titles (all ses_*, good quality) and now show them with zero model title calls — normal flow has no title-only model path (verified by grep; the /tmp retitle pass was one-off). persistStory behavior unchanged (first-wins lock; never reads/clears sessions.title). Left open, not mine: ses_e7630e7f still skeleton (model_error at 10:02 and again 10:38, transient — single retry would likely clear it); ses_e81a8a6b + ses_e7925784 flipped model→skeleton (model_error) at ~10:08 by an unknown concurrent writer while this unit ran; ses_e7806a0abffe3 rewritten as model at 10:12 by same unknown activity (not this unit — this unit wrote only the 4 targets). /tmp/opencode scratch (regen scripts, progress logs, backups) was wiped by the server restart mid-unit; outcomes above are from on-disk artifact state. Nothing committed (user owns history).

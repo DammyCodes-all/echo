@@ -6,7 +6,7 @@ import { api } from "../api";
 import { ProjectFolderCard } from "../components/project-folder-card";
 import { ScaffoldPage } from "../components/scaffold-page";
 import type { SortKey } from "../components/search/project-sort";
-import { Skeleton } from "../components/skeleton";
+import { ProjectFolderSkeleton } from "../components/skeleton";
 import { displayProjectName } from "../project-display";
 
 function matchesQuery(project: ProjectSummary, query: string): boolean {
@@ -58,7 +58,6 @@ export function ProjectsPage() {
 
   return (
     <ScaffoldPage
-      eyebrow="Projects"
       title="Captured repositories"
       description="Echo keeps a workspace per repository. Every recorded agent session for that repository lives under it, and tapes never mix between projects."
     >
@@ -66,19 +65,11 @@ export function ProjectsPage() {
         <div
           role="status"
           aria-label="Loading projects"
-          className="grid justify-items-center gap-x-4 gap-y-10 md:grid-cols-2"
+          className="grid grid-cols-[auto] justify-center justify-items-center gap-x-4 gap-y-10 md:grid-cols-[repeat(2,auto)] md:justify-between xl:grid-cols-[repeat(3,auto)]"
         >
           <span className="sr-only">Loading projects…</span>
-          {["skeleton-a", "skeleton-b", "skeleton-c", "skeleton-d"].map((id) => (
-            <div
-              key={id}
-              aria-hidden
-              className="h-[200px] w-full max-w-[320px] rounded-dusk-card bg-dusk-surface p-6"
-            >
-              <Skeleton className="h-4 w-2/3" />
-              <Skeleton className="mt-3 h-3.5" />
-              <Skeleton className="mt-2 h-3.5 w-4/5" />
-            </div>
+          {["skeleton-a", "skeleton-b", "skeleton-c"].map((id) => (
+            <ProjectFolderSkeleton key={id} />
           ))}
         </div>
       ) : null}
