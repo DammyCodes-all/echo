@@ -106,10 +106,7 @@ export function arrowheadPoints(
 
 /** Arrowhead at the start or end of a polyline, walking past duplicate
  *  points for a real direction. Null for degenerate input (caller skips). */
-export function polylineArrowhead(
-  points: RoutedPoint[],
-  which: "start" | "end",
-): string | null {
+export function polylineArrowhead(points: RoutedPoint[], which: "start" | "end"): string | null {
   const ordered = which === "end" ? [...points].reverse() : points;
   const tip = ordered[0];
   if (!tip) return null;

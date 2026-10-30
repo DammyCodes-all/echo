@@ -209,17 +209,94 @@ describe("enforceAcyclicEdges", () => {
   });
 
   test("treats bidirectional edges as two-way for cycle detection", () => {
-    const input = [
-      { from: "a", to: "b", bidirectional: true },
-      edge("b", "c"),
-      edge("c", "a"),
-    ];
+    const input = [{ from: "a", to: "b", bidirectional: true }, edge("b", "c"), edge("c", "a")];
     const result = enforceAcyclicEdges(input);
+    expect(result.edges).toEqual([{ from: "a", to: "b", bidirectional: true }, edge("b", "c")]);
+    expect(result.dropped).toBe(1);
+  });
+
+  test("without ranks, first occurrence wins pair direction", () => {
+    const input = [edge("b", "a"), edge("a", "b")];
+    const result = enforceAcyclicEdges(input);
+    expect(result.edges).toEqual([{ from: "b", to: "a", bidirectional: true }]);
+    expect(result.merged).toBe(1);
+  });
+});
+
+describe("enforceAcyclicEdges with flow ranks", () => {
+  const flow = {
+    groups: [
+      { id: "up", label: "Up", order: 0 },
+      { id: "mid", label: "Mid", order: 1 },
+      { id: "down", label: "Down", order: 2 },
+    ],
+    nodes: [
+      {
+        id: "a",
+        label: "A",
+        group: "up",
+        description: "Up node.",
+        paths: [],
+        status: "existing" as const,
+      },
+      {
+        id: "b",
+        label: "B",
+        group: "mid",
+        description: "Mid node.",
+        paths: [],
+        status: "existing" as const,
+      },
+      {
+        id: "c",
+        label: "C",
+        group: "down",
+        description: "Down node.",
+        paths: [],
+        status: "existing" as const,
+      },
+    ],
+  };
+
+  test("a backward pair listed first still merges pointing along flow", () => {
+    const result = enforceAcyclicEdges(
+      [
+        { from: "b", to: "a" },
+        { from: "a", to: "b" },
+      ],
+      flow,
+    );
+    expect(result.edges).toEqual([{ from: "a", to: "b", bidirectional: true }]);
+    expect(result.merged).toBe(1);
+  });
+
+  test("cycle-breaking drops the backward edge even when listed first", () => {
+    const result = enforceAcyclicEdges(
+      [
+        { from: "c", to: "a" },
+        { from: "a", to: "b" },
+        { from: "b", to: "c" },
+      ],
+      flow,
+    );
     expect(result.edges).toEqual([
-      { from: "a", to: "b", bidirectional: true },
-      edge("b", "c"),
+      { from: "a", to: "b" },
+      { from: "b", to: "c" },
     ]);
     expect(result.dropped).toBe(1);
+  });
+
+  test("edges with unknown endpoints stay neutral", () => {
+    const result = enforceAcyclicEdges(
+      [
+        { from: "ghost", to: "a" },
+        { from: "a", to: "ghost" },
+      ],
+      flow,
+    );
+    // Opposite pair, neither provably backward: first wins, merged.
+    expect(result.edges).toEqual([{ from: "ghost", to: "a", bidirectional: true }]);
+    expect(result.merged).toBe(1);
   });
 });
 

@@ -62,11 +62,7 @@ export interface AcyclicEdges {
   dropped: number;
 }
 
-function reaches(
-  edges: ArchitectureEdge[],
-  from: string,
-  target: string,
-): boolean {
+function reaches(edges: ArchitectureEdge[], from: string, target: string): boolean {
   const seen = new Set<string>([from]);
   const queue = [from];
   while (queue.length > 0) {
@@ -87,18 +83,34 @@ function reaches(
   return false;
 }
 
-/** One edge per node pair, acyclic, order-stable: first occurrence wins
- *  direction, opposite pairs merge into one bidirectional edge, longer-cycle
- *  closers drop. Same-direction duplicates are kept (the generate-path trim
- *  dedupes; display overlaps are invisible). Runs on every write path and at
- *  display time so stored pre-v3 cyclic graphs draw clean without migration.
+/** One edge per node pair, acyclic, order-stable: flow-first wins direction
+ *  (with group ranks: forward edges beat backward ones, so pairs point along
+ *  write/data flow and cycle-breaking drops the backward edge), opposite
+ *  pairs merge into one bidirectional edge, longer-cycle closers drop.
+ *  Same-direction duplicates are kept (the generate-path trim dedupes;
+ *  display overlaps are invisible). Runs on every write path and at display
+ *  time so stored pre-v3 cyclic graphs draw clean without migration.
  *  Deliberately a normalizer, not a zod refine: a hard reject would break
  *  reading already-stored cyclic versions. */
-export function enforceAcyclicEdges(edges: ArchitectureEdge[]): AcyclicEdges {
+export function enforceAcyclicEdges(
+  edges: ArchitectureEdge[],
+  flow?: { groups: ArchitectureGroup[]; nodes: ArchitectureNode[] },
+): AcyclicEdges {
+  const nodeGroup = new Map((flow?.nodes ?? []).map((node) => [node.id, node.group]));
+  const groupRank = new Map(
+    (flow?.groups ?? []).map((group, index) => [group.id, group.order ?? index]),
+  );
+  const isBackward = (edge: ArchitectureEdge): boolean => {
+    const fromRank = groupRank.get(nodeGroup.get(edge.from) ?? "");
+    const toRank = groupRank.get(nodeGroup.get(edge.to) ?? "");
+    return fromRank !== undefined && toRank !== undefined && fromRank > toRank;
+  };
+  // Stable: backward edges sink below forward ones, relative order kept.
+  const ordered = [...edges].sort((a, b) => Number(isBackward(a)) - Number(isBackward(b)));
   const kept: ArchitectureEdge[] = [];
   let merged = 0;
   let dropped = 0;
-  for (const edge of edges) {
+  for (const edge of ordered) {
     if (edge.from === edge.to) {
       kept.push({ ...edge });
       continue;

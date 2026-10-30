@@ -44,6 +44,7 @@
   --radius-dusk-pill: 999px;
   --shadow-dusk-node: 0 0 0 7px rgba(140, 155, 255, 0.24), 0 0 22px rgba(140, 155, 255, 0.5);
   --shadow-dusk-fill: 0 0 16px rgba(140, 155, 255, 0.5);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
 }
 
 :root {
@@ -122,4 +123,42 @@ body {
   .arch-pulse {
     animation: none;
   }
+}
+
+/* Node hover popover: tooltip-style enter (fade + zoom + rise), same motion
+ * language as the settings popover. Runs on the inner box: floating-ui owns
+ * the outer box's transform for positioning, so animating there would jump. */
+.arch-popover-in {
+  animation: arch-popover-in 0.15s var(--ease-out) both;
+  transform-origin: 50% 100%;
+}
+
+@keyframes arch-popover-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes arch-popover-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arch-popover-in {
+    animation: arch-popover-fade 0.1s var(--ease-out) both;
+  }
+}
+
+html[data-echo-motion="reduced"] .arch-popover-in {
+  animation: arch-popover-fade 0.1s var(--ease-out) both;
 }

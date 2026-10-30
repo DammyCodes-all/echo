@@ -8,7 +8,9 @@
       "!**/node_modules",
       "!**/coverage",
       "!**/pnpm-lock.yaml",
-      "!eval/muse-fixture/result.json"
+      "!eval/muse-fixture/result.json",
+      "!**/.vscode",
+      "!**/public/fonts"
     ]
   },
   "formatter": {

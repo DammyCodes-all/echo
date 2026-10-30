@@ -223,7 +223,16 @@ describe("collectRoutedEdges", () => {
           edges: [
             {
               id: "e0",
-              sections: [{ startPoint: { x: 10, y: 10 }, bendPoints: [], endPoint: { x: 20, y: 30 } }],
+              sources: ["g/a"],
+              targets: ["g/b"],
+              sections: [
+                {
+                  id: "e0s0",
+                  startPoint: { x: 10, y: 10 },
+                  bendPoints: [],
+                  endPoint: { x: 20, y: 30 },
+                },
+              ],
             },
           ],
         },
@@ -232,9 +241,18 @@ describe("collectRoutedEdges", () => {
       edges: [
         {
           id: "e1",
-          sections: [{ startPoint: { x: 200, y: 200 }, bendPoints: [], endPoint: { x: 300, y: 300 } }],
+          sources: ["g/a"],
+          targets: ["h/c"],
+          sections: [
+            {
+              id: "e1s0",
+              startPoint: { x: 200, y: 200 },
+              bendPoints: [],
+              endPoint: { x: 300, y: 300 },
+            },
+          ],
         },
-        { id: "e2" },
+        { id: "e2", sources: ["g/b"], targets: ["h/c"] },
       ],
     };
   }
@@ -277,10 +295,14 @@ describe("collectRoutedEdges", () => {
       id: "root",
       children: [{ id: "g", children: [{ id: "g/a" }, { id: "g/b" }] }],
       edges: [
-        { id: "ports" },
+        { id: "ports", sources: [], targets: [] },
         {
           id: "e7",
-          sections: [{ startPoint: { x: 1, y: 1 }, bendPoints: [], endPoint: { x: 2, y: 2 } }],
+          sources: ["g/a"],
+          targets: ["g/b"],
+          sections: [
+            { id: "e7s0", startPoint: { x: 1, y: 1 }, bendPoints: [], endPoint: { x: 2, y: 2 } },
+          ],
         },
       ],
     };

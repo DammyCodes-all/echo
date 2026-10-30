@@ -1,4 +1,9 @@
-import type { Architecture, ArchitectureNode, ArchitectureNodeEvidence } from "@echo/contracts";
+import {
+  type Architecture,
+  type ArchitectureNode,
+  type ArchitectureNodeEvidence,
+  enforceAcyclicEdges,
+} from "@echo/contracts";
 import { autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import {
   Background,
@@ -26,11 +31,11 @@ import {
   type RoutedPoint,
 } from "./elk-layout";
 import {
+  arrowheadPoints,
   computeHubs,
-  isEdgeVisible,
   neighborCount,
+  polylineArrowhead,
   polylineMidpoint,
-  revealedHubs,
   routedPath,
 } from "./graph-helpers";
 
@@ -53,9 +58,25 @@ type ArchGroupData = {
 type ArchEdgeData = {
   /** Root-frame ELK polyline; empty when the edge has no routed counterpart. */
   points: RoutedPoint[];
+  /** Draw arrowheads on both ends (a merged read/write pair). */
+  bidirectional: boolean;
+  /** Connected to the hovered node: accent, full opacity, label shown. */
+  lit: boolean;
 };
 
 type ArchEdgeType = Edge<ArchEdgeData, "archEdge">;
+
+/** Smoothstep travel direction at an endpoint, from the handle side. */
+function endpointApproach(position: Position | undefined, atTarget: boolean): RoutedPoint {
+  const incoming: Record<Position, RoutedPoint> = {
+    [Position.Top]: { x: 0, y: 1 },
+    [Position.Bottom]: { x: 0, y: -1 },
+    [Position.Left]: { x: 1, y: 0 },
+    [Position.Right]: { x: -1, y: 0 },
+  };
+  const unit = position === undefined ? { x: 0, y: 1 } : incoming[position];
+  return atTarget ? unit : { x: -unit.x, y: -unit.y };
+}
 
 function ArchEdge({
   id,
@@ -78,15 +99,34 @@ function ArchEdge({
     sourcePosition,
     targetPosition,
   });
+  const routed = points.length >= 2 ? routedPath(points) : null;
   const midpoint = points.length > 0 ? polylineMidpoint(points) : null;
+  const ink = typeof style?.stroke === "string" ? style.stroke : duskDarkTokens.color.deadEnd;
+  const target: RoutedPoint = { x: targetX, y: targetY };
+  const source: RoutedPoint = { x: sourceX, y: sourceY };
+  const endHead =
+    routed !== null
+      ? polylineArrowhead(points, "end")
+      : arrowheadPoints(target, {
+          x: target.x - endpointApproach(targetPosition, true).x * 10,
+          y: target.y - endpointApproach(targetPosition, true).y * 10,
+        });
+  const startHead =
+    data?.bidirectional !== true
+      ? null
+      : routed !== null
+        ? polylineArrowhead(points, "start")
+        : arrowheadPoints(source, {
+            // Opposite to travel: the head points back into the source.
+            x: source.x + endpointApproach(sourcePosition, false).x * 10,
+            y: source.y + endpointApproach(sourcePosition, false).y * 10,
+          });
   return (
     <>
-      <BaseEdge
-        id={id}
-        path={points.length >= 2 ? (routedPath(points) ?? fallbackPath) : fallbackPath}
-        style={style}
-      />
-      {typeof label === "string" && label.length > 0 ? (
+      <BaseEdge id={id} path={routed ?? fallbackPath} style={style} />
+      {endHead ? <polygon points={endHead} fill={ink} opacity={style?.opacity} /> : null}
+      {startHead ? <polygon points={startHead} fill={ink} opacity={style?.opacity} /> : null}
+      {data?.lit === true && typeof label === "string" && label.length > 0 ? (
         <EdgeLabelRenderer>
           <div
             style={{
@@ -215,16 +255,31 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [anchor, setAnchor] = useState<Element | null>(null);
 
+  // Same normalizer the server runs on write: stored pre-v3 graphs draw
+  // acyclic (opposite pairs merged, closers dropped) without migration.
+  const flowEdges = useMemo(
+    () =>
+      enforceAcyclicEdges(architecture.edges, {
+        groups: architecture.groups,
+        nodes: architecture.nodes,
+      }).edges,
+    [architecture],
+  );
+  const flowGraph = useMemo(
+    () => ({ ...architecture, edges: flowEdges }),
+    [architecture, flowEdges],
+  );
+
   useEffect(() => {
     let live = true;
     setLayout(null);
-    void layoutArchitecture(architecture).then((result) => {
+    void layoutArchitecture(flowGraph).then((result) => {
       if (live) setLayout(result);
     });
     return () => {
       live = false;
     };
-  }, [architecture]);
+  }, [flowGraph]);
 
   const { refs, floatingStyles } = useFloating({
     placement: "top",
@@ -243,22 +298,18 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
   );
   const neighbors = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    for (const edge of architecture.edges) {
+    for (const edge of flowEdges) {
       if (!map.has(edge.from)) map.set(edge.from, new Set());
       if (!map.has(edge.to)) map.set(edge.to, new Set());
       map.get(edge.from)?.add(edge.to);
       map.get(edge.to)?.add(edge.from);
     }
     return map;
-  }, [architecture]);
+  }, [flowEdges]);
 
   const hovered: ArchitectureNode | null = hoveredId ? (byId.get(hoveredId) ?? null) : null;
 
-  const hubs = useMemo(() => computeHubs(architecture), [architecture]);
-  const revealed = useMemo(
-    () => revealedHubs(architecture, hubs, hoveredId),
-    [architecture, hubs, hoveredId],
-  );
+  const hubs = useMemo(() => computeHubs(flowGraph), [flowGraph]);
   // Occurrence queues per from→to pair: ELK returns one route per input edge
   // in order, so the nth same-pair edge takes the nth route. Chat-applied
   // duplicates (the apply path never trims) still map deterministically.
@@ -320,10 +371,7 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
           highlighted: highlighted.has(placed.id),
           pulsing: pulsing.has(placed.id),
           pinned: pinnedId === placed.id,
-          hubUsers:
-            hubs.has(placed.id) && !revealed.has(placed.id)
-              ? neighborCount(architecture, placed.id)
-              : null,
+          hubUsers: hubs.has(placed.id) ? neighborCount(flowGraph, placed.id) : null,
         } satisfies ArchNodeData,
         draggable: false,
       };
@@ -340,35 +388,37 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
     pulseIds,
     pinnedId,
     hubs,
-    revealed,
+    flowGraph,
   ]);
 
   const edges = useMemo(() => {
     const used = new Map<string, number>();
-    return architecture.edges
-      .map((edge, index) => ({ edge, index }))
-      .filter(({ edge }) => isEdgeVisible(edge, hubs, revealed))
-      .map(({ edge, index }) => {
-        const lit = hoveredId !== null && (edge.from === hoveredId || edge.to === hoveredId);
-        const key = `${edge.from}→${edge.to}`;
-        const occurrence = used.get(key) ?? 0;
-        used.set(key, occurrence + 1);
-        return {
-          id: `e${index}-${edge.from}-${edge.to}`,
-          type: "archEdge",
-          source: edge.from,
-          target: edge.to,
-          label: edge.label,
-          data: { points: routedByKey.get(key)?.[occurrence] ?? [] },
-          style: {
-            stroke: lit ? duskDarkTokens.color.accent : duskDarkTokens.color.deadEnd,
-            strokeWidth: lit ? 2 : 1.25,
-            opacity: hoveredId === null || lit ? 1 : 0.15,
-            transition: "opacity 120ms ease",
-          },
-        };
-      });
-  }, [architecture, hoveredId, hubs, revealed, routedByKey]);
+    return flowEdges.map((edge, index) => {
+      const lit = hoveredId !== null && (edge.from === hoveredId || edge.to === hoveredId);
+      const hubTouch = hubs.has(edge.from) || hubs.has(edge.to);
+      const key = `${edge.from}→${edge.to}`;
+      const occurrence = used.get(key) ?? 0;
+      used.set(key, occurrence + 1);
+      return {
+        id: `e${index}-${edge.from}-${edge.to}`,
+        type: "archEdge",
+        source: edge.from,
+        target: edge.to,
+        label: edge.label,
+        data: {
+          points: routedByKey.get(key)?.[occurrence] ?? [],
+          bidirectional: edge.bidirectional === true,
+          lit,
+        },
+        style: {
+          stroke: lit ? duskDarkTokens.color.accent : duskDarkTokens.color.deadEnd,
+          strokeWidth: lit ? 2 : 1.25,
+          opacity: hoveredId === null ? (hubTouch ? 0.35 : 0.55) : lit ? 1 : 0.15,
+          transition: "opacity 120ms ease",
+        },
+      };
+    });
+  }, [flowEdges, hoveredId, hubs, routedByKey]);
 
   const onNodeMouseEnter: NodeMouseHandler = (event, node) => {
     if (node.type !== "arch") return;
@@ -383,14 +433,28 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
 
   const popoverEvidence = hovered ? evidence[hovered.id] : undefined;
   const receivesFrom = hovered
-    ? architecture.edges
-        .filter((edge) => edge.to === hovered.id)
-        .map((edge) => byId.get(edge.from)?.label ?? edge.from)
+    ? flowEdges
+        .filter(
+          (edge) =>
+            edge.to === hovered.id || (edge.bidirectional === true && edge.from === hovered.id),
+        )
+        .map(
+          (edge) =>
+            byId.get(edge.to === hovered.id ? edge.from : edge.to)?.label ??
+            (edge.to === hovered.id ? edge.from : edge.to),
+        )
     : [];
   const sendsTo = hovered
-    ? architecture.edges
-        .filter((edge) => edge.from === hovered.id)
-        .map((edge) => byId.get(edge.to)?.label ?? edge.to)
+    ? flowEdges
+        .filter(
+          (edge) =>
+            edge.from === hovered.id || (edge.bidirectional === true && edge.to === hovered.id),
+        )
+        .map(
+          (edge) =>
+            byId.get(edge.from === hovered.id ? edge.to : edge.from)?.label ??
+            (edge.from === hovered.id ? edge.to : edge.from),
+        )
     : [];
 
   return (
@@ -426,26 +490,27 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
         <Background color={duskDarkTokens.color.hairlineStrong} gap={28} size={1} />
       </ReactFlow>
       {hovered ? (
-        <div
-          ref={refs.setFloating}
-          style={{ ...floatingStyles, zIndex: 20 }}
-          className="w-64 space-y-2 rounded-dusk-code border border-dusk-hairline-strong bg-dusk-pill p-3 shadow-xl"
-        >
-          <p className="text-sm font-semibold text-dusk-ink">{hovered.label}</p>
-          <p className="text-[13px] leading-5 text-dusk-muted">{hovered.description}</p>
-          <NeighborList title="Receives from" names={receivesFrom} />
-          <NeighborList title="Sends to" names={sendsTo} />
-          <p className="text-[13px] text-dusk-ink">
-            Agent worked here:{" "}
-            <span className="font-semibold">
-              {popoverEvidence ? popoverEvidence.sessions : 0} of{" "}
-              {popoverEvidence ? popoverEvidence.totalSessions : 0} sessions
-            </span>
-          </p>
-          <p className="font-mono text-[11px] text-dusk-muted">
-            Last touched:{" "}
-            {popoverEvidence?.lastTouched ? formatTime(popoverEvidence.lastTouched) : "never"}
-          </p>
+        <div ref={refs.setFloating} style={{ ...floatingStyles, zIndex: 20 }}>
+          <div
+            key={hovered.id}
+            className="arch-popover-in w-64 space-y-2 rounded-dusk-code border border-dusk-hairline-strong bg-dusk-pill p-3 shadow-xl"
+          >
+            <p className="text-sm font-semibold text-dusk-ink">{hovered.label}</p>
+            <p className="text-[13px] leading-5 text-dusk-muted">{hovered.description}</p>
+            <NeighborList title="Receives from" names={receivesFrom} />
+            <NeighborList title="Sends to" names={sendsTo} />
+            <p className="text-[13px] text-dusk-ink">
+              Agent worked here:{" "}
+              <span className="font-semibold">
+                {popoverEvidence ? popoverEvidence.sessions : 0} of{" "}
+                {popoverEvidence ? popoverEvidence.totalSessions : 0} sessions
+              </span>
+            </p>
+            <p className="font-mono text-[11px] text-dusk-muted">
+              Last touched:{" "}
+              {popoverEvidence?.lastTouched ? formatTime(popoverEvidence.lastTouched) : "never"}
+            </p>
+          </div>
         </div>
       ) : null}
     </div>

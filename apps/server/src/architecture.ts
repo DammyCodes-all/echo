@@ -79,7 +79,10 @@ export function applyPatch(current: Architecture, patch: ArchitecturePatch): App
   // Same invariant as generation: opposite pairs merge visibly (the diagram
   // draws both arrowheads), longer cycles lose their closer. No warnings
   // channel on this path — the drawn graph shows the result.
-  const acyclic = enforceAcyclicEdges(parsed.data.edges);
+  const acyclic = enforceAcyclicEdges(parsed.data.edges, {
+    groups: parsed.data.groups,
+    nodes: parsed.data.nodes,
+  });
   return { structure: { ...parsed.data, edges: acyclic.edges }, droppedEdges };
 
   function applyOp(op: ArchitecturePatchOp): void {
@@ -610,7 +613,10 @@ export function createArchitectureService(
     structure: ArchitectureModelOutput,
     warnings: string[],
   ): ArchitectureModelOutput {
-    const acyclic = enforceAcyclicEdges(structure.edges);
+    const acyclic = enforceAcyclicEdges(structure.edges, {
+      groups: structure.groups,
+      nodes: structure.nodes,
+    });
     if (acyclic.merged === 0 && acyclic.dropped === 0) return structure;
     const parts = [];
     if (acyclic.merged > 0) {

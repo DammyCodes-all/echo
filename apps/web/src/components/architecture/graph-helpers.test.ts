@@ -1,11 +1,11 @@
 import type { Architecture } from "@echo/contracts";
 import { describe, expect, test } from "vitest";
 import {
+  arrowheadPoints,
   computeHubs,
-  isEdgeVisible,
   neighborCount,
+  polylineArrowhead,
   polylineMidpoint,
-  revealedHubs,
   routedPath,
 } from "./graph-helpers";
 
@@ -86,55 +86,63 @@ describe("neighborCount", () => {
   });
 });
 
-describe("revealedHubs", () => {
-  const arch = architecture(
-    ["hub", "leaf", "far", "hub2"],
-    [
-      ["hub", "leaf"],
-      ["hub", "far"],
-      ["hub", "hub2"],
-      ["hub", "leaf"],
-      ["hub", "far"],
-    ],
-  );
-  const hubs = new Set(["hub", "hub2"]);
-
-  test("reveals nothing without hover", () => {
-    expect(revealedHubs(arch, hubs, null)).toEqual(new Set());
+describe("arrowheadPoints", () => {
+  test("points down, up, left, and right", () => {
+    expect(arrowheadPoints({ x: 0, y: 10 }, { x: 0, y: 0 })).toBe("0,10 -4,1 4,1");
+    expect(arrowheadPoints({ x: 0, y: 0 }, { x: 0, y: 10 })).toBe("0,0 4,9 -4,9");
+    expect(arrowheadPoints({ x: 0, y: 0 }, { x: 10, y: 0 })).toBe("0,0 9,-4 9,4");
+    expect(arrowheadPoints({ x: 10, y: 0 }, { x: 0, y: 0 })).toBe("10,0 1,4 1,-4");
   });
 
-  test("reveals the hovered hub itself", () => {
-    expect(revealedHubs(arch, hubs, "hub")).toEqual(new Set(["hub", "hub2"]));
+  test("normalizes diagonal and long approaches", () => {
+    // 45° approach from the top-left: unit (0.71,0.71), base 9 back, ±4 across.
+    expect(arrowheadPoints({ x: 0, y: 0 }, { x: -100, y: -100 })).toBe(
+      "0,0 -9.19,-3.54 -3.54,-9.19",
+    );
   });
 
-  test("reveals hubs connected to the hovered node", () => {
-    expect(revealedHubs(arch, hubs, "leaf")).toEqual(new Set(["hub"]));
-    expect(revealedHubs(arch, hubs, "far")).toEqual(new Set(["hub"]));
-  });
-
-  test("reveals nothing for an unconnected node", () => {
-    expect(revealedHubs(arch, hubs, "lonely")).toEqual(new Set());
+  test("returns null when tip and approach coincide", () => {
+    expect(arrowheadPoints({ x: 1, y: 2 }, { x: 1, y: 2 })).toBeNull();
   });
 });
 
-describe("isEdgeVisible", () => {
-  const hubs = new Set(["hub"]);
-  const revealed = new Set(["hub"]);
+describe("polylineArrowhead", () => {
+  const line = [
+    { x: 0, y: 0 },
+    { x: 0, y: 50 },
+    { x: 0, y: 100 },
+  ];
 
-  test("plain edges always show", () => {
-    expect(isEdgeVisible({ from: "a", to: "b" }, hubs, new Set())).toBe(true);
+  test("caps the end pointing along travel", () => {
+    expect(polylineArrowhead(line, "end")).toBe(arrowheadPoints({ x: 0, y: 100 }, { x: 0, y: 50 }));
   });
 
-  test("hub edges hide until revealed", () => {
-    expect(isEdgeVisible({ from: "hub", to: "a" }, hubs, new Set())).toBe(false);
-    expect(isEdgeVisible({ from: "a", to: "hub" }, hubs, new Set())).toBe(false);
-    expect(isEdgeVisible({ from: "hub", to: "a" }, hubs, revealed)).toBe(true);
+  test("caps the start pointing back along travel", () => {
+    expect(polylineArrowhead(line, "start")).toBe(arrowheadPoints({ x: 0, y: 0 }, { x: 0, y: 50 }));
   });
 
-  test("hub-hub edges show when either side is revealed", () => {
-    const two = new Set(["h1", "h2"]);
-    expect(isEdgeVisible({ from: "h1", to: "h2" }, two, new Set())).toBe(false);
-    expect(isEdgeVisible({ from: "h1", to: "h2" }, two, new Set(["h2"]))).toBe(true);
+  test("skips duplicate points and gives up on degenerate input", () => {
+    expect(
+      polylineArrowhead(
+        [
+          { x: 5, y: 5 },
+          { x: 5, y: 5 },
+          { x: 5, y: 20 },
+        ],
+        "start",
+      ),
+    ).toBe(arrowheadPoints({ x: 5, y: 5 }, { x: 5, y: 20 }));
+    expect(polylineArrowhead([], "end")).toBeNull();
+    expect(polylineArrowhead([{ x: 1, y: 1 }], "end")).toBeNull();
+    expect(
+      polylineArrowhead(
+        [
+          { x: 1, y: 1 },
+          { x: 1, y: 1 },
+        ],
+        "end",
+      ),
+    ).toBeNull();
   });
 });
 
