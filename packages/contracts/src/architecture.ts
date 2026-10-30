@@ -4,10 +4,16 @@ import { z } from "zod";
 export const ARCHITECTURE_LABEL_WORD_LIMIT = 3;
 /** Node budget: fewer is vague, more is unreadable. */
 export const ARCHITECTURE_MAX_NODES = 15;
+/** Edge budget scales with nodes: about 1.3 edges per node keeps the graph readable. */
+export const ARCHITECTURE_EDGE_CAP_RATIO = 1.3;
 
 export const ArchitectureGroupSchema = z.object({
   id: z.string().min(1).max(64),
   label: z.string().min(1).max(40),
+  // Flow rank, upstream first. Optional so stored versions from before the
+  // ordering work keep parsing; the layout falls back to array position.
+  // Relative only — never range-checked, so 1-based model output still works.
+  order: z.number().int().optional(),
 });
 export type ArchitectureGroup = z.infer<typeof ArchitectureGroupSchema>;
 
@@ -42,8 +48,84 @@ export const ArchitectureEdgeSchema = z.object({
   from: z.string().min(1).max(64),
   to: z.string().min(1).max(64),
   label: z.string().min(1).max(40).optional(),
+  // Both-ends arrowhead for a genuinely two-way flow (e.g. a read the pair
+  // edge already covers). Optional so stored pre-v3 versions keep parsing.
+  bidirectional: z.boolean().optional(),
 });
 export type ArchitectureEdge = z.infer<typeof ArchitectureEdgeSchema>;
+
+export interface AcyclicEdges {
+  edges: ArchitectureEdge[];
+  /** Input edges folded into an opposite pair (drawn as one edge, both heads). */
+  merged: number;
+  /** Input edges dropped for closing a longer cycle. */
+  dropped: number;
+}
+
+function reaches(
+  edges: ArchitectureEdge[],
+  from: string,
+  target: string,
+): boolean {
+  const seen = new Set<string>([from]);
+  const queue = [from];
+  while (queue.length > 0) {
+    const current = queue.shift() as string;
+    for (const edge of edges) {
+      const next =
+        edge.from === current
+          ? edge.to
+          : edge.bidirectional === true && edge.to === current
+            ? edge.from
+            : null;
+      if (next === null || seen.has(next)) continue;
+      if (next === target) return true;
+      seen.add(next);
+      queue.push(next);
+    }
+  }
+  return false;
+}
+
+/** One edge per node pair, acyclic, order-stable: first occurrence wins
+ *  direction, opposite pairs merge into one bidirectional edge, longer-cycle
+ *  closers drop. Same-direction duplicates are kept (the generate-path trim
+ *  dedupes; display overlaps are invisible). Runs on every write path and at
+ *  display time so stored pre-v3 cyclic graphs draw clean without migration.
+ *  Deliberately a normalizer, not a zod refine: a hard reject would break
+ *  reading already-stored cyclic versions. */
+export function enforceAcyclicEdges(edges: ArchitectureEdge[]): AcyclicEdges {
+  const kept: ArchitectureEdge[] = [];
+  let merged = 0;
+  let dropped = 0;
+  for (const edge of edges) {
+    if (edge.from === edge.to) {
+      kept.push({ ...edge });
+      continue;
+    }
+    if (kept.some((keptEdge) => keptEdge.from === edge.from && keptEdge.to === edge.to)) {
+      kept.push({ ...edge });
+      continue;
+    }
+    const reverseIndex = kept.findIndex(
+      (keptEdge) => keptEdge.from === edge.to && keptEdge.to === edge.from,
+    );
+    if (reverseIndex >= 0) {
+      const first = kept[reverseIndex] as ArchitectureEdge;
+      if (first.bidirectional !== true) {
+        kept[reverseIndex] = { ...first, bidirectional: true };
+      }
+      merged += 1;
+      continue;
+    }
+    if (reaches(kept, edge.to, edge.from)) {
+      dropped += 1;
+      continue;
+    }
+    kept.push({ ...edge });
+  }
+  return { edges: kept, merged, dropped };
+}
 
 const ArchitectureStructureSchema = z.object({
   groups: z.array(ArchitectureGroupSchema).min(1).max(12),

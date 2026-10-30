@@ -79,6 +79,45 @@ export function routedPath(
   return path;
 }
 
+/** SVG polygon points for an arrowhead: tip at `tip`, opening toward `from`.
+ *  Null when the two coincide (no direction to point). */
+export function arrowheadPoints(
+  tip: RoutedPoint,
+  from: RoutedPoint,
+  length: number = ARROWHEAD_LENGTH,
+  halfWidth: number = ARROWHEAD_HALF_WIDTH,
+): string | null {
+  const dx = tip.x - from.x;
+  const dy = tip.y - from.y;
+  const span = Math.hypot(dx, dy);
+  if (span === 0) return null;
+  const ux = dx / span;
+  const uy = dy / span;
+  const bx = tip.x - ux * length;
+  const by = tip.y - uy * length;
+  const px = -uy * halfWidth;
+  const py = ux * halfWidth;
+  return (
+    `${round2(tip.x)},${round2(tip.y)} ` +
+    `${round2(bx + px)},${round2(by + py)} ` +
+    `${round2(bx - px)},${round2(by - py)}`
+  );
+}
+
+/** Arrowhead at the start or end of a polyline, walking past duplicate
+ *  points for a real direction. Null for degenerate input (caller skips). */
+export function polylineArrowhead(
+  points: RoutedPoint[],
+  which: "start" | "end",
+): string | null {
+  const ordered = which === "end" ? [...points].reverse() : points;
+  const tip = ordered[0];
+  if (!tip) return null;
+  const from = ordered.slice(1).find((point) => point.x !== tip.x || point.y !== tip.y);
+  if (!from) return null;
+  return arrowheadPoints(tip, from);
+}
+
 /** Point halfway along the polyline, for the hover label. Null when empty. */
 export function polylineMidpoint(points: RoutedPoint[]): RoutedPoint | null {
   if (points.length === 0) return null;
