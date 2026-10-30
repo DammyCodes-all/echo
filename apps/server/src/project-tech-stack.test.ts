@@ -482,14 +482,15 @@ describe("project tech stack change gate", () => {
         expect(outcome.stack?.purpose).toBe("Good purpose.");
       }
       // Failure backs off instead of retrying every visit or writing a
-      // skeleton over the good artifact.
+      // skeleton over the good artifact. Attempts are 2, not 1: the model
+      // client retries a transport failure once with the IPv4 fallback.
       await new Promise((resolve) => setTimeout(resolve, 100));
-      expect(attempts).toBe(1);
+      expect(attempts).toBe(2);
       expect(getStackRegenState(db, PROJECT_ID)?.pendingChanges).toBe(0);
       const ref = getProjectArtifactRef(db, PROJECT_ID, "tech-stack");
       expect(ref?.generator).toBe("test-model");
       expect((await failingService.maybeGetTechStack(PROJECT_ID)).outcome).toBe("stale");
-      expect(attempts).toBe(1);
+      expect(attempts).toBe(2);
     } finally {
       db.close();
     }

@@ -1175,12 +1175,45 @@ describe("session title stability", () => {
       expect(renamed.story?.summary).toBe("Real model title");
       expect(getSessionSummary(db, sessionId)?.summary).toBe("Real model title");
 
-      // A later skeleton fallback keeps the locked model title instead of
-      // rewriting it with deterministic prose.
+      // A later skeleton fallback keeps the whole prior model story instead
+      // of persisting a skeleton over it. The locked title survives because
+      // the artifact is untouched.
       growTape(db, sessionId, projectId, "evt_late_fallback");
+      const ref = getArtifactRef(db, sessionId, "story");
+      const beforeFallback = readFileSync(ref?.path ?? "", "utf8");
       const fallback = await skeletonService.maybeGenerateStory(sessionId);
-      expect(fallback.outcome).toBe("skeleton");
+      expect(fallback.outcome).toBe("stale");
       expect(fallback.story?.summary).toBe("Real model title");
+      expect(fallback.story?.skeleton).toBe(false);
+      expect(readFileSync(ref?.path ?? "", "utf8")).toBe(beforeFallback);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps the prior model story when the model call fails", async () => {
+    const { dataDir, db, sessionId, projectId } = await seedSession();
+    try {
+      const { fetchImpl } = stubFetchSequence([titledDraft("Kept title")]);
+      const modelService = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      const first = await modelService.maybeGenerateStory(sessionId);
+      expect(first.outcome).toBe("generated");
+      const ref = getArtifactRef(db, sessionId, "story");
+      const before = readFileSync(ref?.path ?? "", "utf8");
+
+      growTape(db, sessionId, projectId, "evt_late_outage");
+      const deadService = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl: throwingFetch },
+      );
+      const second = await deadService.maybeGenerateStory(sessionId);
+      expect(second.outcome).toBe("stale");
+      expect(second.story?.summary).toBe("Kept title");
+      expect(second.story?.skeleton).toBe(false);
+      expect(readFileSync(ref?.path ?? "", "utf8")).toBe(before);
     } finally {
       db.close();
     }
