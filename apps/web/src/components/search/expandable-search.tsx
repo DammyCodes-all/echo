@@ -85,7 +85,7 @@ export function ExpandableSearch({
       className={["es-root", className].filter(Boolean).join(" ")}
       data-open={open || undefined}
       data-dir={expandDirection}
-      style={{ width: open ? width : COLLAPSED }}
+      style={{ width: open ? width : COLLAPSED, maxWidth: open ? "70vw" : undefined }}
     >
       <style>{SEARCH_CSS}</style>
       <form
@@ -113,15 +113,6 @@ export function ExpandableSearch({
             {placeholder}
           </span>
         </div>
-        <button
-          type="submit"
-          aria-label="Search"
-          tabIndex={open ? 0 : -1}
-          className="es-go"
-          data-open={open || undefined}
-        >
-          <HugeiconsIcon icon={Search01Icon} size={16} strokeWidth={1.8} />
-        </button>
       </form>
       <button
         type="button"
@@ -149,7 +140,9 @@ export function HeaderSearch({ className }: { className?: string }) {
 
   function applySearch(query: string): void {
     const trimmed = query.trim();
-    if (location.pathname === "/") {
+    // Both project routes render the same page: filter in place instead of
+    // navigating away. Anywhere else, jump home with the query applied.
+    if (location.pathname === "/" || location.pathname === "/projects") {
       setSearchParams(trimmed === "" ? {} : { q: trimmed }, { replace: true });
     } else if (trimmed !== "") {
       navigate(`/?q=${encodeURIComponent(trimmed)}`);
@@ -160,7 +153,7 @@ export function HeaderSearch({ className }: { className?: string }) {
     <ExpandableSearch
       key={seed}
       expandDirection="left"
-      width={200}
+      width={300}
       className={className}
       onSearch={(query) => {
         applySearch(query);
@@ -246,20 +239,6 @@ const SEARCH_CSS = `
   transition: opacity .2s ease-out, transform .2s ease-out;
 }
 .es-hint[data-empty] { opacity: .9; transform: none; }
-.es-go {
-  flex: none;
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  color: var(--color-dusk-muted);
-  cursor: pointer;
-  opacity: 0;
-  transform: scale(.8);
-  transition: opacity .15s ease-out, transform .15s ease-out, color .15s ease-out;
-}
-.es-go[data-open] { opacity: 1; transform: none; }
-.es-go:hover { color: var(--color-dusk-ink); }
 .es-toggle {
   position: absolute;
   top: 0;
