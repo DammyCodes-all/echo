@@ -1145,6 +1145,105 @@ export function getSnapshotByCommit(
   return row ? snapshotRowFrom(row) : null;
 }
 
+export interface ArchitectureVersionRow {
+  projectId: string;
+  version: number;
+  payloadJson: string;
+  generator: string;
+  createdAt: string;
+}
+
+function architectureVersionRowFrom(row: Record<string, unknown>): ArchitectureVersionRow {
+  return {
+    projectId: String(row.project_id),
+    version: Number(row.version),
+    payloadJson: String(row.payload_json),
+    generator: String(row.generator),
+    createdAt: String(row.created_at),
+  };
+}
+
+// Append-only: every generation, patch and undo inserts a new row. Nothing
+// updates or deletes; undo copies v(N-1) into v(N+1).
+export function insertArchitectureVersion(
+  db: EchoDb,
+  input: { projectId: string; version: number; payloadJson: string; generator: string },
+): void {
+  db.prepare(
+    `INSERT INTO project_architecture_versions (project_id, version, payload_json, generator, created_at)
+     VALUES (?, ?, ?, ?, ?)`,
+  ).run(input.projectId, input.version, input.payloadJson, input.generator, nowIso());
+}
+
+export function getLatestArchitectureVersion(
+  db: EchoDb,
+  projectId: string,
+): ArchitectureVersionRow | null {
+  const row = db
+    .prepare(
+      `SELECT project_id, version, payload_json, generator, created_at
+       FROM project_architecture_versions WHERE project_id = ? ORDER BY version DESC LIMIT 1`,
+    )
+    .get(projectId) as Record<string, unknown> | undefined;
+  return row ? architectureVersionRowFrom(row) : null;
+}
+
+export function getArchitectureVersion(
+  db: EchoDb,
+  projectId: string,
+  version: number,
+): ArchitectureVersionRow | null {
+  const row = db
+    .prepare(
+      `SELECT project_id, version, payload_json, generator, created_at
+       FROM project_architecture_versions WHERE project_id = ? AND version = ?`,
+    )
+    .get(projectId, version) as Record<string, unknown> | undefined;
+  return row ? architectureVersionRowFrom(row) : null;
+}
+
+export interface ProjectSessionFile {
+  sessionId: string;
+  path: string;
+  takenAt: string;
+}
+
+// One row per (session, path) with the latest touch: the raw material for
+// glob-to-session evidence. Same population as listProjectTouchedFiles (no
+// captured filter) so node counts agree with the files table.
+export function listProjectSessionFiles(
+  db: EchoDb,
+  projectId: string,
+  limit = 20_000,
+): { rows: ProjectSessionFile[]; truncated: boolean } {
+  const bounded = Math.min(Math.max(limit, 1), 100_000);
+  const rows = db
+    .prepare(
+      `SELECT s.id AS session_id, sf.path AS path, MAX(sn.taken_at) AS taken_at
+       FROM snapshot_files sf
+       JOIN snapshots sn ON sn.id = sf.snapshot_id
+       JOIN sessions s ON s.id = sn.session_id
+       WHERE s.project_id = ?
+       GROUP BY s.id, sf.path
+       ORDER BY session_id, path
+       LIMIT ?`,
+    )
+    .all(projectId, bounded + 1) as Array<{
+    session_id: string;
+    path: string;
+    taken_at: string;
+  }>;
+  const truncated = rows.length > bounded;
+  return {
+    rows: rows.slice(0, bounded).map((row) => ({
+      sessionId: row.session_id,
+      path: row.path,
+      takenAt: row.taken_at,
+    })),
+    truncated,
+  };
+}
+
 export function listSnapshotFiles(db: EchoDb, snapshotId: string): SnapshotFileRow[] {
   const rows = db
     .prepare(
