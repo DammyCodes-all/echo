@@ -2,6 +2,11 @@ import type { Architecture, ArchitectureNode, ArchitectureNodeEvidence } from "@
 import { autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import {
   Background,
+  BaseEdge,
+  type Edge,
+  EdgeLabelRenderer,
+  type EdgeProps,
+  getSmoothStepPath,
   Handle,
   type Node,
   type NodeMouseHandler,
@@ -13,7 +18,21 @@ import "@xyflow/react/dist/style.css";
 import { memo, useEffect, useMemo, useState } from "react";
 import { formatTime } from "../../api";
 import { duskDarkTokens } from "../../design-tokens";
-import { type ArchitectureLayout, layoutArchitecture } from "./elk-layout";
+import {
+  ARCH_NODE_HEIGHT,
+  ARCH_NODE_WIDTH,
+  type ArchitectureLayout,
+  layoutArchitecture,
+  type RoutedPoint,
+} from "./elk-layout";
+import {
+  computeHubs,
+  isEdgeVisible,
+  neighborCount,
+  polylineMidpoint,
+  revealedHubs,
+  routedPath,
+} from "./graph-helpers";
 
 type ArchNodeData = {
   label: string;
@@ -23,17 +42,74 @@ type ArchNodeData = {
   highlighted: boolean;
   pulsing: boolean;
   pinned: boolean;
+  /** Distinct neighbors, shown as a "used by N" chip while a hub's edges hide. */
+  hubUsers: number | null;
 };
 
 type ArchGroupData = {
   label: string;
 };
 
+type ArchEdgeData = {
+  /** Root-frame ELK polyline; empty when the edge has no routed counterpart. */
+  points: RoutedPoint[];
+};
+
+type ArchEdgeType = Edge<ArchEdgeData, "archEdge">;
+
+function ArchEdge({
+  id,
+  sourceX,
+  sourceY,
+  targetX,
+  targetY,
+  sourcePosition,
+  targetPosition,
+  label,
+  data,
+  style,
+}: EdgeProps<ArchEdgeType>) {
+  const points = data?.points ?? [];
+  const [fallbackPath, fallbackLabelX, fallbackLabelY] = getSmoothStepPath({
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    sourcePosition,
+    targetPosition,
+  });
+  const midpoint = points.length > 0 ? polylineMidpoint(points) : null;
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={points.length >= 2 ? (routedPath(points) ?? fallbackPath) : fallbackPath}
+        style={style}
+      />
+      {typeof label === "string" && label.length > 0 ? (
+        <EdgeLabelRenderer>
+          <div
+            style={{
+              position: "absolute",
+              transform: `translate(-50%, -50%) translate(${midpoint?.x ?? fallbackLabelX}px,${midpoint?.y ?? fallbackLabelY}px)`,
+              fontSize: 10,
+              pointerEvents: "all",
+            }}
+            className="react-flow__edge-label nodrag nopan"
+          >
+            {label}
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </>
+  );
+}
+
 function ArchNode({ data }: NodeProps<Node<ArchNodeData, "arch">>) {
   const tintStrength = 0.05 + Math.min(Math.max(data.tint, 0), 1) * 0.22;
   return (
     <div
-      className={`h-full w-full rounded-dusk-code px-3 py-2 ${data.pulsing ? "arch-pulse" : ""}`}
+      className={`relative h-full w-full rounded-dusk-code px-3 py-2 ${data.pulsing ? "arch-pulse" : ""}`}
       style={{
         backgroundColor: `rgba(140, 155, 255, ${tintStrength.toFixed(2)})`,
         backgroundBlendMode: "screen",
@@ -67,6 +143,11 @@ function ArchNode({ data }: NodeProps<Node<ArchNodeData, "arch">>) {
           proposed
         </span>
       ) : null}
+      {data.hubUsers !== null ? (
+        <span className="absolute -right-2 -top-2 rounded-dusk-pill bg-dusk-pill px-1.5 py-px font-mono text-[10px] text-dusk-muted shadow">
+          used by {data.hubUsers}
+        </span>
+      ) : null}
       <Handle
         type="source"
         position={Position.Bottom}
@@ -95,6 +176,7 @@ function ArchGroupNode({ data }: NodeProps<Node<ArchGroupData, "archGroup">>) {
 }
 
 const nodeTypes = { arch: ArchNode, archGroup: ArchGroupNode };
+const edgeTypes = { archEdge: ArchEdge };
 
 export interface PinnedNode {
   id: string;
@@ -172,6 +254,25 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
 
   const hovered: ArchitectureNode | null = hoveredId ? (byId.get(hoveredId) ?? null) : null;
 
+  const hubs = useMemo(() => computeHubs(architecture), [architecture]);
+  const revealed = useMemo(
+    () => revealedHubs(architecture, hubs, hoveredId),
+    [architecture, hubs, hoveredId],
+  );
+  // Occurrence queues per from→to pair: ELK returns one route per input edge
+  // in order, so the nth same-pair edge takes the nth route. Chat-applied
+  // duplicates (the apply path never trims) still map deterministically.
+  const routedByKey = useMemo(() => {
+    const map = new Map<string, RoutedPoint[][]>();
+    for (const edge of layout?.edges ?? []) {
+      const key = `${edge.from}→${edge.to}`;
+      const list = map.get(key) ?? [];
+      list.push(edge.points);
+      map.set(key, list);
+    }
+    return map;
+  }, [layout]);
+
   const nodes = useMemo(() => {
     if (!layout) return [];
     const highlighted = new Set(highlightedIds);
@@ -180,6 +281,10 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
       id: group.id,
       type: "archGroup",
       position: { x: group.x, y: group.y },
+      // Explicit fields, not just style: React Flow reads node.width/height
+      // when clamping extent:"parent" children, before measurement lands.
+      width: group.width,
+      height: group.height,
       style: { width: group.width, height: group.height },
       data: {
         label:
@@ -200,6 +305,13 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
         parentId: placed.group,
         extent: "parent" as const,
         position: { x: placed.x, y: placed.y },
+        // Fixed size equal to the ELK input: without it React Flow measures
+        // the content (much smaller), and every nodes-array rebuild resets
+        // measured dims to 0x0, flipping the parent clamp and jumping the
+        // node out from under the cursor (hover enter/leave flash loop).
+        width: ARCH_NODE_WIDTH,
+        height: ARCH_NODE_HEIGHT,
+        style: { width: ARCH_NODE_WIDTH, height: ARCH_NODE_HEIGHT },
         data: {
           label: node?.label ?? placed.id,
           status: node?.status ?? "existing",
@@ -208,6 +320,10 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
           highlighted: highlighted.has(placed.id),
           pulsing: pulsing.has(placed.id),
           pinned: pinnedId === placed.id,
+          hubUsers:
+            hubs.has(placed.id) && !revealed.has(placed.id)
+              ? neighborCount(architecture, placed.id)
+              : null,
         } satisfies ArchNodeData,
         draggable: false,
       };
@@ -223,17 +339,27 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
     highlightedIds,
     pulseIds,
     pinnedId,
+    hubs,
+    revealed,
   ]);
 
-  const edges = useMemo(
-    () =>
-      architecture.edges.map((edge, index) => {
+  const edges = useMemo(() => {
+    const used = new Map<string, number>();
+    return architecture.edges
+      .map((edge, index) => ({ edge, index }))
+      .filter(({ edge }) => isEdgeVisible(edge, hubs, revealed))
+      .map(({ edge, index }) => {
         const lit = hoveredId !== null && (edge.from === hoveredId || edge.to === hoveredId);
+        const key = `${edge.from}→${edge.to}`;
+        const occurrence = used.get(key) ?? 0;
+        used.set(key, occurrence + 1);
         return {
           id: `e${index}-${edge.from}-${edge.to}`,
+          type: "archEdge",
           source: edge.from,
           target: edge.to,
           label: edge.label,
+          data: { points: routedByKey.get(key)?.[occurrence] ?? [] },
           style: {
             stroke: lit ? duskDarkTokens.color.accent : duskDarkTokens.color.deadEnd,
             strokeWidth: lit ? 2 : 1.25,
@@ -241,9 +367,8 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
             transition: "opacity 120ms ease",
           },
         };
-      }),
-    [architecture, hoveredId],
-  );
+      });
+  }, [architecture, hoveredId, hubs, revealed, routedByKey]);
 
   const onNodeMouseEnter: NodeMouseHandler = (event, node) => {
     if (node.type !== "arch") return;
@@ -283,6 +408,7 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         onNodeMouseEnter={onNodeMouseEnter}
         onNodeMouseLeave={onNodeMouseLeave}
         onNodeClick={(_event, node) => {

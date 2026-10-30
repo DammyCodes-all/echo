@@ -917,7 +917,7 @@ describe("service", () => {
       const body = outcome.body as { version: number; warnings: string[] };
       expect(body.warnings).toHaveLength(1);
       expect(body.warnings[0]).toMatch(
-        /kept the graph acyclic \(merged 1 opposite pairs into bidirectional edges\)/,
+        /kept the graph acyclic \(merged 1 opposite pair into bidirectional edges\)/,
       );
       const latest = getLatestArchitectureVersion(db, "prj_1");
       const saved = JSON.parse(latest?.payloadJson ?? "{}") as Architecture;
