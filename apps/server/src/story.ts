@@ -197,6 +197,22 @@ function describeVerdict(verdict: ClaimVerdict): string {
   return `${where}: ${verdict.errors.join("; ")}`;
 }
 
+/**
+ * Content-free kind for a claim-verdict error. The messages embed claim text
+ * (numbers, paths, quoted spans), so only the rule name is logged — never
+ * the token that failed.
+ */
+function verdictKind(error: string): string {
+  if (error.startsWith("unknown fact id")) return "unknown-fact-id";
+  if (error.startsWith("number ")) return "number-not-in-evidence";
+  if (error.startsWith("path ")) return "path-not-in-evidence";
+  if (error.startsWith("quote ")) return "quote-not-in-evidence";
+  return "other";
+}
+
+/** Cap on logged verdicts per narrate call; the failing total keeps the scale. */
+const MAX_LOGGED_VERDICTS = 20;
+
 const TODO_PATTERN = /\b(TODO|FIXME|XXX|HACK)\b/;
 
 function uniqueId(taken: Set<string>, base: string): string {
@@ -535,27 +551,26 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     watermark: TapeWatermark;
     resetStatus: boolean;
   }): SessionStory | null {
-    // Session titles are stable: the first persisted summary wins. Regens
-    // still refresh cards, risks and gaps, but keep the original title so
-    // hierarchy navigation doesn't shift under the user. The one exception
-    // is the skeleton-to-model upgrade — a deterministic fallback yields to
-    // the first real narration. The headline cap applies to the carried-over
-    // title too, so pre-cap long titles shrink to their first sentence on
-    // the next persist while the beginning stays stable.
+    // Session titles are stable: the first successful model title locks in
+    // and never changes — later model regens refresh cards, risks and gaps
+    // but keep the original title so hierarchy navigation doesn't shift.
+    // A carried title only counts as locked when it came from a real model
+    // story (prev generator is model kind) and is not skeleton-shaped prose
+    // ("Prompts, ...", "No prompts recorded", "No verified ..."); anything
+    // else — no title, a skeleton fallback, or skeleton-shaped text from
+    // before generator metadata existed — yields to the incoming summary.
+    // Skeletons therefore never overwrite a locked model title. The headline
+    // cap applies to the carried-over title too, so pre-cap long titles
+    // shrink to their first sentence on the next persist.
     const prevSummary = getSessionSummary(db, input.sessionId)?.summary ?? null;
     const prevGenerator = getArtifactRef(db, input.sessionId, "story")?.generator ?? null;
-    const prevIsSkeleton = prevGenerator?.startsWith("skeleton-") ?? false;
-    const nextIsSkeleton = input.generator.startsWith("skeleton-");
-    // Skeleton-shaped titles are never sticky: a carried-over "Prompts, ..."
-    // or "No prompts recorded" title yields to fresh model prose even when
-    // generator metadata is missing (e.g. pre-artifact-ref stories).
-    const prevLooksSkeleton =
-      prevSummary !== null && /^(Prompts,|No prompts recorded|No verified)/i.test(prevSummary);
-    const usePrev =
+    const prevIsModel =
+      prevGenerator !== null &&
+      !prevGenerator.startsWith("skeleton-") &&
       prevSummary !== null &&
       prevSummary !== "" &&
-      (nextIsSkeleton || !prevIsSkeleton) &&
-      !(prevLooksSkeleton && !nextIsSkeleton);
+      !/^(Prompts,|No prompts recorded|No verified)/i.test(prevSummary);
+    const usePrev = prevIsModel;
     const summary = capStorySummary(usePrev && prevSummary ? prevSummary : input.story.summary);
     const titled = summary === input.story.summary ? input.story : { ...input.story, summary };
     let scanned: unknown;
@@ -584,6 +599,20 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     });
     if (input.resetStatus) setSessionCheckStatus(db, input.sessionId, "not_checked");
     return story;
+  }
+
+  /** Content-free reason for a narrate failure: error class only, never payloads. */
+  function narrateFailureGap(error: unknown): string {
+    if (error instanceof ModelError) {
+      if (error.code === "output_budget_exhausted") {
+        return "story model ran out of output budget (reasoning likely consumed it); showing deterministic skeleton";
+      }
+      if (error.code === "invalid_response") {
+        return "story model draft failed validation twice; showing deterministic skeleton";
+      }
+      return `story model call failed (${error.code}); showing deterministic skeleton`;
+    }
+    return "story request could not be built or scanned; showing deterministic skeleton";
   }
 
   function toReviewInputs(review: SessionReview): { hunks: ReviewHunk[]; attempts: FileAttempt[] } {
@@ -628,6 +657,24 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     facts: FactSet,
     sessionId: string,
   ): Promise<{ draft: SessionStory; regenerated: boolean }> {
+    /** Content-free verdict log: locations + error kinds only, never claim text. */
+    function logVerdicts(verdicts: ClaimVerdict[], note: string): void {
+      log.error(
+        {
+          session_id: sessionId,
+          note,
+          failing: verdicts.length,
+          verdicts: verdicts.slice(0, MAX_LOGGED_VERDICTS).map((verdict) => ({
+            area: verdict.location.area,
+            key: verdict.location.key,
+            field: verdict.location.field,
+            index: verdict.location.index,
+            kinds: [...new Set(verdict.errors.map(verdictKind))],
+          })),
+        },
+        "story draft claim verdicts",
+      );
+    }
     const messages = buildNarrationMessages(facts, sessionId);
     // The fact set is built from redacted data; the assembled request is
     // re-scanned before it leaves the process.
@@ -657,6 +704,11 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
       if (error instanceof ModelError && error.code === "invalid_response") {
         // Schema failure, not a dead model: one retry with the errors spelled
         // out, then the normal validate-then-drop path decides the draft.
+        // The error message may quote draft content, so only the stage is logged.
+        log.error(
+          { session_id: sessionId, stage: "schema-parse-retry" },
+          "story draft failed schema validation; retrying",
+        );
         const second = await request([
           ...redacted,
           {
@@ -680,6 +732,7 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     ): Promise<{ draft: SessionStory; regenerated: boolean }> {
       const failures = validateStoryFacts(facts, draft).verdicts.filter((v) => !v.valid);
       if (failures.length === 0) return { draft, regenerated };
+      logVerdicts(failures, "first-draft-failed");
       const fixPrompt = [
         "The previous draft failed these checks. Fix every failure and return the full corrected JSON story, same shape:",
         ...failures.map((failure) => `- ${describeVerdict(failure)}`),
@@ -695,10 +748,13 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
           parse,
           { fetchImpl, retryMaxTokens, reasoningEffort },
         );
+        const remaining = validateStoryFacts(facts, second.value).verdicts.filter((v) => !v.valid);
+        if (remaining.length > 0) logVerdicts(remaining, "regen-draft-still-failing");
         return { draft: second.value, regenerated: true };
       } catch {
         // The regeneration call itself failed; keep the validatable first
         // draft and let the drop step handle its failed claims.
+        logVerdicts(failures, "regen-call-failed-first-draft-kept");
         return { draft, regenerated: true };
       }
     }
@@ -834,8 +890,14 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     let draft: SessionStory;
     try {
       draft = (await narrate(config, facts, sessionId)).draft;
-    } catch {
-      return writeSkeleton();
+    } catch (error) {
+      // Fallbacks used to be silent: every narrate failure (model error,
+      // double validation failure, request build/scan failure) collapsed to
+      // a bare skeleton. Record a content-free reason as a gap so the UI
+      // shows why, and log the class for the regen report.
+      const reason = narrateFailureGap(error);
+      log.error({ session_id: sessionId, reason }, "story narrate failed; using skeleton");
+      return writeSkeleton([reason]);
     }
     const generatedAt = clock().toISOString();
     const stamped: SessionStory = {

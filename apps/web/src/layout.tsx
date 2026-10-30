@@ -1,9 +1,16 @@
-import { NavLink, Outlet } from "react-router";
+import { NavLink, Outlet, useLocation } from "react-router";
 import { HeaderSearch } from "./components/search/expandable-search";
 import { ProjectSort } from "./components/search/project-sort";
 import { SettingsMenu } from "./components/settings/settings-sheet";
 
+function useSearchablePage(): boolean {
+  const { pathname } = useLocation();
+  if (pathname === "/" || pathname === "/projects") return true;
+  return pathname.endsWith("/overview") || pathname.endsWith("/architecture");
+}
+
 export function AppLayout() {
+  const searchable = useSearchablePage();
   return (
     <div className="flex min-h-screen flex-col">
       <header className="mt-5">
@@ -12,7 +19,7 @@ export function AppLayout() {
             <span className="text-lg font-semibold tracking-tight">Echo</span>
           </NavLink>
           <div className="flex items-center gap-3">
-            <HeaderSearch />
+            {searchable ? <HeaderSearch /> : null}
             <ProjectSort />
             <SettingsMenu />
           </div>
