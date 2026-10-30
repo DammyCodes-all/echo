@@ -147,6 +147,7 @@ export type StoryOutcomeKind =
   | "fresh"
   | "generated"
   | "skeleton"
+  | "stale"
   | "waiting"
   | "unavailable"
   | "unknown_session";
@@ -872,19 +873,47 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
       return { outcome: "skeleton", story: persisted };
     };
 
+    /** Read the current story artifact, if it parses. Never throws. */
+    function readExistingStory(): SessionStory | null {
+      try {
+        if (!existing || !existsSync(existing.path)) return null;
+        return SessionStorySchema.parse(JSON.parse(readFileSync(existing.path, "utf8")) as unknown);
+      } catch {
+        return null;
+      }
+    }
+
+    /**
+     * A failed regen must never downgrade a working model story to a
+     * skeleton. When the current artifact is a model narration, keep serving
+     * it (marked stale) instead of persisting a fallback over it. Skeletons
+     * only persist when nothing better exists.
+     */
+    function keepPriorOrSkeleton(reasonGap: string | null): StoryOutcome {
+      const prior = readExistingStory();
+      if (prior && prior.generator.kind === "model" && !prior.skeleton) {
+        log.info(
+          { session_id: sessionId, reason: reasonGap ?? "model unavailable" },
+          "keeping prior model story; not overwriting with skeleton",
+        );
+        return { outcome: "stale", story: prior };
+      }
+      return reasonGap ? writeSkeleton([reasonGap]) : writeSkeleton();
+    }
+
     if (modelOff()) {
       log.info(
         { session_id: sessionId, reason: opts.reason ?? "finalize" },
         "story skeleton (model off)",
       );
-      return writeSkeleton();
+      return keepPriorOrSkeleton(null);
     }
 
     let config: ModelConfig;
     try {
       config = modelConfigFromEnv(env);
     } catch {
-      return writeSkeleton();
+      return keepPriorOrSkeleton(null);
     }
 
     let draft: SessionStory;
@@ -897,7 +926,7 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
       // shows why, and log the class for the regen report.
       const reason = narrateFailureGap(error);
       log.error({ session_id: sessionId, reason }, "story narrate failed; using skeleton");
-      return writeSkeleton([reason]);
+      return keepPriorOrSkeleton(reason);
     }
     const generatedAt = clock().toISOString();
     const stamped: SessionStory = {
@@ -924,15 +953,16 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
       resetStatus: watermarkChanged,
     });
     if (!persisted) {
-      // Model content failed the artifact scan: drop it, keep a skeleton
-      // from the (already redacted) facts when possible.
+      // Model content failed the artifact scan: keep the prior model story
+      // when one exists, else fall back to a skeleton from the (already
+      // redacted) facts.
       log.error(
         { session_id: sessionId },
         "story artifact redaction failed; falling back to skeleton",
       );
-      return writeSkeleton([
+      return keepPriorOrSkeleton(
         "story model content failed the redaction gate; showing skeleton instead",
-      ]);
+      );
     }
     return { outcome: "generated", story: persisted };
   }

@@ -1,3 +1,6 @@
+import type { Dispatcher } from "undici";
+import { Agent } from "undici";
+
 export interface ChatMessage {
   role: "system" | "user" | "assistant";
   content: string;
@@ -86,6 +89,33 @@ interface ChatCompletionsOptions {
   reasoningEffort?: string;
 }
 
+/**
+ * Workaround for broken-IPv6 hosts (VPNs, tunnels, misconfigured ISPs):
+ * undici can fail the whole request on a dead v6 route instead of falling
+ * back to v4 the way curl and browsers do. On a transport-level fetch
+ * rejection only (never on HTTP error statuses, which take the normal
+ * error path below), retry once with an IPv4-pinned dispatcher and report
+ * the ORIGINAL error if both attempts fail.
+ */
+async function fetchWithIpv4Fallback(
+  fetchImpl: (url: string, init?: RequestInit & { dispatcher?: Dispatcher }) => Promise<Response>,
+  url: string,
+  init: RequestInit & { dispatcher?: Dispatcher },
+): Promise<Response> {
+  try {
+    return await fetchImpl(url, init);
+  } catch (error) {
+    const fallback = new Agent({ connect: { family: 4 } });
+    try {
+      return await fetchImpl(url, { ...init, dispatcher: fallback });
+    } catch {
+      throw error;
+    } finally {
+      await fallback.close().catch(() => {});
+    }
+  }
+}
+
 /** Minimal Meta (OpenAI-compatible) chat-completions call. No retries: the
  *  caller owns budget and retry policy and can inspect ModelError.code. */
 export async function chatCompletions(
@@ -98,7 +128,7 @@ export async function chatCompletions(
   if (effort !== undefined) assertReasoningEffort(effort);
   let response: Response;
   try {
-    response = await fetchImpl(`${config.baseUrl}/chat/completions`, {
+    response = await fetchWithIpv4Fallback(fetchImpl, `${config.baseUrl}/chat/completions`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
