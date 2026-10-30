@@ -1,4 +1,4 @@
-import type { ProjectTechStackKind } from "@echo/contracts";
+import type { ProjectTechStackKind, SessionSummary } from "@echo/contracts";
 import {
   Alert02Icon,
   CheckmarkCircle02Icon,
@@ -12,7 +12,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useQuery } from "@tanstack/react-query";
-import { useParams } from "react-router";
+import { useParams, useSearchParams } from "react-router";
 import { api } from "../api";
 import { SessionCard } from "../components/session-card";
 
@@ -24,8 +24,17 @@ const TECH_KIND_ICON: Record<ProjectTechStackKind, typeof CodeIcon> = {
   infra: ServerStack01Icon,
 };
 
+function matchesSession(session: SessionSummary, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (q.length === 0) return true;
+  const haystacks = [session.summary ?? "", session.model ?? "", session.id];
+  return haystacks.some((hay) => hay.toLowerCase().includes(q));
+}
+
 export function ProjectOverviewPage() {
   const { projectId = "" } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = searchParams.get("q") ?? "";
   const project = useQuery({
     queryKey: ["project", projectId],
     queryFn: () => api.project(projectId),
@@ -46,6 +55,8 @@ export function ProjectOverviewPage() {
 
   // Server order is last activity DESC: only genuinely live sessions move.
   const list = sessions.data ?? [];
+  const filtering = query.trim().length > 0;
+  const visible = filtering ? list.filter((s) => matchesSession(s, query)) : list;
   const checked = list.filter((s) => s.checkStatus === "checked").length;
   const skipped = list.filter((s) => s.checkStatus === "skipped").length;
   const highRisk = list.reduce((sum, s) => sum + s.highRiskCount, 0);
@@ -190,6 +201,12 @@ export function ProjectOverviewPage() {
 
       <section className="mt-8 space-y-3 lg:mt-0">
         <h2 className="text-xl font-semibold tracking-tight">Agent sessions</h2>
+        {filtering && sessions.data ? (
+          <p className="text-sm text-dusk-muted" role="status">
+            {visible.length} of {sessions.data.length} session
+            {sessions.data.length === 1 ? "" : "s"}
+          </p>
+        ) : null}
         {sessions.isPending ? (
           <div role="status" aria-label="Loading sessions" className="grid gap-5 sm:grid-cols-2">
             {["first", "second", "third", "fourth"].map((key) => (
@@ -220,11 +237,23 @@ export function ProjectOverviewPage() {
               : "No sessions captured for this project yet."}
           </div>
         ) : null}
-        {list.length > 0 ? (
+        {visible.length > 0 ? (
           <div className="grid gap-5 sm:grid-cols-2">
-            {list.map((session) => (
+            {visible.map((session) => (
               <SessionCard key={session.id} session={session} />
             ))}
+          </div>
+        ) : null}
+        {sessions.data && sessions.data.length > 0 && visible.length === 0 ? (
+          <div className="rounded-dusk-card bg-dusk-surface p-8">
+            <p className="text-sm text-dusk-muted">No sessions match “{query.trim()}”.</p>
+            <button
+              type="button"
+              onClick={() => setSearchParams({}, { replace: true })}
+              className="mt-3 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm font-semibold text-dusk-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
+            >
+              Clear search
+            </button>
           </div>
         ) : null}
       </section>

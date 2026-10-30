@@ -128,9 +128,11 @@ export function ExpandableSearch({
 }
 
 /**
- * Header wiring: the submitted query becomes the `?q=` filter on the home
- * page (navigating there when elsewhere); Escape on the home page also clears
- * the filter, elsewhere it only closes the bar.
+ * Header wiring: the submitted query becomes the `?q=` filter of the page
+ * being viewed — the home page filters projects, a project page filters that
+ * project's sessions. Elsewhere (a story page has nothing to filter) a
+ * non-empty query navigates home. Escape on a filtered page also clears the
+ * filter, elsewhere it only closes the bar.
  */
 export function HeaderSearch({ className }: { className?: string }) {
   const [, setSearchParams] = useSearchParams();
@@ -140,9 +142,13 @@ export function HeaderSearch({ className }: { className?: string }) {
 
   function applySearch(query: string): void {
     const trimmed = query.trim();
-    // Both project routes render the same page: filter in place instead of
+    // Project routes and project detail pages filter in place instead of
     // navigating away. Anywhere else, jump home with the query applied.
-    if (location.pathname === "/" || location.pathname === "/projects") {
+    if (
+      location.pathname === "/" ||
+      location.pathname === "/projects" ||
+      /^\/projects\/[^/]+(?:\/|$)/.test(location.pathname)
+    ) {
       setSearchParams(trimmed === "" ? {} : { q: trimmed }, { replace: true });
     } else if (trimmed !== "") {
       navigate(`/?q=${encodeURIComponent(trimmed)}`);
@@ -221,6 +227,7 @@ const SEARCH_CSS = `
   font-size: 14px;
   color: var(--color-dusk-ink);
   outline: none;
+  padding-right: 44px;
 }
 .es-input::placeholder { color: transparent; }
 .es-hint {
@@ -228,7 +235,7 @@ const SEARCH_CSS = `
   user-select: none;
   position: absolute;
   left: 0;
-  right: 0;
+  right: 44px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
