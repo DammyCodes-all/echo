@@ -312,7 +312,7 @@ export function StoryPage() {
   const { track } = useEngagement(sessionId);
   // Demo forbids check-me and skip (403): hide those affordances up front so
   // the visitor never taps a button that cannot work.
-  const demoMode = useDemoMode();
+  const { isDemo: demoMode } = useDemoMode();
 
   useEffect(() => {
     track("story_opened");
