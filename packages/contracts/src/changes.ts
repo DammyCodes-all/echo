@@ -137,6 +137,44 @@ export function firstNotUnderstood(
 export const CHANGES_FILE_NAME = "changes.json" as const;
 export const PROGRESS_FILE_NAME = "progress.json" as const;
 
+// On-demand unified diff for one change, computed from shadow git between
+// the change's own snapshot pair. Never persisted: the snapshot pair is
+// the cache key, and regen-stable ids make responses repeatable. A file
+// with no hunks and truncated true means its diff was unavailable — a gap,
+// never a silent empty file.
+export const ChangeCodeLineSchema = z.object({
+  kind: z.enum(["context", "add", "del"]),
+  prevNo: z.number().int().positive().nullable(),
+  nextNo: z.number().int().positive().nullable(),
+  text: z.string(),
+});
+export type ChangeCodeLine = z.infer<typeof ChangeCodeLineSchema>;
+
+export const ChangeCodeHunkSchema = z.object({
+  prevStart: z.number().int().nonnegative(),
+  prevLines: z.number().int().nonnegative(),
+  nextStart: z.number().int().nonnegative(),
+  nextLines: z.number().int().nonnegative(),
+  lines: z.array(ChangeCodeLineSchema),
+});
+export type ChangeCodeHunk = z.infer<typeof ChangeCodeHunkSchema>;
+
+export const ChangeCodeFileSchema = z.object({
+  path: z.string().min(1),
+  added: z.number().int().nonnegative(),
+  removed: z.number().int().nonnegative(),
+  truncated: z.boolean(),
+  hunks: z.array(ChangeCodeHunkSchema),
+});
+export type ChangeCodeFile = z.infer<typeof ChangeCodeFileSchema>;
+
+export const ChangeCodeResponseSchema = z.object({
+  changeId: ChangeIdSchema,
+  version: z.number().int().min(1),
+  files: z.array(ChangeCodeFileSchema),
+});
+export type ChangeCodeResponse = z.infer<typeof ChangeCodeResponseSchema>;
+
 export const REVIEW_READER_ARTIFACT_FILE_NAMES = {
   changes: CHANGES_FILE_NAME,
   progress: PROGRESS_FILE_NAME,
