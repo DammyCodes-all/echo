@@ -9,7 +9,7 @@ import GlassFolder, { type ArtRecipe, type FolderFile, hashString } from "./glas
 /** Dusk streak: the workspace at rest, pulled toward the accent. */
 const DUSK_ART: ArtRecipe = {
   style: "streak",
-  colors: ["#12121f", "#1c1c30", "#2a2a4c", "#3b3b6e", "#8c9bff", "#c9ceff"],
+  colors: ["#12121f", "#1c1c30", "#2a2a4c", "#2b3c66", "#2d88ff", "#a9cfff"],
   scale: 0.7,
   warp: 1.6,
   angle: 0.8,
