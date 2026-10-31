@@ -7,10 +7,14 @@ import type {
   AskRequest,
   AskResponse,
   AskThread,
+  Change,
+  ChangeId,
   CheckAttemptV2,
   ChecksV2Response,
   EngagementEvent,
   EngagementState,
+  Progress,
+  ProgressState,
   ProjectFilesResponse,
   ProjectLearnResponse,
   ProjectSummary,
@@ -24,6 +28,16 @@ import type {
 /** Backstop so a stuck server can never stick the UI; above the server's own deadline. */
 const CHECK_REQUEST_TIMEOUT_MS = 200_000;
 
+/** Thrown when the session hasn't gone quiet yet — no changes exist to read. */
+export class ChangesNotReadyError extends Error {
+  readonly sessionId: string;
+  constructor(sessionId: string) {
+    super(`session ${sessionId} has not gone quiet yet`);
+    this.name = "ChangesNotReadyError";
+    this.sessionId = sessionId;
+  }
+}
+
 /** Thrown when the session hasn't gone quiet yet — no story exists and none will generate this visit. */
 export class StoryNotReadyError extends Error {
   readonly sessionId: string;
@@ -33,6 +47,14 @@ export class StoryNotReadyError extends Error {
     this.sessionId = sessionId;
   }
 }
+
+/** Reader payload: ordered changes, stored progress rows, digest-built summary, liveness. */
+export type SessionChangesResponse = {
+  changes: Change[];
+  progress: Progress[];
+  summary: string;
+  isLive: boolean;
+};
 
 type FetchOptions = {
   signal?: AbortSignal;
@@ -145,6 +167,33 @@ export const api = {
   },
   sessionHistory: (sessionId: string) =>
     getJson<SessionHistoryResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/history`),
+  changes: async (sessionId: string): Promise<SessionChangesResponse> => {
+    const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}/changes`);
+    if (response.status === 202) {
+      // The session hasn't gone quiet yet: no changes to read, and none will
+      // exist until the pipeline groups the first snapshot-pair diff.
+      throw new ChangesNotReadyError(sessionId);
+    }
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(payload?.error?.message ?? `${response.status} ${response.statusText}`);
+    }
+    const body = (await response.json()) as Partial<SessionChangesResponse> | null;
+    // The server owns the envelope; default defensively so a sparse payload
+    // renders an empty reader instead of throwing on first paint.
+    return {
+      changes: Array.isArray(body?.changes) ? body.changes : [],
+      progress: Array.isArray(body?.progress) ? body.progress : [],
+      summary: typeof body?.summary === "string" ? body.summary : "",
+      isLive: body?.isLive === true,
+    };
+  },
+  recordProgress: (
+    sessionId: string,
+    input: { changeId: ChangeId; version: number; state: ProgressState },
+  ) => postJson<Progress>(`/api/sessions/${encodeURIComponent(sessionId)}/progress`, input),
   engagementState: (sessionId: string, cardIds?: string[]) => {
     const query =
       cardIds && cardIds.length > 0 ? `?cardIds=${encodeURIComponent(cardIds.join(","))}` : "";
