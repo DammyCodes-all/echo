@@ -167,6 +167,7 @@ export const api = {
   chatArchitecture: async (
     projectId: string,
     input: { message: string; pinnedNodeId: string | null },
+    options: { signal?: AbortSignal } = {},
   ): Promise<ArchitectureChatResponse> => {
     // Custom shape (not postJson): an invalid patch still carries the model's
     // answer in the error details, and the UI shows both.
@@ -176,6 +177,7 @@ export const api = {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(input),
+        signal: options.signal,
       },
     );
     const body = (await response.json().catch(() => null)) as {
