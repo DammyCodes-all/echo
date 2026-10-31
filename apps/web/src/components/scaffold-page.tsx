@@ -1,13 +1,33 @@
 import { Folder01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { Link } from "react-router";
+
+type CrumbIcon = Parameters<typeof HugeiconsIcon>[0]["icon"];
+
+/** Display caps for crumb/title text; the full text stays on `title`. */
+const CRUMB_CAP = 32;
+const TITLE_CAP = 48;
+
+function cap(text: string, max: number): string {
+  const clean = text.trim();
+  return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
+}
 
 type ScaffoldPageProps = {
   eyebrow?: string;
   title: string;
   description?: ReactNode;
-  breadcrumb?: { backTo: string; backLabel: string };
+  breadcrumb?: {
+    backTo: string;
+    backLabel: string;
+    /** Middle crumbs between the back link and the title, e.g. project. */
+    trail?: Array<{ label: string; to: string }>;
+    /** Icon beside the title; the folder stays the default. */
+    titleIcon?: CrumbIcon;
+    /** True while the title row has no data: a shimmer bar instead of text. */
+    titleLoading?: boolean;
+  };
   children?: ReactNode;
 };
 
@@ -25,24 +45,57 @@ export function ScaffoldPage({
           aria-label="Breadcrumb"
           className="sticky top-0 z-10 -mx-6 bg-dusk-base/95 px-6 py-3 backdrop-blur"
         >
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
             <Link
               to={breadcrumb.backTo}
-              className="text-dusk-muted transition-colors hover:text-dusk-ink"
+              className="shrink-0 text-dusk-muted transition-colors hover:text-dusk-ink"
             >
               ← {breadcrumb.backLabel}
             </Link>
-            <span aria-hidden className="text-dusk-faint">
+            <span aria-hidden className="shrink-0 text-dusk-faint">
               /
             </span>
+            {breadcrumb.trail?.map((crumb) => (
+              <Fragment key={crumb.to}>
+                <Link
+                  to={crumb.to}
+                  title={crumb.label}
+                  className="flex min-w-0 items-center gap-1.5 text-dusk-muted transition-colors hover:text-dusk-ink"
+                >
+                  <span aria-hidden className="inline-flex shrink-0">
+                    <HugeiconsIcon icon={Folder01Icon} size={16} strokeWidth={1.8} />
+                  </span>
+                  <span className="truncate">{cap(crumb.label, CRUMB_CAP)}</span>
+                </Link>
+                <span aria-hidden className="shrink-0 text-dusk-faint">
+                  /
+                </span>
+              </Fragment>
+            ))}
             <h1
               aria-current="page"
-              className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-dusk-ink"
+              className="flex min-w-0 items-center gap-2 text-2xl font-semibold tracking-tight text-dusk-ink"
             >
-              <span aria-hidden className="inline-flex text-dusk-muted">
-                <HugeiconsIcon icon={Folder01Icon} size={22} strokeWidth={1.8} />
+              <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
+                <HugeiconsIcon
+                  icon={breadcrumb.titleIcon ?? Folder01Icon}
+                  size={22}
+                  strokeWidth={1.8}
+                />
               </span>
-              {title}
+              {breadcrumb.titleLoading ? (
+                <>
+                  <span className="sr-only">Loading…</span>
+                  <span
+                    aria-hidden
+                    className="h-7 w-56 max-w-full rounded-dusk-code bg-dusk-pill motion-safe:animate-pulse"
+                  />
+                </>
+              ) : (
+                <span className="truncate" title={title}>
+                  {cap(title, TITLE_CAP)}
+                </span>
+              )}
             </h1>
           </div>
         </nav>
