@@ -25,6 +25,8 @@ type ScaffoldPageProps = {
     trail?: Array<{ label: string; to: string }>;
     /** Icon beside the title; the folder stays the default. */
     titleIcon?: CrumbIcon;
+    /** Small quiet title for pages whose content owns the hierarchy. */
+    quietTitle?: boolean;
     /** True while the title row has no data: a shimmer bar instead of text. */
     titleLoading?: boolean;
   };
@@ -74,12 +76,16 @@ export function ScaffoldPage({
             ))}
             <h1
               aria-current="page"
-              className="flex min-w-0 items-center gap-2 text-2xl font-semibold tracking-tight text-dusk-ink"
+              className={
+                breadcrumb.quietTitle
+                  ? "flex min-w-0 items-center gap-2 text-sm font-medium text-dusk-muted"
+                  : "flex min-w-0 items-center gap-2 text-2xl font-semibold tracking-tight text-dusk-ink"
+              }
             >
               <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
                 <HugeiconsIcon
                   icon={breadcrumb.titleIcon ?? Folder01Icon}
-                  size={22}
+                  size={breadcrumb.quietTitle ? 16 : 22}
                   strokeWidth={1.8}
                 />
               </span>
@@ -102,9 +108,7 @@ export function ScaffoldPage({
       ) : (
         <div className="max-w-2xl space-y-3">
           {eyebrow ? (
-            <p className="font-mono text-xs uppercase tracking-[0.2em] text-dusk-muted">
-              {eyebrow}
-            </p>
+            <p className="text-xs uppercase tracking-[0.2em] text-dusk-muted">{eyebrow}</p>
           ) : null}
           <h1 className="text-3xl font-semibold tracking-tight">{title}</h1>
           {description ? <p className="text-sm leading-6 text-dusk-muted">{description}</p> : null}
@@ -118,7 +122,7 @@ export function ScaffoldPage({
 export function Panel({ label }: { label: string }) {
   return (
     <div className="h-72 rounded-dusk-card bg-dusk-surface p-6">
-      <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">{label}</p>
+      <p className="text-xs uppercase tracking-widest text-dusk-muted">{label}</p>
     </div>
   );
 }
