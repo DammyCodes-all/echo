@@ -3,8 +3,8 @@ import { capStorySummary } from "@echo/contracts";
 const SKELETON_CHANGES_PREFIX = "Prompts, changes in ";
 
 /**
- * Skeleton summaries list up to five tape paths (`buildSkeletonStory` in
- * `@echo/story`); on a card that reads as path soup, and every card starts
+ * Skeleton summaries list up to five tape paths (old story-pipeline skeleton
+ * shape); on a card that reads as path soup, and every card starts
  * the same way. Compact the known skeleton shape to its first path — the
  * full text stays on the hover title — and leave model prose untouched.
  * Paths never contain commas; the "and other files" overflow is filtered.
@@ -27,7 +27,7 @@ export function compactSessionSummary(summary: string | null): string | null {
  * before the recording/empty placeholders. Every content branch runs through
  * the shared headline cap so summaries stored before the cap still render as
  * one short sentence; the full text stays on the card hover title and the
- * story page.
+ * reader.
  */
 export function sessionDisplayTitle(session: {
   summary: string | null;
@@ -40,6 +40,6 @@ export function sessionDisplayTitle(session: {
   if (session.summary && !session.summarySkeleton) return capStorySummary(session.summary);
   if (session.summary)
     return capStorySummary(compactSessionSummary(session.summary) ?? session.summary);
-  if (session.captureState === "recording") return "Still recording — story pending…";
+  if (session.captureState === "recording") return "Still recording — changes pending…";
   return "No summary";
 }

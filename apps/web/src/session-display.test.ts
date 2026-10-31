@@ -70,7 +70,7 @@ describe("sessionDisplayTitle priority", () => {
 
   it("falls back to recording/empty placeholders with neither title nor summary", () => {
     expect(sessionDisplayTitle({ ...BASE, captureState: "recording" })).toBe(
-      "Still recording — story pending…",
+      "Still recording — changes pending…",
     );
     expect(sessionDisplayTitle(BASE)).toBe("No summary");
   });
