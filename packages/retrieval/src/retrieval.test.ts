@@ -201,6 +201,241 @@ describe("retrieval improvements", () => {
   });
 });
 
+function makePayloadEvent(seq: number, kind: string, payload: unknown): TapeEvent {
+  const event = makeEvent(seq, kind, "placeholder");
+  return { ...event, payload };
+}
+
+describe("muse payloads", () => {
+  it("summarizes tool results from nested result text, not the envelope", () => {
+    const events = [
+      makePayloadEvent(1, "tool.completed", {
+        kind: "run",
+        event: {
+          kind: "tool_result_batch_committed",
+          batch_id: "b1",
+          results: [
+            {
+              tool_call_id: "call_1",
+              text: "not ok 1 - expected 2.29 to equal 1.99",
+            },
+          ],
+        },
+      }),
+    ];
+    const bundle = buildEvidenceBundle(events, { question: "Why did 2.29 not equal 1.99?" });
+    expect(bundle.items).toHaveLength(1);
+    expect(bundle.items[0]?.text).toContain("expected 2.29 to equal 1.99");
+    expect(bundle.items[0]?.text).not.toContain("batch_id");
+  });
+
+  it("splits multi-result batches so each output ranks on its own", () => {
+    const events = [
+      makePayloadEvent(1, "tool.completed", {
+        kind: "run",
+        event: {
+          kind: "tool_result_batch_committed",
+          results: [
+            { tool_call_id: "call_1", text: "Read text file src/ledger.js. No failures here." },
+            { tool_call_id: "call_2", text: "not ok 1 - expected 2.29 to equal 1.99" },
+          ],
+        },
+      }),
+    ];
+    const bundle = buildEvidenceBundle(events, { question: "Why did 2.29 not equal 1.99?" });
+    expect(bundle.items).toHaveLength(1);
+    expect(bundle.items[0]?.text).toContain("expected 2.29 to equal 1.99");
+  });
+
+  it("leads exec envelopes with command, exit, and output", () => {
+    const events = [
+      makePayloadEvent(1, "tool.completed", {
+        kind: "run",
+        event: {
+          kind: "tool_result_batch_committed",
+          results: [
+            {
+              tool_call_id: "call_1",
+              text: JSON.stringify({
+                chunk_id: "exec-2-1",
+                command: "npm test 2>&1",
+                description: "Run test suite to observe failure",
+                exit_code: 1,
+                terminal_status: "failed",
+                output: "not ok 1 - expected 2.29 to equal 1.99",
+              }),
+            },
+          ],
+        },
+      }),
+    ];
+    const bundle = buildEvidenceBundle(events, { question: "Why did npm test fail?" });
+    expect(bundle.items).toHaveLength(1);
+    expect(bundle.items[0]?.text).toBe(
+      "tool result: exec npm test 2>&1 exit 1: not ok 1 - expected 2.29 to equal 1.99",
+    );
+  });
+
+  it("keeps mid-output detail past the 300-char opencode window", () => {
+    const filler = "progress line ok ".repeat(25);
+    const events = [
+      makePayloadEvent(1, "tool.completed", {
+        kind: "run",
+        event: {
+          kind: "tool_result_batch_committed",
+          results: [{ tool_call_id: "call_1", text: `${filler}not ok 1 - expected 2.29` }],
+        },
+      }),
+    ];
+    const bundle = buildEvidenceBundle(events, { question: "Why did 2.29 fail?" });
+    expect(bundle.items).toHaveLength(1);
+    expect(bundle.items[0]?.text).toContain("expected 2.29");
+  });
+
+  it("summarizes tool calls as names with path targets", () => {
+    const events = [
+      makePayloadEvent(1, "tool.requested", {
+        kind: "run",
+        event: {
+          kind: "assistant_tool_calls_committed",
+          tool_calls: [
+            { name: "read_file", args: '{"path":"src/ledger.js"}' },
+            { name: "exec", args: '{"command":"npm test","description":"run tests"}' },
+          ],
+        },
+      }),
+    ];
+    const bundle = buildEvidenceBundle(events, { question: "What did the agent read?" });
+    expect(bundle.items).toHaveLength(1);
+    expect(bundle.items[0]?.text).toBe("tool calls: read_file src/ledger.js; exec npm test");
+    expect(bundle.items[0]?.filePath).toBe("src/ledger.js");
+  });
+
+  it("summarizes model chunks as agent-said and task output as output", () => {
+    const said = makePayloadEvent(1, "model.response", {
+      kind: "run",
+      event: { kind: "output", chunk: "The discount applies before totals." },
+    });
+    const out = makePayloadEvent(2, "tool.completed", {
+      kind: "task",
+      event: { kind: "output", chunk: "Read text file src/ledger.js." },
+    });
+    const bundle = buildEvidenceBundle([said, out], { question: "discount totals ledger" });
+    const texts = bundle.items.map((item) => item.text);
+    expect(texts).toContain("agent said: The discount applies before totals.");
+    expect(texts).toContain("output: Read text file src/ledger.js.");
+  });
+
+  it("degrades malformed tool-call args to a bare name", () => {
+    const events = [
+      makePayloadEvent(1, "tool.requested", {
+        kind: "run",
+        event: {
+          kind: "assistant_tool_calls_committed",
+          tool_calls: [{ name: "exec", args: "not json" }],
+        },
+      }),
+    ];
+    const bundle = buildEvidenceBundle(events, { question: "What did the agent exec?" });
+    expect(bundle.items[0]?.text).toBe("tool calls: exec");
+  });
+
+  it("leaves lifecycle envelopes without readable content on the fallback", () => {
+    const events = [
+      makePayloadEvent(1, "tool.requested", {
+        kind: "task",
+        event: { kind: "proposed", task_id: "t1", task_kind: "tool.read_file" },
+      }),
+    ];
+    // Weak overlap (proposed + task_kind terms) cannot clear the -4 penalty.
+    const thin = buildEvidenceBundle(events, { question: "What was proposed?" });
+    expect(thin.items).toHaveLength(0);
+    // Heavy overlap still admits: penalized, never excluded.
+    const heavy = buildEvidenceBundle(events, {
+      question: "proposed read_file task kind run",
+    });
+    expect(heavy.items).toHaveLength(1);
+    expect(heavy.items[0]?.text).toContain("tool.requested:");
+  });
+
+  it("ranks content above lifecycle envelopes on shared terms", () => {
+    const content = makePayloadEvent(1, "tool.requested", {
+      kind: "run",
+      event: {
+        kind: "assistant_tool_calls_committed",
+        tool_calls: [{ name: "read_file", args: '{"path":"src/ledger.js"}' }],
+      },
+    });
+    const noise = makePayloadEvent(2, "tool.requested", {
+      kind: "task",
+      event: { kind: "proposed", task_id: "t1", task_kind: "tool.read_file" },
+    });
+    const bundle = buildEvidenceBundle([content, noise], { question: "What did read_file touch?" });
+    expect(bundle.items.map((item) => item.eventId)).toEqual(["fixture-fts-1"]);
+  });
+
+  it("expands change-verbs to edit vocabulary", () => {
+    const edit = makePayloadEvent(1, "tool.requested", {
+      kind: "run",
+      event: {
+        kind: "assistant_tool_calls_committed",
+        tool_calls: [{ name: "edit_file", args: '{"path":"src/ledger.js"}' }],
+      },
+    });
+    const read = makePayloadEvent(2, "tool.requested", {
+      kind: "run",
+      event: {
+        kind: "assistant_tool_calls_committed",
+        tool_calls: [{ name: "read_file", args: '{"path":"README.md"}' }],
+      },
+    });
+    const bundle = buildEvidenceBundle([edit, read], { question: "What files were changed?" });
+    expect(bundle.items[0]?.eventId).toBe("fixture-fts-1");
+    // Without a change-verb the edit stays out: synonyms do not fire.
+    const quiet = buildEvidenceBundle([edit, read], { question: "What was reviewed?" });
+    expect(quiet.items).toHaveLength(0);
+  });
+
+  it("expands delete-verbs to rm", () => {
+    const events = [
+      makePayloadEvent(1, "tool.requested", {
+        kind: "run",
+        event: {
+          kind: "assistant_tool_calls_committed",
+          tool_calls: [{ name: "bash", args: '{"command":"rm src/old.js"}' }],
+        },
+      }),
+    ];
+    const bundle = buildEvidenceBundle(events, { question: "What was deleted?" });
+    expect(bundle.items).toHaveLength(1);
+    expect(bundle.items[0]?.text).toContain("rm src/old.js");
+  });
+
+  it("ranks content above skill-catalog echoes", () => {
+    const content = makePayloadEvent(1, "tool.completed", {
+      kind: "run",
+      event: {
+        kind: "tool_result_batch_committed",
+        results: [{ tool_call_id: "call_1", text: "npm test exit 1: not ok, tests failed" }],
+      },
+    });
+    const noise = makePayloadEvent(2, "tool.completed", {
+      kind: "run",
+      event: {
+        kind: "tool_result_batch_committed",
+        results: [
+          {
+            tool_call_id: "call_2",
+            text: '<read-skill-result name="test-skill">ok</read-skill-result>',
+          },
+        ],
+      },
+    });
+    const bundle = buildEvidenceBundle([content, noise], { question: "Why did the test fail?" });
+    expect(bundle.items.map((item) => item.eventId)).toEqual(["fixture-fts-1"]);
+  });
+});
+
 describe("fts recall", () => {
   it("stems: running matches a service that runs", () => {
     // Word overlap sees "running" vs "runs" and refuses; porter sees one stem.
