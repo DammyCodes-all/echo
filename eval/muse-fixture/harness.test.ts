@@ -471,11 +471,18 @@ describe("eval/muse-fixture capture integrity", () => {
         "hunk selection and attempt tree — need real diffs",
       ],
     };
-    writeFileSync(join(OUT_DIR, "result.json"), `${JSON.stringify(result, null, 2)}\n`);
+    // Artifact snapshots stay out of the working tree by default: writing
+    // result.json/report.md on every run dirties the tree and manufactures
+    // merge conflicts. Persist them only on explicit request for a refresh.
+    const artifactDir =
+      process.env.ECHO_UPDATE_FIXTURES === "1"
+        ? OUT_DIR
+        : mkdtempSync(join(tmpdir(), "echo-eval-out-"));
+    writeFileSync(join(artifactDir, "result.json"), `${JSON.stringify(result, null, 2)}\n`);
     const passCount = coverage.filter((entry) => entry.status === "pass").length;
     const missed = coverage.filter((entry) => entry.status !== "pass");
     writeFileSync(
-      join(OUT_DIR, "report.md"),
+      join(artifactDir, "report.md"),
       `# Capture integrity (fixture)\n\nSample: 1 synthetic session, ${tapeEvents.length} tape events, ${snapshotRows.length} snapshots, ${fileRows.length} snapshot files.\n\nCoverage: ${passCount}/${coverage.length} pass; missed states: ${missed.map((entry) => entry.item).join(", ")}.\n\nCapture quality \`${row.capture_quality}\` persisted by ingest, identical to a direct finalizeMuseSession call on the same inputs.\n\nRaw-secret scan over tape, shadow blobs, spool, SQLite, logs, and demo bundle: 0 findings (zero tolerance).\n\nCaveats: synthetic fixture, single session, no real Muse build; intermediates asserted absent on artifacts, not proven for the filesystem.\n\nNot measured here (need real tapes, stay manual): citation support, refusal rate, check pass rate, time to first check, hunk selection, attempt tree.\n\nEcho commit: ${echoCommit}\n`,
     );
     db.close();
