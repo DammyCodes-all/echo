@@ -1,19 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import {
-  bucketFor,
-  gradeMcq,
-  gradeRubric,
-  isWeakPictureBucket,
-  makeCheck,
-  selectTargets,
-  weakFiles,
-} from "@echo/checks";
+import { bucketFor, gradeMcq, gradeRubric, makeCheck } from "@echo/checks";
 import {
   type AnswerConfidence,
   type AskEvidence,
+  CHANGES_FILE_NAME,
+  type Change,
   type ChangeCard,
+  ChangeIdSchema,
+  ChangeSchema,
   type CheckAttemptV2,
   type CheckKind,
   CheckKindSchema,
@@ -30,11 +26,11 @@ import {
   z,
 } from "@echo/contracts";
 import {
-  deriveEngagementTiers,
   type EchoDb,
   getArtifactRef,
+  getChangeRefs,
+  getProgress,
   getSession,
-  listSessions,
   readAllEvents,
   setSessionCheckStatus,
   upsertArtifactRef,
@@ -49,10 +45,13 @@ import {
 } from "@echo/model";
 import { redactJson } from "@echo/redaction";
 import { buildSessionReview } from "./review-index";
-import { computeWatermark } from "./story";
+import { computeWatermark } from "./session-readiness";
 
 /** Prompt version recorded on model-generated check sets. */
 export const CHECK_PROMPT_VERSION = "check-v1";
+
+/** Caught-up check cap (ADR 0014 §g): at most three questions, no targeting. */
+const MAX_CHECK_TARGETS = 3;
 
 /** Default overall deadline for one check action's model calls (drafts, retries, grading). */
 const DEFAULT_CHECK_TIMEOUT_MS = 180_000;
@@ -169,7 +168,8 @@ function knownSetsFor(cards: ChangeCard[], patches: Map<string, string>): KnownS
         absorbText(patch);
       }
     }
-    numbers.add(String(card.rank));
+    // Rank is risk order, so it never grounds a question: ADR 0014 §g has
+    // no scores, and question prose must not cite ranks.
   }
   numbers.add(String(cards.length));
   return { files, numbers };
@@ -232,13 +232,22 @@ const CHECK_SYSTEM_PROMPT = [
   'Reply with JSON only: {"questions": [{"cardId": string, "format": "mcq"|"free_text", "kind": "consequence"|"decision"|"tradeoff"|"blast_radius"|"teach_back", "question": string, "options": [{"id": string, "text": string}] (mcq only, min 2), "correctOptionId": string (mcq only, one of the option ids), "distractorSources": [string] (mcq only), "rubric": [string] (free_text only, min 1), "explanation": string, "evidencePaths": [string]}]}.',
 ].join("\n");
 
-function kindForCard(card: ChangeCard, index: number): CheckKind {
-  // High-risk cards always get teach-back (free text): the riskiest change
-  // deserves an explanation, not a guess. Otherwise cycle the kinds so a
-  // session sees a mix; format follows from kind.
-  if (card.highRisk) return "teach_back";
-  const cycle: CheckKind[] = ["consequence", "decision", "tradeoff", "blast_radius"];
-  return cycle[index % cycle.length] as CheckKind;
+/**
+ * Question kinds cycle by target position only. No card content feeds kind
+ * selection: ADR 0014 §g removes all risk targeting, so the old high-risk
+ * teach-back rule and its free-text enforcement are gone. teach_back stays
+ * in the cycle (as free text) without any risk meaning.
+ */
+const KIND_CYCLE: CheckKind[] = [
+  "consequence",
+  "decision",
+  "tradeoff",
+  "blast_radius",
+  "teach_back",
+];
+
+function kindForIndex(index: number): CheckKind {
+  return KIND_CYCLE[index % KIND_CYCLE.length] as CheckKind;
 }
 
 function formatForKind(kind: CheckKind): "mcq" | "free_text" {
@@ -255,12 +264,11 @@ function targetBlock(
   patches: Map<string, string>,
   detours: SessionStory["detours"],
 ): string {
-  const kind = kindForCard(card, index);
+  const kind = kindForIndex(index);
   const lines = [
     `TARGET cardId=${card.id} format=${formatForKind(kind)} kind=${kind}`,
     `Headline: ${card.headline}`,
     `Touches: ${card.touches.join(", ") || "(none)"}`,
-    `Risk: ${card.riskReasons.join("; ") || "(none)"}`,
     `Why:\n${claimLines(card.why)}`,
     `Before:\n${claimLines(card.before)}`,
     `Now:\n${claimLines(card.now)}`,
@@ -367,6 +375,105 @@ export function createChecksV2Service(
   }
 
   const demoMemory = new Map<string, ChecksV2Artifact | null>();
+  function changesArtifactPath(projectId: string, sessionId: string): string {
+    return join(dataDir, "projects", projectId, "sessions", sessionId, CHANGES_FILE_NAME);
+  }
+
+  // ADR 0014 reader source: the changes.json content rows. A corrupt file
+  // reads as missing (the pipeline regen owns the repair); refs alone carry
+  // no content to ground a question, so generation needs the file.
+  function loadChangesList(projectId: string, sessionId: string): Change[] | null {
+    const path = changesArtifactPath(projectId, sessionId);
+    if (!existsSync(path)) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (parsed === null || typeof parsed !== "object") return null;
+      const raw = (parsed as Record<string, unknown>).changes;
+      if (!Array.isArray(raw)) return null;
+      const changes: Change[] = [];
+      for (const entry of raw) {
+        const change = ChangeSchema.safeParse(entry);
+        if (change.success) changes.push(change.data);
+      }
+      return changes;
+    } catch {
+      return null;
+    }
+  }
+
+  function isChangeId(value: string): boolean {
+    return ChangeIdSchema.safeParse(value).success;
+  }
+
+  // Adapter so Change rows reuse the card-grounded drafting/evidence helpers:
+  // headline/title, touches/files and claim texts line up; hunks/detours stay
+  // empty (no risk meaning, ADR 0014 §g) and verification stays nothing.
+  function changeToCard(change: Change, sessionOrder: number): ChangeCard {
+    return {
+      id: change.id as ChangeCard["id"],
+      headline: change.title,
+      constituentHunkIds: [],
+      constituentActionIds: [],
+      rank: 1,
+      sessionOrder,
+      highRisk: false,
+      riskReasons: [],
+      verification: "nothing",
+      why: [{ text: change.summary, label: "uncertain", factIds: [] }],
+      before: change.before.map((text) => ({ text, label: "uncertain" as const, factIds: [] })),
+      now: change.now.map((text) => ({ text, label: "uncertain" as const, factIds: [] })),
+      checkedBy: [],
+      touches: change.files.map((file) => file.path),
+      moment: {
+        eventId: null,
+        toolCallId: null,
+        ts: null,
+        excerpt: change.digest.slice(0, 500),
+        label: "uncertain",
+      },
+      history: { priorSessionIds: [], previousPicture: null, note: null },
+    };
+  }
+
+  // Caught-up ordering (ADR 0014 §g): skipped first, then understood, never
+  // viewed-only. Missing progress stays eligible between the two; an empty
+  // progress table falls back to file order (the changes analogue of the
+  // legacy sessionOrder sort). Version-exact: a regen without new progress
+  // reads as missing, never as its old state.
+  function orderChangesByProgress(
+    changes: Change[],
+    progressRows: Array<{ changeId: string; version: number; state: string }>,
+  ): Change[] {
+    if (progressRows.length === 0) return [...changes];
+    const byKey = new Map(
+      progressRows.map((row) => [`${row.changeId}@v${row.version}`, row.state]),
+    );
+    const eligible = changes.filter(
+      (change) => byKey.get(`${change.id}@v${change.version}`) !== "viewed",
+    );
+    const rank = (change: Change): number => {
+      const state = byKey.get(`${change.id}@v${change.version}`);
+      if (state === undefined) return 1;
+      if (state === "skipped") return 0;
+      if (state === "understood") return 2;
+      return 1;
+    };
+    const indexOf = new Map(changes.map((change, index) => [change.id, index]));
+    return [...eligible].sort((a, b) => {
+      const delta = rank(a) - rank(b);
+      if (delta !== 0) return delta;
+      return (indexOf.get(a.id) ?? 0) - (indexOf.get(b.id) ?? 0);
+    });
+  }
+
+  // Picture base across the transition: change adapters first (reader order),
+  // then any story-only cards so mixed artifacts keep both pictures.
+  function pictureBase(story: SessionStory | null, changes: Change[] | null): ChangeCard[] {
+    const adapters = (changes ?? []).map((change, index) => changeToCard(change, index));
+    if (!story) return adapters;
+    const seen = new Set(adapters.map((card) => card.id));
+    return [...adapters, ...story.cards.filter((card) => !seen.has(card.id))];
+  }
 
   function loadArtifact(projectId: string, sessionId: string): ChecksV2Artifact | null {
     if (options.demo === true) {
@@ -687,69 +794,6 @@ export function createChecksV2Service(
     return { questions, errors };
   }
 
-  function needsFreeText(targets: ChangeCard[], questions: StoredCheckQuestion[]): boolean {
-    return (
-      targets.some((card) => card.highRisk) &&
-      !questions.some((entry) => entry.format === "free_text")
-    );
-  }
-
-  /**
-   * Enforce the high-risk free-text rule: one follow-up forcing free_text for
-   * the highest-risk target. If the model still disobeys, the set ships
-   * without it — dropping the whole check over question format would trade a
-   * working calibration moment for a formatting veto, so the violation is
-   * logged and the gap stays visible in the picture.
-   */
-  async function enforceFreeText(
-    config: ModelConfig,
-    targets: ChangeCard[],
-    story: SessionStory,
-    patches: Map<string, string>,
-    questions: StoredCheckQuestion[],
-    signal: AbortSignal,
-  ): Promise<StoredCheckQuestion[]> {
-    if (!needsFreeText(targets, questions)) return questions;
-    const highest = [...targets].sort(
-      (a, b) => Number(b.highRisk) - Number(a.highRisk) || a.rank - b.rank,
-    )[0] as ChangeCard;
-    const block = targetBlock(highest, 0, patches, story.detours);
-    const messages: ChatMessage[] = [
-      { role: "system", content: CHECK_SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `This session has a high-risk change. Write exactly ONE free_text question (kind teach_back) for this target:\n\n${block}`,
-      },
-    ];
-    try {
-      const redacted = redactJson(messages).value as ChatMessage[];
-      const result = await requestJson(config, redacted, (value: unknown) => value, {
-        fetchImpl,
-        retryMaxTokens: Math.max(config.maxTokens * 2, 8192),
-        signal,
-      });
-      const parsed = CheckDraftSetSchema.safeParse(result.value);
-      const draft = parsed.success ? parsed.data.questions[0] : undefined;
-      if (draft && draft.cardId === highest.id && draft.format === "free_text") {
-        const targetsById = new Map(targets.map((card) => [card.id, card]));
-        const validated = validateDraft(draft, targetsById, knownSetsFor(targets, patches));
-        if (validated.question && validated.question.format === "free_text") {
-          const existing = questions.findIndex((entry) => entry.cardId === highest.id);
-          if (existing >= 0) questions[existing] = validated.question;
-          else questions.push(validated.question);
-          return questions;
-        }
-      }
-    } catch {
-      // Model failure here is not fatal: fall through to accept + log.
-    }
-    log.info(
-      { session_id: story.sessionId, card_id: highest.id },
-      "checks-v2 shipped without the required high-risk free_text question",
-    );
-    return questions;
-  }
-
   function buildPicture(
     cards: ChangeCard[],
     questions: StoredCheckQuestion[],
@@ -791,60 +835,94 @@ export function createChecksV2Service(
     }));
   }
 
-  /**
-   * Files this project got wrong before, excluding the session being
-   * checked: weak picture entries in other sessions' artifacts, counted per
-   * story-card touch with Learn's weak-area rule (shared helpers from
-   * @echo/checks). Corrupt or missing artifacts read as empty — a bad
-   * sibling write must not block generating this session's check.
-   */
-  function crossSessionWeakFiles(projectId: string, excludeSessionId: string): Set<string> {
-    const entries: Array<{ touches: string[]; weak: boolean }> = [];
-    for (const session of listSessions(db, projectId)) {
-      if (session.id === excludeSessionId) continue;
-      const story = loadStory(projectId, session.id);
-      const artifact = loadArtifact(projectId, session.id);
-      if (!story || !artifact) continue;
-      const touchesByCard = new Map(story.cards.map((card) => [card.id, card.touches]));
-      for (const entry of artifact.picture) {
-        entries.push({
-          touches: touchesByCard.get(entry.cardId) ?? [],
-          weak: isWeakPictureBucket(entry.bucket),
-        });
-      }
-    }
-    return weakFiles(entries);
-  }
-
   async function generate(sessionId: string): Promise<ChecksV2Outcome> {
     const session = getSession(db, sessionId);
     if (!session) {
       return { status: 404, body: { error: { code: "not_found", message: "unknown session" } } };
     }
+    // ADR 0014 reader source first: changes + progress order the caught-up
+    // max-3. Legacy story cards serve only until the deletion slice removes
+    // them, so an empty/missing changes file falls back to the story path.
+    const changes = loadChangesList(session.projectId, sessionId);
+    if (changes && changes.length > 0) {
+      const progressRows = getProgress(db, sessionId);
+      // Caught-up placement (ADR 0014 §g): skipped first, then understood,
+      // never viewed-only; no progress rows means file order.
+      const targets = orderChangesByProgress(changes, progressRows).slice(0, MAX_CHECK_TARGETS);
+      if (targets.length === 0) {
+        return {
+          status: 400,
+          body: { error: { code: "invalid_request", message: "no check needed" } },
+        };
+      }
+      let config: ModelConfig;
+      try {
+        config = resolveConfig();
+      } catch (error) {
+        return unavailable(error);
+      }
+      const adapters = targets.map((change, index) => changeToCard(change, index));
+      const story = loadStory(session.projectId, sessionId);
+      const storyForDetours = story ?? ({ detours: [] } as unknown as SessionStory);
+      const patches = await loadPatches(sessionId, adapters);
+      let drafted: StoredCheckQuestion[];
+      try {
+        const { questions, errors } = await withDeadline((signal) =>
+          draftQuestions(config, adapters, storyForDetours, patches, signal),
+        );
+        drafted = questions;
+        if (drafted.length === 0) {
+          log.error(
+            { session_id: sessionId, errors: errors.slice(0, 5) },
+            "checks-v2 draft produced no valid questions",
+          );
+          return {
+            status: 502,
+            body: { error: { code: "model_error", message: "check draft failed validation" } },
+          };
+        }
+      } catch (error) {
+        return unavailable(error);
+      }
+      const now = new Date().toISOString();
+      const watermark = computeWatermark(readAllEvents(db, sessionId));
+      const artifact: ChecksV2Artifact = {
+        schemaVersion: 1,
+        sessionId,
+        status: "in_progress",
+        generatedAt: now,
+        tapeWatermark: watermark,
+        questions: drafted,
+        attempts: [],
+        picture: buildPicture(pictureBase(story, changes), drafted, []),
+        currentQuestionId: drafted[0]?.id ?? null,
+        origin: "offer",
+      };
+      if (!persistArtifact(session.projectId, artifact)) {
+        return {
+          status: 500,
+          body: { error: { code: "redaction_failed", message: "checks unavailable" } },
+        };
+      }
+      return { status: 200, body: toPublic(artifact) };
+    }
     const story = loadStory(session.projectId, sessionId);
     if (!story) {
       return { status: 400, body: { error: { code: "invalid_request", message: "no story yet" } } };
     }
-    const tiers = deriveEngagementTiers(
-      db,
-      sessionId,
-      story.cards.map((card) => card.id),
-    );
-    const targetIds = selectTargets(
-      story.cards,
-      tiers,
-      5,
-      crossSessionWeakFiles(session.projectId, sessionId),
-    );
-    if (targetIds.length === 0) {
+    // Legacy caught-up placement: at most three questions, in neutral
+    // chronological order. No risk, engagement, or cross-session targeting —
+    // the first targets in session order win, never padded, zero cards
+    // yields no check.
+    const targets = [...story.cards]
+      .sort((a, b) => a.sessionOrder - b.sessionOrder || a.id.localeCompare(b.id))
+      .slice(0, MAX_CHECK_TARGETS);
+    if (targets.length === 0) {
       return {
         status: 400,
         body: { error: { code: "invalid_request", message: "no check needed" } },
       };
     }
-    const targets = targetIds
-      .map((id) => story.cards.find((card) => card.id === id))
-      .filter((card): card is ChangeCard => card !== undefined);
 
     let config: ModelConfig;
     try {
@@ -856,18 +934,9 @@ export function createChecksV2Service(
     const patches = await loadPatches(sessionId, targets);
     let drafted: StoredCheckQuestion[];
     try {
-      const { questions, errors } = await withDeadline(async (signal) => {
-        const first = await draftQuestions(config, targets, story, patches, signal);
-        const finalQuestions = await enforceFreeText(
-          config,
-          targets,
-          story,
-          patches,
-          first.questions,
-          signal,
-        );
-        return { questions: finalQuestions, errors: first.errors };
-      });
+      const { questions, errors } = await withDeadline((signal) =>
+        draftQuestions(config, targets, story, patches, signal),
+      );
       drafted = questions;
       if (drafted.length === 0) {
         log.error(
@@ -918,6 +987,126 @@ export function createChecksV2Service(
     const session = getSession(db, sessionId);
     if (!session) {
       return { status: 404, body: { error: { code: "not_found", message: "unknown session" } } };
+    }
+    // ADR 0014 reader ids first: a `c_` id validates against the changes file
+    // plus change_refs (either may lead during the transition). Legacy `h_`
+    // ids fall through to the story path until the deletion slice lands.
+    if (isChangeId(cardId)) {
+      const changes = loadChangesList(session.projectId, sessionId);
+      const refs = getChangeRefs(db, sessionId);
+      const known = new Set([
+        ...(changes ?? []).map((change) => change.id),
+        ...refs.map((ref) => ref.changeId),
+      ]);
+      if (!known.has(cardId)) {
+        return {
+          status: 400,
+          body: { error: { code: "invalid_request", message: "unknown card" } },
+        };
+      }
+      const change = (changes ?? []).find((entry) => entry.id === cardId) ?? null;
+      if (!change || !changes) {
+        // Ref without content cannot ground a question; report it as unknown
+        // rather than fabricating from thin air.
+        return {
+          status: 400,
+          body: { error: { code: "invalid_request", message: "unknown card" } },
+        };
+      }
+      const card = changeToCard(change, changes.indexOf(change));
+      const story = loadStory(session.projectId, sessionId);
+      const storyForDetours = story ?? ({ detours: [] } as unknown as SessionStory);
+      const base = pictureBase(story, changes);
+      const existing = loadArtifact(session.projectId, sessionId);
+      if (existing && existing.status === "in_progress") {
+        const present = existing.questions.find((entry) => entry.cardId === cardId) ?? null;
+        if (present) {
+          return {
+            status: 200,
+            body: toPublic({ ...existing, currentQuestionId: present.id }),
+          };
+        }
+        let config: ModelConfig;
+        try {
+          config = resolveConfig();
+        } catch (error) {
+          return unavailable(error);
+        }
+        const patches = await loadPatches(sessionId, [card]);
+        try {
+          const drafted = await withDeadline((signal) =>
+            draftQuestions(config, [card], storyForDetours, patches, signal),
+          );
+          if (drafted.questions.length === 0) {
+            return {
+              status: 502,
+              body: { error: { code: "model_error", message: "check draft failed validation" } },
+            };
+          }
+          const next: ChecksV2Artifact = {
+            ...existing,
+            questions: [...existing.questions, ...drafted.questions],
+            picture: buildPicture(
+              base,
+              [...existing.questions, ...drafted.questions],
+              existing.attempts,
+            ),
+            currentQuestionId: drafted.questions[0]?.id ?? existing.currentQuestionId,
+          };
+          if (!persistArtifact(session.projectId, next)) {
+            return {
+              status: 500,
+              body: { error: { code: "redaction_failed", message: "checks unavailable" } },
+            };
+          }
+          return { status: 200, body: toPublic(next) };
+        } catch (error) {
+          return unavailable(error);
+        }
+      }
+      let config: ModelConfig;
+      try {
+        config = resolveConfig();
+      } catch (error) {
+        return unavailable(error);
+      }
+      const patches = await loadPatches(sessionId, [card]);
+      let drafted: StoredCheckQuestion[];
+      try {
+        drafted = (
+          await withDeadline((signal) =>
+            draftQuestions(config, [card], storyForDetours, patches, signal),
+          )
+        ).questions;
+        if (drafted.length === 0) {
+          return {
+            status: 502,
+            body: { error: { code: "model_error", message: "check draft failed validation" } },
+          };
+        }
+      } catch (error) {
+        return unavailable(error);
+      }
+      const now = new Date().toISOString();
+      const artifact: ChecksV2Artifact = {
+        schemaVersion: 1,
+        sessionId,
+        status: "in_progress",
+        generatedAt: now,
+        tapeWatermark: computeWatermark(readAllEvents(db, sessionId)),
+        questions: drafted,
+        attempts: [],
+        picture: buildPicture(base, drafted, []),
+        currentQuestionId: drafted[0]?.id ?? null,
+        origin: "check_me",
+      };
+      if (!persistArtifact(session.projectId, artifact)) {
+        return {
+          status: 500,
+          body: { error: { code: "redaction_failed", message: "checks unavailable" } },
+        };
+      }
+      return { status: 200, body: toPublic(artifact) };
     }
     const story = loadStory(session.projectId, sessionId);
     if (!story) {
@@ -1064,7 +1253,14 @@ export function createChecksV2Service(
     }
 
     const story = loadStory(session.projectId, sessionId);
-    const card = story?.cards.find((entry) => entry.id === question.cardId) ?? null;
+    const changes = loadChangesList(session.projectId, sessionId);
+    let card: ChangeCard | null = null;
+    if (isChangeId(question.cardId)) {
+      const change = (changes ?? []).find((entry) => entry.id === question.cardId) ?? null;
+      card = change && changes ? changeToCard(change, changes.indexOf(change)) : null;
+    } else {
+      card = story?.cards.find((entry) => entry.id === question.cardId) ?? null;
+    }
 
     let correct: boolean;
     let rubricHits: CheckAttemptV2["rubricHits"] = [];
@@ -1132,8 +1328,7 @@ export function createChecksV2Service(
       createdAt: now,
     };
     const attempts = [...artifact.attempts, attempt];
-    const storyCards = story?.cards ?? [];
-    const pictureSource = storyCards.length > 0 ? storyCards : [];
+    const pictureSource = pictureBase(story, changes);
     const picture = buildPicture(pictureSource, artifact.questions, attempts);
     const next = artifact.questions.find(
       (entry) => !attempts.some((attempted) => attempted.questionId === entry.id),

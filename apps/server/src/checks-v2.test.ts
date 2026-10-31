@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
+  type Change,
   type ChangeCard,
   ChecksV2ResponseSchema,
   CheckV2AnswerResponseSchema,
@@ -9,9 +10,12 @@ import {
 } from "@echo/contracts";
 import {
   type EchoDb,
+  getProgress,
   getSessionSummary,
   openEchoDb,
+  recordChangeRef,
   recordEngagementEvents,
+  recordProgress,
   upsertArtifactRef,
   upsertProject,
   upsertSession,
@@ -141,10 +145,88 @@ function writeStory(db: EchoDb, dataDir: string, sessionId: string, cards: Chang
 function seedSession(sessionId: string): { db: EchoDb; dataDir: string } {
   const seeded = seedDb(sessionId);
   writeStory(seeded.db, seeded.dataDir, sessionId, [card1(), card2()]);
-  recordEngagementEvents(seeded.db, sessionId, [
-    { id: "eng-1", cardId: "h_bbbbbbbbbbbbbbbb", kind: "card_expanded", occurredAt: ISO },
-  ]);
   return seeded;
+}
+
+function digest60(): string {
+  return Array.from({ length: 60 }, (_, i) => `token${i}`).join(" ");
+}
+
+function makeChange(id: string, file: string, title = "Update test file"): Change {
+  return {
+    id,
+    version: 1,
+    snapshotPair: { prevOid: "aaa", nextOid: `bbb-${id.slice(2, 6)}` },
+    title,
+    summary: "The agent updated the logic. It now handles the case.",
+    before: ["The old logic missed the case."],
+    now: ["The new logic handles the case."],
+    howItWorks: [],
+    headsUp: [],
+    files: [{ path: file, note: `Change ${file}.` }],
+    digest: digest60(),
+    createdFrom: { kind: "snapshot_pair", prevOid: "aaa", nextOid: `bbb-${id.slice(2, 6)}` },
+  };
+}
+
+function writeChanges(db: EchoDb, dataDir: string, sessionId: string, changes: Change[]): void {
+  const path = join(dataDir, "projects", PROJECT_ID, "sessions", sessionId, "changes.json");
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    JSON.stringify({
+      sessionId,
+      generatedAt: ISO,
+      generator: "skeleton-v1",
+      summary: "Session summary.",
+      diagnostics: [],
+      changes,
+    }),
+  );
+  for (const change of changes) {
+    recordChangeRef(db, {
+      sessionId,
+      changeId: change.id,
+      version: change.version,
+      prevOid: change.snapshotPair.prevOid,
+      nextOid: change.snapshotPair.nextOid,
+    });
+  }
+}
+
+function mcqDraftForChange(change: Change): unknown {
+  return {
+    questions: [
+      {
+        cardId: change.id,
+        format: "mcq",
+        kind: "consequence",
+        question: "What changed here?",
+        options: [
+          { id: "o1", text: "It changed" },
+          { id: "o2", text: "Nothing changed" },
+        ],
+        correctOptionId: "o1",
+        distractorSources: [],
+        explanation: "It changed.",
+        evidencePaths: change.files.map((file) => file.path),
+      },
+    ],
+  };
+}
+
+function freeTextDraftForChanges(changes: Change[]): unknown {
+  return {
+    questions: changes.map((change) => ({
+      cardId: change.id,
+      format: "free_text",
+      kind: "teach_back",
+      question: "What changed here?",
+      rubric: ["States the change."],
+      explanation: "It changed.",
+      evidencePaths: change.files.map((file) => file.path),
+    })),
+  };
 }
 
 function stubFetchQueue(replies: unknown[]) {
@@ -276,7 +358,7 @@ describe("createChecksV2Service", () => {
     }
   });
 
-  it("generate prefers cards touching files the project got wrong before", async () => {
+  it("generate caps at three in session order, ignoring risk and engagement", async () => {
     const { db, dataDir } = seedDb("ses_xnow");
     try {
       upsertSession(db, {
@@ -302,6 +384,8 @@ describe("createChecksV2Service", () => {
         captureQuality: "partial",
       });
       // Past session: one card on db/store.ts, answered confidently but wrong.
+      // The old cross-session weak-file signal would promote cards touching
+      // it; ADR 0014 §g removes that targeting, so it must not matter.
       writeStory(db, dataDir, "ses_xpast", [
         makeCard("h_8888888888888888", { touches: ["db/store.ts"] }),
       ]);
@@ -331,19 +415,27 @@ describe("createChecksV2Service", () => {
           origin: "offer",
         }),
       );
-      // Now session: six plain cards; only the worst-ranked touches the weak file.
-      const nowCards = [1, 2, 3, 4, 5, 6].map((rank) =>
-        makeCard(`h_${String(rank).repeat(16)}`, {
-          rank,
-          touches: rank === 6 ? ["db/store.ts"] : [`docs/f${rank}.md`],
+      // Six cards: risk rank opposes chronological order, the last three are
+      // high-risk, the last touches the past weak file, and the last is
+      // engaged. Neutral selection must still take session orders 0-2.
+      const nowCards = [0, 1, 2, 3, 4, 5].map((order) =>
+        makeCard(`h_${String(order).repeat(16)}`, {
+          rank: 6 - order,
+          sessionOrder: order,
+          highRisk: order >= 3,
+          riskReasons: order >= 3 ? ["touches payment code"] : [],
+          touches: order === 5 ? ["db/store.ts"] : [`docs/f${order}.md`],
         }),
       );
       writeStory(db, dataDir, "ses_xnow", nowCards);
+      recordEngagementEvents(db, "ses_xnow", [
+        { id: "eng-x", cardId: "h_5555555555555555", kind: "card_expanded", occurredAt: ISO },
+      ]);
       const draftAll = {
-        questions: [1, 2, 3, 4, 5, 6].map((rank) => {
-          const file = rank === 6 ? "db/store.ts" : `docs/f${rank}.md`;
+        questions: [0, 1, 2, 3, 4, 5].map((order) => {
+          const file = order === 5 ? "db/store.ts" : `docs/f${order}.md`;
           return {
-            cardId: `h_${String(rank).repeat(16)}`,
+            cardId: `h_${String(order).repeat(16)}`,
             format: "free_text",
             kind: "teach_back",
             question: `What changed in ${file}?`,
@@ -353,64 +445,33 @@ describe("createChecksV2Service", () => {
           };
         }),
       };
-      const { fetchImpl, calls } = stubFetchQueue([draftAll]);
+      const { fetchImpl, calls, bodies } = stubFetchQueue([draftAll]);
       const service = createChecksV2Service(
         { db, dataDir, log: silentLog },
         { env: ENV, fetchImpl },
       );
-      const state = ChecksV2ResponseSchema.parse((await service.generate("ses_xnow")).body);
+      const outcome = await service.generate("ses_xnow");
+      expect(outcome.status).toBe(200);
+      const state = ChecksV2ResponseSchema.parse(outcome.body);
       expect(calls()).toBe(1);
+      // Exactly the first three in session order: no high-risk promotion, no
+      // engaged swap-in, no weak-file promotion, no extra free-text call.
+      expect(state.questions.map((entry) => entry.cardId)).toEqual([
+        "h_0000000000000000",
+        "h_1111111111111111",
+        "h_2222222222222222",
+      ]);
       const pictured = new Map(state.picture.map((entry) => [entry.cardId, entry.questionId]));
-      // Rank 6 jumps into the five targeted slots on the weak-file signal;
-      // rank 5 (better rank, fresh files) drops out.
-      expect(pictured.get("h_6666666666666666")).not.toBeNull();
+      expect(pictured.get("h_2222222222222222")).not.toBeNull();
+      expect(pictured.get("h_3333333333333333")).toBeNull();
       expect(pictured.get("h_5555555555555555")).toBeNull();
-    } finally {
-      db.close();
-    }
-  });
-
-  it("generate keeps rank order when no other session left a weak file", async () => {
-    const { db, dataDir } = seedDb("ses_xsolo");
-    try {
-      upsertSession(db, {
-        id: "ses_xsolo",
-        projectId: PROJECT_ID,
-        agent: "opencode",
-        model: null,
-        directory: "/repo",
-        title: "solo",
-        startedAt: ISO,
-        tapePath: join(dataDir, "tape-solo.jsonl"),
-        captureQuality: "partial",
-      });
-      const soloCards = [1, 2, 3, 4, 5, 6].map((rank) =>
-        makeCard(`h_${String(rank).repeat(16)}`, { rank, touches: [`docs/f${rank}.md`] }),
-      );
-      writeStory(db, dataDir, "ses_xsolo", soloCards);
-      const draftAll = {
-        questions: [1, 2, 3, 4, 5, 6].map((rank) => {
-          const file = `docs/f${rank}.md`;
-          return {
-            cardId: `h_${String(rank).repeat(16)}`,
-            format: "free_text",
-            kind: "teach_back",
-            question: `What changed in ${file}?`,
-            rubric: [`States the ${file} change.`],
-            explanation: `${file} changed.`,
-            evidencePaths: [file],
-          };
-        }),
-      };
-      const { fetchImpl } = stubFetchQueue([draftAll]);
-      const service = createChecksV2Service(
-        { db, dataDir, log: silentLog },
-        { env: ENV, fetchImpl },
-      );
-      const state = ChecksV2ResponseSchema.parse((await service.generate("ses_xsolo")).body);
-      const pictured = new Map(state.picture.map((entry) => [entry.cardId, entry.questionId]));
-      expect(pictured.get("h_5555555555555555")).not.toBeNull();
-      expect(pictured.get("h_6666666666666666")).toBeNull();
+      // The prompt carries no risk: kinds cycle by position, no Risk line.
+      const request = bodies()[0] ?? "";
+      expect(request).not.toContain("Risk:");
+      expect(request).not.toContain("high-risk");
+      expect(request).toContain("kind=consequence");
+      expect(request).toContain("kind=decision");
+      expect(request).toContain("kind=tradeoff");
     } finally {
       db.close();
     }
@@ -698,6 +759,12 @@ describe("createChecksV2Service", () => {
       const after = ChecksV2ResponseSchema.parse(service.state("ses_v2_checkme").body);
       expect(after.status).toBe("in_progress");
       expect(after.attempts).toHaveLength(1);
+      // A fully answered per-change set still never completes or flips the
+      // session status: only offer sets complete (ADR 0014 §f).
+      expect(after.currentQuestionId).toBeNull();
+      expect(after.picture.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb")?.bucket).toBe(
+        "solid",
+      );
       expect(getSessionSummary(db, "ses_v2_checkme")?.checkStatus).toBe("not_checked");
     } finally {
       db.close();
@@ -782,6 +849,178 @@ describe("createChecksV2Service", () => {
       db.close();
     }
   }, 10_000);
+
+  it("accepts c_ check-me and answers without flipping progress", async () => {
+    const sessionId = "ses_v2_c_checkme";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [
+        makeChange("c_aaaaaaaaaaaaaaaa", "src/a.ts"),
+        makeChange("c_bbbbbbbbbbbbbbbb", "src/b.ts"),
+      ];
+      writeChanges(db, dataDir, sessionId, changes);
+      const { fetchImpl } = stubFetchQueue([mcqDraftForChange(changes[0] as Change)]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const single = await service.checkMe(sessionId, "c_aaaaaaaaaaaaaaaa");
+      expect(single.status).toBe(200);
+      const state = ChecksV2ResponseSchema.parse(single.body);
+      expect(state.questions).toHaveLength(1);
+      expect(state.questions[0]?.cardId).toBe("c_aaaaaaaaaaaaaaaa");
+      const question = state.questions[0];
+      if (!question) throw new Error("expected a question");
+      // MCQ answers grade locally: no model call, still offline.
+      const answered = await service.answer(sessionId, {
+        questionId: question.id,
+        confidence: "certain",
+        selectedOptionId: "o1",
+        answerText: null,
+      });
+      expect(answered.status).toBe(200);
+      expect(CheckV2AnswerResponseSchema.parse(answered.body).attempt.correct).toBe(true);
+      // Checks never flip progress (ADR 0014 §f); check-me never flips status.
+      expect(getProgress(db, sessionId)).toEqual([]);
+      expect(getSessionSummary(db, sessionId)?.checkStatus).toBe("not_checked");
+      expect(ChecksV2ResponseSchema.parse(service.state(sessionId).body).status).toBe(
+        "in_progress",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("orders caught-up max-3 skipped-first excluding viewed-only", async () => {
+    const sessionId = "ses_v2_c_order";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [
+        makeChange("c_1111111111111111", "src/one.ts", "Update one file"),
+        makeChange("c_2222222222222222", "src/two.ts", "Update two file"),
+        makeChange("c_3333333333333333", "src/three.ts", "Update three file"),
+        makeChange("c_4444444444444444", "src/four.ts", "Update four file"),
+      ];
+      writeChanges(db, dataDir, sessionId, changes);
+      recordProgress(db, {
+        sessionId,
+        changeId: "c_1111111111111111",
+        version: 1,
+        state: "understood",
+      });
+      recordProgress(db, {
+        sessionId,
+        changeId: "c_2222222222222222",
+        version: 1,
+        state: "viewed",
+      });
+      recordProgress(db, {
+        sessionId,
+        changeId: "c_3333333333333333",
+        version: 1,
+        state: "skipped",
+      });
+      recordProgress(db, {
+        sessionId,
+        changeId: "c_4444444444444444",
+        version: 1,
+        state: "understood",
+      });
+      const expected = ["c_3333333333333333", "c_1111111111111111", "c_4444444444444444"];
+      const draft = freeTextDraftForChanges(
+        expected.map((id) => changes.find((change) => change.id === id) as Change),
+      );
+      const { fetchImpl } = stubFetchQueue([draft]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const outcome = await service.generate(sessionId);
+      expect(outcome.status).toBe(200);
+      expect(
+        ChecksV2ResponseSchema.parse(outcome.body).questions.map((entry) => entry.cardId),
+      ).toEqual(expected);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("falls back to file order with no progress rows", async () => {
+    const sessionId = "ses_v2_c_fallback";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [
+        makeChange("c_1111111111111111", "src/one.ts", "Update one file"),
+        makeChange("c_2222222222222222", "src/two.ts", "Update two file"),
+        makeChange("c_3333333333333333", "src/three.ts", "Update three file"),
+        makeChange("c_4444444444444444", "src/four.ts", "Update four file"),
+      ];
+      writeChanges(db, dataDir, sessionId, changes);
+      const draft = freeTextDraftForChanges(changes.slice(0, 3));
+      const { fetchImpl } = stubFetchQueue([draft]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const outcome = await service.generate(sessionId);
+      expect(outcome.status).toBe(200);
+      expect(
+        ChecksV2ResponseSchema.parse(outcome.body).questions.map((entry) => entry.cardId),
+      ).toEqual(["c_1111111111111111", "c_2222222222222222", "c_3333333333333333"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects unknown c_ ids and still accepts legacy h_", async () => {
+    const sessionId = "ses_v2_c_unknown";
+    const { db, dataDir } = seedSession(sessionId);
+    try {
+      const changes = [makeChange("c_cccccccccccccccc", "src/c.ts", "Update c file")];
+      writeChanges(db, dataDir, sessionId, changes);
+      const noModel = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV });
+      expect((await noModel.checkMe(sessionId, "c_ffffffffffffffff")).status).toBe(400);
+      const { fetchImpl } = stubFetchQueue([
+        mcqDraftForChange(changes[0] as Change),
+        {
+          questions: [
+            {
+              cardId: "h_bbbbbbbbbbbbbbbb",
+              format: "mcq",
+              kind: "consequence",
+              question: "What changed here?",
+              options: [
+                { id: "o1", text: "It changed" },
+                { id: "o2", text: "Nothing changed" },
+              ],
+              correctOptionId: "o1",
+              distractorSources: [],
+              explanation: "It changed.",
+              evidencePaths: ["docs/readme.md"],
+            },
+          ],
+        },
+      ]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const cOutcome = await service.checkMe(sessionId, "c_cccccccccccccccc");
+      expect(cOutcome.status).toBe(200);
+      expect(ChecksV2ResponseSchema.parse(cOutcome.body).questions[0]?.cardId).toBe(
+        "c_cccccccccccccccc",
+      );
+      const hOutcome = await service.checkMe(sessionId, "h_bbbbbbbbbbbbbbbb");
+      expect(hOutcome.status).toBe(200);
+      const both = ChecksV2ResponseSchema.parse(hOutcome.body);
+      expect(both.questions).toHaveLength(2);
+      expect(new Set(both.questions.map((entry) => entry.cardId))).toEqual(
+        new Set(["c_cccccccccccccccc", "h_bbbbbbbbbbbbbbbb"]),
+      );
+    } finally {
+      db.close();
+    }
+  });
 });
 
 describe("checks-v2 demo overlay", () => {
