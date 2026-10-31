@@ -1,7 +1,9 @@
 import { NavLink, Outlet, useLocation } from "react-router";
+import { DemoBanner } from "./components/demo-banner";
 import { HeaderSearch } from "./components/search/expandable-search";
 import { ProjectSort } from "./components/search/project-sort";
 import { SettingsMenu } from "./components/settings/settings-sheet";
+import { useDemoMode } from "./hooks/use-demo-mode";
 
 function useSearchablePage(): boolean {
   const { pathname } = useLocation();
@@ -11,8 +13,10 @@ function useSearchablePage(): boolean {
 
 export function AppLayout() {
   const searchable = useSearchablePage();
+  const { isDemo } = useDemoMode();
   return (
     <div className="flex min-h-screen flex-col">
+      {isDemo ? <DemoBanner /> : null}
       <header className="mt-5">
         <div className="mx-auto flex h-16 w-full max-w-7xl items-center justify-between px-6">
           <NavLink to="/" className="flex items-center">
