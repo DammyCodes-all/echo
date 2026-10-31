@@ -3,11 +3,13 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type {
   AskThread,
+  Change,
   ChangeCard,
   SessionStory,
   TapeEvent,
   TapeEventKind,
 } from "@echo/contracts";
+import { CHANGES_FILE_NAME } from "@echo/contracts";
 import {
   type EchoDb,
   insertStampedEvents,
@@ -60,7 +62,7 @@ function makeEvent(seq: number, kind: TapeEventKind, payload: unknown): TapeEven
   };
 }
 
-function seedDb() {
+function seedDb(extra: TapeEvent[] = []) {
   const dataDir = mkdtempSync(join(tmpdir(), "echo-ask-data-"));
   const db = openEchoDb(join(dataDir, "echo.sqlite"));
   upsertProject(db, { id: PROJECT_ID, root: "/repo", name: "repo" });
@@ -86,6 +88,7 @@ function seedDb() {
       outcome: "ok",
       input: { path: "src/app.ts" },
     }),
+    ...extra,
   ]);
   return { db, dataDir };
 }
@@ -217,6 +220,77 @@ function threadArtifactPath(dataDir: string): string {
 function threadMessages(service: ReturnType<typeof createAskService>) {
   return service.thread(SESSION_ID).then((outcome) => (outcome.body as AskThread).messages);
 }
+
+const CHANGE_1 = "c_aaaaaaaaaaaaaaaa";
+const CHANGE_2 = "c_bbbbbbbbbbbbbbbb";
+const UNKNOWN_CHANGE = "c_ffffffffffffffff";
+
+function digestWith(keyword: string, filler: string, total = 60): string {
+  const words = [keyword];
+  for (let i = 1; i < total; i += 1) words.push(`${filler}${i}`);
+  return words.join(" ");
+}
+
+function makeChange(id: string, files: string[], digest: string): Change {
+  return {
+    id,
+    version: 1,
+    snapshotPair: { prevOid: "prev0", nextOid: "next0" },
+    title: `Update ${id.slice(3, 7)} entry`,
+    summary: "First sentence here. Second sentence here.",
+    before: ["Before text one."],
+    now: ["Now text one."],
+    howItWorks: [],
+    headsUp: [],
+    files: files.map((path) => ({ path, note: `Change ${path}.` })),
+    digest,
+    createdFrom: { kind: "snapshot_pair", prevOid: "prev0", nextOid: "next0" },
+  } as Change;
+}
+
+function writeChanges(dataDir: string, changes: Change[]): void {
+  const path = join(dataDir, "projects", PROJECT_ID, "sessions", SESSION_ID, CHANGES_FILE_NAME);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    JSON.stringify({
+      sessionId: SESSION_ID,
+      generatedAt: "2026-10-28T12:00:00.000Z",
+      generator: "test",
+      summary: "Test changes.",
+      diagnostics: [],
+      changes,
+    }),
+  );
+}
+
+const DIGEST_STUB = {
+  refusal: false,
+  refusal_reason: null,
+  answer: "Alpha is the earlier change.",
+  claims: [
+    {
+      text: "Alpha is the earlier change.",
+      evidence_ids: ["E1"],
+      quote: "alpha ax1 ax2",
+    },
+  ],
+  uncertainty: "low",
+};
+
+const PAYMENT_STUB = {
+  refusal: false,
+  refusal_reason: null,
+  answer: "The agent refactored the payment module.",
+  claims: [
+    {
+      text: "The agent refactored the payment module.",
+      evidence_ids: ["E1"],
+      quote: "Refactor the payment module in src/pay.ts",
+    },
+  ],
+  uncertainty: "low",
+};
 
 describe("createAskService", () => {
   it("returns 404 for an unknown session", async () => {
@@ -514,6 +588,167 @@ describe("createAskService", () => {
     const thread = await off.thread(SESSION_ID);
     expect(thread.status).toBe(200);
     expect((thread.body as AskThread).messages).toEqual([]);
+    db.close();
+  });
+
+  it("answers from the change slice with the change file as scope", async () => {
+    const { db, dataDir } = seedDb();
+    writeChanges(dataDir, [makeChange(CHANGE_1, ["src/app.ts"], digestWith("ledger", "ax"))]);
+    const { fetchImpl, calls } = stubFetch(ANSWERED_STUB);
+    const service = createAskService(db, dataDir, { env: ENV, fetchImpl });
+    const outcome = await service.answer(SESSION_ID, {
+      question: "Which file did the write tool touch?",
+      filePath: null,
+      symbols: [],
+      cardId: null,
+      changeId: CHANGE_1,
+    });
+    expect(outcome.status).toBe(200);
+    const body = outcome.body as { status: string; searchedScope: { filePath: string | null } };
+    expect(body.status).toBe("answered");
+    expect(body.searchedScope.filePath).toBe("src/app.ts");
+    expect(calls()).toBe(1);
+    // The thread schema has no change field, so the c_ anchor persists null.
+    const messages = await threadMessages(service);
+    expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(messages[0]).toMatchObject({ cardId: null });
+    expect(messages[1]).toMatchObject({ role: "assistant", cardId: null });
+    db.close();
+  });
+
+  it("accepts a c_ anchor carried in cardId", async () => {
+    const { db, dataDir } = seedDb();
+    writeChanges(dataDir, [makeChange(CHANGE_1, ["src/app.ts"], digestWith("ledger", "ax"))]);
+    const { fetchImpl } = stubFetch(ANSWERED_STUB);
+    const service = createAskService(db, dataDir, { env: ENV, fetchImpl });
+    const outcome = await service.answer(SESSION_ID, {
+      question: "Which file did the write tool touch?",
+      filePath: null,
+      symbols: [],
+      cardId: CHANGE_1,
+    });
+    expect(outcome.status).toBe(200);
+    const body = outcome.body as { status: string; searchedScope: { filePath: string | null } };
+    expect(body.status).toBe("answered");
+    expect(body.searchedScope.filePath).toBe("src/app.ts");
+    db.close();
+  });
+
+  it("refuses pre-model for questions outside the change slice", async () => {
+    const { db, dataDir } = seedDb([
+      makeEvent(4, "tool.requested", {
+        name: "write",
+        input: { path: "src/pay.ts", content: "pay" },
+      }),
+      makeEvent(5, "prompt.submitted", {
+        text: "Refactor the payment module in src/pay.ts; this changed the checkout flow.",
+      }),
+    ]);
+    writeChanges(dataDir, [makeChange(CHANGE_1, ["src/app.ts"], digestWith("ledger", "ax"))]);
+    const { fetchImpl, calls } = stubFetch(PAYMENT_STUB);
+    const service = createAskService(db, dataDir, { env: ENV, fetchImpl });
+    const scoped = await service.answer(SESSION_ID, {
+      question: "What changed in the payment refactor?",
+      filePath: null,
+      symbols: [],
+      cardId: null,
+      changeId: CHANGE_1,
+    });
+    expect(scoped.body).toMatchObject({ status: "refused", refusalReason: "not_on_tape" });
+    expect(calls()).toBe(0);
+    // Control: the same question over the whole tape answers.
+    const unscoped = await service.answer(SESSION_ID, {
+      question: "What changed in the payment refactor?",
+      filePath: null,
+      symbols: [],
+      cardId: null,
+    });
+    expect((unscoped.body as { status: string }).status).toBe("answered");
+    expect(calls()).toBe(1);
+    db.close();
+  });
+
+  it("includes earlier digests but not later ones", async () => {
+    const { db, dataDir } = seedDb();
+    writeChanges(dataDir, [
+      makeChange(CHANGE_1, ["src/app.ts"], digestWith("alpha", "ax")),
+      makeChange(CHANGE_2, ["src/app.ts"], digestWith("beta", "bx")),
+    ]);
+    const { fetchImpl, calls } = stubFetch(DIGEST_STUB);
+    const service = createAskService(db, dataDir, { env: ENV, fetchImpl });
+    const fromEarlier = await service.answer(SESSION_ID, {
+      question: "Tell me about alpha.",
+      filePath: null,
+      symbols: [],
+      cardId: null,
+      changeId: CHANGE_2,
+    });
+    expect((fromEarlier.body as { status: string }).status).toBe("answered");
+    expect(calls()).toBe(1);
+    const fromLater = await service.answer(SESSION_ID, {
+      question: "Tell me about beta.",
+      filePath: null,
+      symbols: [],
+      cardId: null,
+      changeId: CHANGE_1,
+    });
+    expect(fromLater.body).toMatchObject({ status: "refused", refusalReason: "not_on_tape" });
+    expect(calls()).toBe(1);
+    db.close();
+  });
+
+  it("rejects unknown change ids without touching the thread", async () => {
+    const { db, dataDir } = seedDb();
+    writeChanges(dataDir, [makeChange(CHANGE_1, ["src/app.ts"], digestWith("ledger", "ax"))]);
+    const service = createAskService(db, dataDir, { env: ENV });
+    const outcome = await service.answer(SESSION_ID, {
+      question: "Why this change?",
+      filePath: null,
+      symbols: [],
+      cardId: null,
+      changeId: UNKNOWN_CHANGE,
+    });
+    expect(outcome.status).toBe(400);
+    expect(outcome.body).toMatchObject({
+      error: { code: "invalid_request", message: "unknown change" },
+    });
+    expect(await threadMessages(service)).toEqual([]);
+    db.close();
+  });
+
+  it("rejects change scope when no changes artifact exists", async () => {
+    const { db, dataDir } = seedDb();
+    const service = createAskService(db, dataDir, { env: ENV });
+    const outcome = await service.answer(SESSION_ID, {
+      question: "Why this change?",
+      filePath: null,
+      symbols: [],
+      cardId: null,
+      changeId: CHANGE_1,
+    });
+    expect(outcome.status).toBe(400);
+    expect(outcome.body).toMatchObject({
+      error: { code: "invalid_request", message: "unknown change" },
+    });
+    expect(await threadMessages(service)).toEqual([]);
+    db.close();
+  });
+
+  it("fails closed with change scope when the model is off", async () => {
+    const { db, dataDir } = seedDb();
+    writeChanges(dataDir, [makeChange(CHANGE_1, ["src/app.ts"], digestWith("ledger", "ax"))]);
+    const off = createAskService(db, dataDir, {
+      env: { ...ENV, ECHO_MODEL: "off" } as NodeJS.ProcessEnv,
+    });
+    const outcome = await off.answer(SESSION_ID, {
+      question: "Which file did the write tool touch?",
+      filePath: null,
+      symbols: [],
+      cardId: null,
+      changeId: CHANGE_1,
+    });
+    expect(outcome.status).toBe(503);
+    expect(await threadMessages(off)).toEqual([]);
     db.close();
   });
 });

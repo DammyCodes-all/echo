@@ -6,7 +6,11 @@ import {
   type AskResponse,
   type AskThread,
   AskThreadSchema,
+  CHANGES_FILE_NAME,
+  type Change,
   type ChangeCard,
+  ChangeIdSchema,
+  ChangeSchema,
   type SessionStory,
   SessionStorySchema,
   type TapeEvent,
@@ -23,6 +27,7 @@ import {
 import { redactJson } from "@echo/redaction";
 import {
   buildEvidenceBundle,
+  type EvidenceBundle,
   parseAnswer,
   type StructuredAnswer,
   validateCitations,
@@ -122,8 +127,9 @@ export function storedToTape(
   };
 }
 
-function bundlePrompt(question: string, evidence: string): string {
-  return `Question: ${question}\n\nEvidence bundle:\n${evidence}`;
+function bundlePrompt(question: string, evidence: string, scopeNote: string | null): string {
+  const scope = scopeNote === null ? "" : `Scope: ${scopeNote}\n\n`;
+  return `${scope}Question: ${question}\n\nEvidence bundle:\n${evidence}`;
 }
 
 function formatBundle(
@@ -287,9 +293,32 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
     return null;
   }
 
+  function loadChanges(sessionId: string, projectId: string): { changes: Change[] } | null {
+    // Mirrors the changes service layout (sessions/<id>/changes.json) without
+    // importing it: the server composes packages, and this stays a reader.
+    // A corrupt artifact reads as missing, so the caller reports unknown
+    // change instead of 500ing; the pipeline regen owns the repair.
+    const path = join(dataDir, "projects", projectId, "sessions", sessionId, CHANGES_FILE_NAME);
+    if (!existsSync(path)) return null;
+    try {
+      const parsed = JSON.parse(readFileSync(path, "utf8")) as unknown;
+      if (parsed === null || typeof parsed !== "object") return null;
+      const raw = (parsed as Record<string, unknown>).changes;
+      if (!Array.isArray(raw)) return null;
+      const changes: Change[] = [];
+      for (const entry of raw) {
+        const change = ChangeSchema.safeParse(entry);
+        if (change.success) changes.push(change.data);
+      }
+      return { changes };
+    } catch {
+      return null;
+    }
+  }
+
   function resolveScope(
     input: AskRequest,
-    card: ChangeCard | null,
+    card: { touches: string[] } | null,
   ): { filePath?: string; symbols: string[] } {
     // constituentHunkIds identify the card but are not retrieval input: the
     // bundle builder only scopes on filePath/symbols, so only touches[] enters.
@@ -301,6 +330,130 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
     // Multi-file (or touch-less) card: the builder has no multi-file scope,
     // so every touched path joins the symbol terms instead (same token match).
     return { symbols: [...input.symbols, ...card.touches] };
+  }
+
+  /**
+   * Reader change anchor (ADR 0014 §e): an explicit changeId, or a c_ id
+   * carried in cardId for callers on the frozen AskRequest shape. Anything
+   * else falls through to the legacy story-card path.
+   */
+  function requestedChangeId(input: AskRequest & { changeId?: unknown }): string | null {
+    const explicit = input.changeId;
+    if (typeof explicit === "string" && explicit.length > 0) return explicit;
+    if (typeof input.cardId === "string" && ChangeIdSchema.safeParse(input.cardId).success) {
+      return input.cardId;
+    }
+    return null;
+  }
+
+  /** Slice membership is by recorded input path; prompts join via mention (same rule the grouping uses). */
+  function eventFileOf(event: TapeEvent): string | null {
+    const payload = event.payload;
+    if (payload !== null && typeof payload === "object") {
+      const input = (payload as Record<string, unknown>).input;
+      if (input !== null && typeof input === "object") {
+        const path = (input as Record<string, unknown>).path;
+        if (typeof path === "string" && path.length > 0) return path;
+      }
+    }
+    return null;
+  }
+
+  function mentionsFiles(text: string, files: Set<string>): boolean {
+    const lower = text.toLowerCase();
+    for (const file of files) {
+      const name = file.toLowerCase();
+      const base = name.split("/").pop() ?? "";
+      if (lower.includes(name) || (base.length > 0 && lower.includes(base))) return true;
+    }
+    return false;
+  }
+
+  function momentTextOf(event: TapeEvent): string | null {
+    if (event.kind !== "prompt.submitted" && event.kind !== "model.response") return null;
+    const payload = event.payload;
+    if (payload === null || typeof payload !== "object") return null;
+    const record = payload as Record<string, unknown>;
+    if (typeof record.text === "string") return record.text;
+    if (typeof record.content === "string") return record.content;
+    if (typeof record.summary === "string") return record.summary;
+    return null;
+  }
+
+  /** Tape events for one change: file touches plus that moment's prompts/reasoning. */
+  function sliceEventsFor(events: TapeEvent[], change: Change): TapeEvent[] {
+    const files = new Set(change.files.map((file) => file.path));
+    return events.filter((event) => {
+      const file = eventFileOf(event);
+      if (file !== null && files.has(file)) return true;
+      const text = momentTextOf(event);
+      return text !== null && text.length > 0 && mentionsFiles(text, files);
+    });
+  }
+
+  /** Current-change prose, so "what changed" answers without re-deriving the diff. */
+  function changeProse(change: Change): string {
+    const files = change.files.map((file) => file.path).join(", ");
+    return `${change.title}. ${change.summary} Before: ${change.before.join(" ")} Now: ${change.now.join(" ")} Files: ${files}.`;
+  }
+
+  /**
+   * Ephemeral scope context, never persisted to the tape: the current change
+   * prose plus earlier digests as agent_stated events. Retrieval admits them
+   * by the same term-overlap rule as tape events, so an irrelevant question
+   * still refuses pre-model.
+   */
+  function scopeContextEvents(
+    sessionId: string,
+    projectId: string,
+    events: TapeEvent[],
+    change: Change,
+    earlier: Change[],
+  ): TapeEvent[] {
+    const last = events.length > 0 ? events[events.length - 1] : null;
+    const ts = last?.ts ?? new Date().toISOString();
+    const make = (eventId: string, seq: number, content: string): TapeEvent => ({
+      v: 1,
+      tape_seq: seq,
+      event_id: eventId,
+      record_key: null,
+      session_id: sessionId,
+      project_id: projectId,
+      kind: "model.response",
+      ts,
+      observed_at: ts,
+      source: {
+        agent: "muse",
+        adapter: "ask-scope",
+        adapter_version: "0.1.0",
+        build: null,
+        schema: null,
+        record_type: null,
+        payload_type: null,
+        sequence: null,
+        durability: "memory",
+        origin: "import",
+      },
+      links: {
+        turn_id: null,
+        tool_call_id: null,
+        batch_id: null,
+        parent_session_id: null,
+        subagent_id: null,
+        snapshot: null,
+      },
+      payload: { content },
+      redaction: { version: "ask-scope", findings: 0 },
+      diagnostics: [],
+    });
+    const out: TapeEvent[] = [];
+    earlier.forEach((digest, index) => {
+      out.push(
+        make(`digest:${digest.id}`, -(index + 1), `Earlier change digest: ${digest.digest}`),
+      );
+    });
+    out.push(make(`change:${change.id}:prose`, -(earlier.length + 1), changeProse(change)));
+    return out;
   }
 
   /** Appends one user + one assistant message; false = redaction failed, nothing written. */
@@ -345,7 +498,10 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
     };
   }
 
-  async function answer(sessionId: string, input: AskRequest): Promise<AskOutcome> {
+  async function answer(
+    sessionId: string,
+    input: AskRequest & { changeId?: string | null },
+  ): Promise<AskOutcome> {
     const session = getSession(db, sessionId);
     if (!session) {
       return {
@@ -353,31 +509,75 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
         body: { error: { code: "not_found", message: "unknown session" } },
       };
     }
-    const cardId = input.cardId ?? null;
-    let card: ChangeCard | null = null;
-    if (cardId !== null) {
-      const story = loadStory(sessionId, session.projectId);
-      const found = story?.cards.find((entry) => entry.id === cardId) ?? null;
-      if (!found) {
-        return {
-          status: 400,
-          body: { error: { code: "invalid_request", message: "unknown card" } },
-        };
-      }
-      card = found;
-    }
     const stored = readAllEvents(db, sessionId);
     const events: TapeEvent[] = [];
     for (const event of stored) {
       const tape = storedToTape(session.id, session.projectId, event);
       if (tape) events.push(tape);
     }
-    const scope = resolveScope(input, card);
-    const bundle = buildEvidenceBundle(events, {
-      question: input.question,
-      ...(scope.filePath ? { filePath: scope.filePath } : {}),
-      symbols: scope.symbols,
-    });
+    // Reader change scope (ADR 0014 §e): the change slice (diff touches +
+    // that moment's prompts/reasoning) plus earlier digests only. Thread
+    // persistence stays on cardId (h_ or null): the thread schema has no
+    // change field, so a c_ anchor persists as null (request-scoped).
+    const changeId = requestedChangeId(input);
+    let bundle: EvidenceBundle;
+    let scopeNote: string | null = null;
+    let persistCardId: string | null = null;
+    if (changeId !== null) {
+      const loaded = loadChanges(sessionId, session.projectId);
+      const all = loaded?.changes ?? [];
+      const change = all.filter((entry) => entry.id === changeId).pop();
+      if (!change) {
+        return {
+          status: 400,
+          body: { error: { code: "invalid_request", message: "unknown change" } },
+        };
+      }
+      const index = all.lastIndexOf(change);
+      const earlier = all.slice(0, index).filter((entry) => entry.id !== changeId);
+      const files = change.files.map((file) => file.path);
+      const scoped = [
+        ...sliceEventsFor(events, change),
+        ...scopeContextEvents(session.id, session.projectId, events, change, earlier),
+      ];
+      // Pure term overlap over the pre-filtered slice: exact tokens, no
+      // filePath boost, no symbol terms, no synonym/stem expansion (any of
+      // those would admit slice events for gibberish and break pre-model
+      // refusal). The scope is still reported so answers carry the change
+      // file like card-scoped ones do.
+      const sliced = buildEvidenceBundle(
+        scoped,
+        { question: input.question, symbols: [] },
+        { strictOverlap: true },
+      );
+      const single = files.length === 1 && typeof files[0] === "string" ? files[0] : null;
+      bundle = {
+        ...sliced,
+        searchedScope: { eventCount: sliced.searchedScope.eventCount, filePath: single },
+      };
+      scopeNote = `change ${change.id} (${files.join(", ")}) plus earlier digests`;
+    } else {
+      const cardId = input.cardId ?? null;
+      let card: ChangeCard | null = null;
+      if (cardId !== null) {
+        const story = loadStory(sessionId, session.projectId);
+        const found = story?.cards.find((entry) => entry.id === cardId) ?? null;
+        if (!found) {
+          return {
+            status: 400,
+            body: { error: { code: "invalid_request", message: "unknown card" } },
+          };
+        }
+        card = found;
+      }
+      const scope = resolveScope(input, card);
+      bundle = buildEvidenceBundle(events, {
+        question: input.question,
+        ...(scope.filePath ? { filePath: scope.filePath } : {}),
+        symbols: scope.symbols,
+      });
+      persistCardId = cardId;
+    }
     if (bundle.items.length === 0) {
       const refused: AskResponse = {
         status: "refused",
@@ -392,7 +592,7 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
       };
       // Pre-model refusal is deterministic from the tape, so it persists like
       // any other 200 outcome. Only model calls fail closed without persisting.
-      if (!appendTurn(session.projectId, sessionId, input, cardId, refused)) {
+      if (!appendTurn(session.projectId, sessionId, input, persistCardId, refused)) {
         return redactionFailed();
       }
       return { status: 200, body: refused };
@@ -407,7 +607,7 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
     if (hit) {
       const body = { ...hit, cached: true };
       // Cache hits still append to the thread: same response, new message ids.
-      if (!appendTurn(session.projectId, sessionId, input, cardId, body)) {
+      if (!appendTurn(session.projectId, sessionId, input, persistCardId, body)) {
         return redactionFailed();
       }
       return { status: 200, body };
@@ -437,7 +637,7 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
           { role: "system", content: SYSTEM_PROMPT },
           {
             role: "user",
-            content: bundlePrompt(input.question, formatBundle(bundle.items)),
+            content: bundlePrompt(input.question, formatBundle(bundle.items), scopeNote),
           },
         ],
         parseModelAnswer,
@@ -478,7 +678,7 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
           };
     // The turn only counts once the thread artifact is durably updated: a
     // redaction failure drops the answer (500) instead of persisting it.
-    if (!appendTurn(session.projectId, sessionId, input, cardId, response)) {
+    if (!appendTurn(session.projectId, sessionId, input, persistCardId, response)) {
       return redactionFailed();
     }
     cache.set(cacheKey, response);
