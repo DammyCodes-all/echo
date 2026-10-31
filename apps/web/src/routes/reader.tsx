@@ -6,20 +6,20 @@ import type {
   ProgressState,
 } from "@echo/contracts";
 import { firstNotUnderstood } from "@echo/contracts";
-import { CodeIcon } from "@hugeicons/core-free-icons";
+import { GitCompareArrowsIcon } from "@hugeicons/core-free-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api, ChangesNotReadyError } from "../api";
+import { summarizeChangeChecks } from "../checks-summary";
 import { type AskChangeRef, AskThreadPanel } from "../components/ask-thread-panel";
 import { CaughtUp } from "../components/caught-up";
 import { ChangeCard } from "../components/change-card";
 import { CheckRunner } from "../components/check-runner";
 import { ProgressTape } from "../components/progress-tape";
+import { ReaderRail } from "../components/reader-rail";
 import { ScaffoldPage } from "../components/scaffold-page";
 
-const SECONDARY =
-  "rounded-dusk-pill bg-dusk-secondary px-5 py-2.5 text-sm font-semibold text-dusk-accent-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40";
 const PRIMARY =
   "rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40";
 const QUIET = "text-sm text-dusk-muted underline underline-offset-4 disabled:opacity-40";
@@ -91,7 +91,10 @@ export function ReaderPage() {
       projectId.length > 0
         ? [{ label: projectName, to: `/projects/${encodeURIComponent(projectId)}/overview` }]
         : undefined,
-    titleIcon: CodeIcon,
+    titleIcon: GitCompareArrowsIcon,
+    // The session name stays small and quiet: the change title below is the
+    // biggest thing on screen.
+    quietTitle: true,
     // Shimmer until the row lands: never flash fallback text, and never swap
     // mid-read (isPending is only true with no data, not on refetch).
     titleLoading: sessionQuery.isPending,
@@ -113,7 +116,6 @@ export function ReaderPage() {
   for (const [key, entry] of Object.entries(localMarks)) progress[key] = entry;
 
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [showSummary, setShowSummary] = useState(false);
 
   // Ask panel anchor: the change the question is about (panel side ready).
@@ -146,7 +148,6 @@ export function ReaderPage() {
   };
 
   const jump = (index: number) => {
-    setMenuOpen(false);
     setShowSummary(false);
     setCurrentIndex(Math.max(0, Math.min(index, changes.length)));
   };
@@ -165,8 +166,40 @@ export function ReaderPage() {
     mark(current, "viewed");
   });
 
+  // Diff for the change on screen, served from shadow git on demand.
+  // Keyed by change id; the id guard drops stale data mid-transition.
+  const codeQuery = useQuery({
+    queryKey: ["code", sessionId, current?.id],
+    queryFn: () => api.changeCode(sessionId, current?.id ?? ""),
+    enabled: current !== null,
+    retry: false,
+  });
+  const code = codeQuery.data?.changeId === current?.id ? codeQuery.data : null;
+
+  // Stored check state for the inline per-change result line. The runner's
+  // live state wins once a check runs this visit.
+  const storedChecksQuery = useQuery({
+    queryKey: ["checks", sessionId],
+    queryFn: () => api.checksV2State(sessionId),
+    retry: false,
+  });
+  const checksView = checksState ?? storedChecksQuery.data ?? null;
+  const checkResult =
+    current === null || checksView === null
+      ? null
+      : summarizeChangeChecks(checksView.questions, checksView.attempts, current.id);
+
   const previous = !atEnd && viewIndex > 0 ? (changes[viewIndex - 1] ?? null) : null;
+  const next = !atEnd && viewIndex < changes.length - 1 ? (changes[viewIndex + 1] ?? null) : null;
   const skipped = changes.filter((change) => progress[progressKey(change)]?.state === "skipped");
+  // Other changes touching the same files, in session order. Pure overlap
+  // from the served list — no backend needed.
+  const currentPaths = new Set((current?.files ?? []).map((file) => file.path));
+  const related = changes.flatMap((change, index) =>
+    change.id === current?.id || !change.files.some((file) => currentPaths.has(file.path))
+      ? []
+      : [{ index, title: change.title }],
+  );
 
   const handleDone = () => {
     navigate("/projects");
@@ -260,7 +293,11 @@ export function ReaderPage() {
         description="Walk through what changed, one change at a time."
         breadcrumb={headerCrumb}
       >
-        <div role="status" aria-label="Loading changes" className="max-w-4xl space-y-6">
+        <div
+          role="status"
+          aria-label="Loading changes"
+          className="mx-auto w-full max-w-[700px] space-y-6"
+        >
           <span className="sr-only">Loading changes…</span>
           <div aria-hidden>
             <div className="flex items-center gap-1.5 motion-safe:animate-pulse">
@@ -299,7 +336,7 @@ export function ReaderPage() {
         description="Walk through what changed, one change at a time."
         breadcrumb={headerCrumb}
       >
-        <div className="max-w-4xl rounded-dusk-card bg-dusk-surface px-6 py-8 text-sm text-dusk-muted">
+        <div className="mx-auto w-full max-w-[700px] rounded-dusk-card bg-dusk-surface px-6 py-8 text-sm text-dusk-muted">
           <p>
             {waiting
               ? "This session hasn't gone quiet yet — changes appear here once the tape goes silent. Check back soon."
@@ -332,12 +369,10 @@ export function ReaderPage() {
       description="Walk through what changed, one change at a time."
       breadcrumb={headerCrumb}
     >
-      <div className="max-w-4xl space-y-6">
+      <div className={`mx-auto w-full space-y-6 ${current !== null ? "" : "max-w-[700px]"}`}>
         {isEmpty ? (
           <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-8">
-            <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-              No changes
-            </p>
+            <p className="text-xs uppercase tracking-widest text-dusk-muted">No changes</p>
             <p className="text-dusk-body text-dusk-ink">
               {stillRecording
                 ? "This session is still recording, but the agent hasn't changed any code yet. Chapters appear here once there's a diff to group."
@@ -355,121 +390,104 @@ export function ReaderPage() {
             />
 
             {current !== null ? (
-              <div className="space-y-6">
-                <div className="relative">
-                  <button
-                    type="button"
-                    onClick={() => setMenuOpen((open) => !open)}
-                    aria-expanded={menuOpen}
-                    title="Jump to a change"
-                    className="font-mono text-xs uppercase tracking-widest text-dusk-muted underline underline-offset-4 hover:text-dusk-ink"
-                  >
-                    Change {viewIndex + 1} of {changes.length}
-                  </button>
-                  {menuOpen ? (
-                    <ul className="absolute left-0 top-6 z-10 w-64 space-y-1 rounded-dusk-code border border-dusk-hairline-strong bg-dusk-surface p-2 shadow-dusk-node">
-                      {changes.map((change, index) => (
-                        <li key={progressKey(change)}>
-                          <button
-                            type="button"
-                            onClick={() => jump(index)}
-                            className="block w-full rounded-dusk-code px-2 py-1.5 text-left text-sm text-dusk-ink hover:bg-dusk-pill"
-                          >
-                            <span className="font-mono text-xs text-dusk-muted">
-                              {index + 1} ·{" "}
-                            </span>
-                            {change.title}
-                          </button>
-                        </li>
-                      ))}
-                    </ul>
+              <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_320px]">
+                <div className="min-w-0 space-y-6">
+                  {/* The recap is the previous title only: digests are */}
+                  {/* written for the model, not for people. */}
+                  {previous !== null ? (
+                    <p className="text-sm leading-6 text-dusk-muted">
+                      Previously: {previous.title}
+                    </p>
+                  ) : null}
+
+                  <ChangeCard
+                    change={current}
+                    onAsk={handleAsk}
+                    onCheck={(change) => void handleCheckMe(change)}
+                    checkBusy={checkBusy}
+                    code={code}
+                    codeFailed={codeQuery.isError}
+                    checkResult={checkResult}
+                  />
+
+                  {checkError !== null && !atEnd ? (
+                    <p role="alert" className="text-sm text-dusk-fail">
+                      {checkError}
+                    </p>
+                  ) : null}
+
+                  {checkOpen && checksState !== null && !atEnd ? (
+                    <CheckRunner
+                      sessionId={sessionId}
+                      state={checksState}
+                      focusQuestionId={checkFocusId}
+                      onUpdate={setChecksState}
+                      onSkip={() => void handleSkipCheck()}
+                      onDone={handleRunnerDone}
+                    />
+                  ) : null}
+
+                  <div className="space-y-2 border-t border-dusk-hairline pt-4">
+                    <div className="flex flex-wrap items-center gap-3">
+                      <button
+                        type="button"
+                        onClick={() => jump(viewIndex - 1)}
+                        disabled={viewIndex === 0}
+                        className={QUIET}
+                      >
+                        Back
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          mark(current, "skipped");
+                          jump(viewIndex + 1);
+                        }}
+                        className={QUIET}
+                      >
+                        Skip quietly
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          mark(current, "understood");
+                          jump(viewIndex + 1);
+                        }}
+                        className={PRIMARY}
+                      >
+                        Got it, next change
+                      </button>
+                    </div>
+                    <p className="text-sm text-dusk-muted">
+                      {next !== null ? `Next up: ${next.title}` : "Last one — the wrap-up is next."}
+                    </p>
+                  </div>
+
+                  {viewIndex === changes.length - 1 && isLive ? (
+                    <p className="text-sm text-dusk-muted">
+                      The session is still going — this slot fills in when the next change lands.
+                    </p>
                   ) : null}
                 </div>
 
-                {previous !== null ? (
-                  <p
-                    title={previous.digest}
-                    className="line-clamp-3 border-l-2 border-dusk-hairline-strong pl-3 text-sm leading-6 text-dusk-muted"
-                  >
-                    Previously: {previous.digest}
-                  </p>
-                ) : null}
-
-                <ChangeCard
-                  change={current}
-                  onAsk={handleAsk}
-                  onCheck={(change) => void handleCheckMe(change)}
-                  checkBusy={checkBusy}
+                <ReaderRail
+                  changes={changes}
+                  currentIndex={viewIndex}
+                  getState={(change) => progress[progressKey(change)]?.state}
+                  onJump={jump}
+                  files={current.files}
+                  codeFiles={code?.files ?? null}
+                  related={related}
                 />
-
-                {checkError !== null && !atEnd ? (
-                  <p role="alert" className="text-sm text-dusk-fail">
-                    {checkError}
-                  </p>
-                ) : null}
-
-                {checkOpen && checksState !== null && !atEnd ? (
-                  <CheckRunner
-                    sessionId={sessionId}
-                    state={checksState}
-                    focusQuestionId={checkFocusId}
-                    onUpdate={setChecksState}
-                    onSkip={() => void handleSkipCheck()}
-                    onDone={handleRunnerDone}
-                  />
-                ) : null}
-
-                <div className="flex flex-wrap items-center gap-3 border-t border-dusk-hairline pt-4">
-                  <button
-                    type="button"
-                    onClick={() => jump(viewIndex - 1)}
-                    disabled={viewIndex === 0}
-                    className={SECONDARY}
-                  >
-                    Back
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      mark(current, "skipped");
-                      jump(viewIndex + 1);
-                    }}
-                    className={QUIET}
-                  >
-                    Skip quietly
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      mark(current, "understood");
-                      jump(viewIndex + 1);
-                    }}
-                    className={PRIMARY}
-                  >
-                    Got it — next
-                  </button>
-                </div>
-
-                {viewIndex === changes.length - 1 && isLive ? (
-                  <p className="text-sm text-dusk-muted">
-                    The session is still going — this slot fills in when the next change lands.
-                  </p>
-                ) : null}
               </div>
             ) : isLive && !showSummary ? (
               <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-8">
-                <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-                  In progress
-                </p>
+                <p className="text-xs uppercase tracking-widest text-dusk-muted">In progress</p>
                 <p className="text-dusk-body text-dusk-ink">
                   The session is still going. New changes will appear here when it goes quiet.
                 </p>
                 <div className="flex flex-wrap items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => jump(changes.length - 1)}
-                    className={SECONDARY}
-                  >
+                  <button type="button" onClick={() => jump(changes.length - 1)} className={QUIET}>
                     Back
                   </button>
                   <button type="button" onClick={() => setShowSummary(true)} className={QUIET}>
@@ -490,7 +508,7 @@ export function ReaderPage() {
                 />
 
                 <div className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5">
-                  <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+                  <p className="text-xs uppercase tracking-widest text-dusk-muted">
                     Check your understanding
                   </p>
                   <p className="text-sm text-dusk-muted">
