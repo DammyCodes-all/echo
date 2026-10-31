@@ -15,6 +15,7 @@ export const ErrorCodeSchema = z.enum([
   "daemon_unavailable",
   "readonly_demo",
   "rate_limited",
+  "code_unavailable",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
