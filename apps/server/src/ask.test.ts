@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type {
@@ -515,5 +515,75 @@ describe("createAskService", () => {
     expect(thread.status).toBe(200);
     expect((thread.body as AskThread).messages).toEqual([]);
     db.close();
+  });
+});
+
+describe("ask demo overlay", () => {
+  const input = {
+    question: "Which file did the write tool touch?",
+    filePath: null,
+    symbols: [],
+    cardId: null,
+  };
+
+  function threadPath(dataDir: string): string {
+    return join(
+      dataDir,
+      "projects",
+      PROJECT_ID,
+      "sessions",
+      SESSION_ID,
+      "artifacts",
+      "ask_thread.json",
+    );
+  }
+
+  it("seeds from the baked thread and keeps new turns in memory", async () => {
+    const { db, dataDir } = seedDb();
+    try {
+      const baked = createAskService(db, dataDir, {
+        env: ENV,
+        fetchImpl: stubFetch(ANSWERED_STUB).fetchImpl,
+      });
+      const first = await baked.answer(SESSION_ID, input);
+      expect(first.status).toBe(200);
+      const before = readFileSync(threadPath(dataDir), "utf8");
+
+      const demo = createAskService(db, dataDir, {
+        env: ENV,
+        fetchImpl: stubFetch(ANSWERED_STUB).fetchImpl,
+        demo: true,
+      });
+      const second = await demo.answer(SESSION_ID, input);
+      expect(second.status).toBe(200);
+      const thread = await demo.thread(SESSION_ID);
+      expect(thread.status).toBe(200);
+      // Two baked messages plus the two demo turns.
+      expect((thread.body as AskThread).messages).toHaveLength(4);
+      // The baked file is untouched and a file-backed reader sees only it.
+      expect(readFileSync(threadPath(dataDir), "utf8")).toBe(before);
+      const reread = await baked.thread(SESSION_ID);
+      expect((reread.body as AskThread).messages).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("writes no thread file when none was baked", async () => {
+    const { db, dataDir } = seedDb();
+    try {
+      const demo = createAskService(db, dataDir, {
+        env: ENV,
+        fetchImpl: stubFetch(ANSWERED_STUB).fetchImpl,
+        demo: true,
+      });
+      const outcome = await demo.answer(SESSION_ID, input);
+      expect(outcome.status).toBe(200);
+      expect(existsSync(threadPath(dataDir))).toBe(false);
+      const thread = await demo.thread(SESSION_ID);
+      expect((thread.body as AskThread).messages).toHaveLength(2);
+    } finally {
+      db.close();
+    }
   });
 });

@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
 import { importMuseSession } from "@echo/capture-muse";
 import { loadEchoConfig, resolveEchoPaths, saveEchoConfig } from "@echo/config";
+import { buildDemoBundle, resolveServerBin, verifyDemoBundle } from "@echo/demo";
 import { Command } from "commander";
+import { resolveDefaultWebDir, runDemoServe } from "./demo";
 import { runDoctor } from "./doctor";
 import { runHookCommand } from "./hook";
 import { installMuseHooks, resolveEchoCliBin, resolveMuseSettingsPath } from "./hooks-install";
@@ -179,5 +181,127 @@ program
       process.exitCode = 1;
     }
   });
+
+const demo = program.command("demo").description("baked read-only demo bundles");
+
+demo
+  .command("build")
+  .description("bake sessions into a demo bundle (exports, scans, smoke-tests)")
+  .option("--session <id>", "session to bake (repeat once for a second)", collectInto([]))
+  .requiredOption("--out <dir>", "bundle output dir")
+  .option("--data-dir <dir>", "Echo data dir (default: resolved)")
+  .option("--web-dir <dir>", "built web assets (default: beside the CLI)")
+  .option("--allow-secret <value>", "approved synthetic secret (repeatable)", collectInto([]))
+  .option("--skip-smoke", "bake without running smoke tests")
+  .action(
+    async (options: {
+      session: string[];
+      out: string;
+      dataDir?: string;
+      webDir?: string;
+      allowSecret: string[];
+      skipSmoke?: boolean;
+    }) => {
+      try {
+        const sessionIds = options.session ?? [];
+        if (sessionIds.length === 0) {
+          process.stderr.write("demo build: pass at least one --session <id>\n");
+          process.exitCode = 1;
+          return;
+        }
+        const webDir = options.webDir ?? resolveDefaultWebDir(process.argv[1]);
+        if (!webDir) {
+          process.stderr.write("demo build: cannot locate web assets; pass --web-dir\n");
+          process.exitCode = 1;
+          return;
+        }
+        const { meta } = buildDemoBundle({
+          dataDir: options.dataDir ?? resolveEchoPaths().dataDir,
+          sessionIds,
+          outDir: options.out,
+          webDir,
+          allowSecrets: options.allowSecret,
+          report: (step) => process.stdout.write(`demo build: ${step}\n`),
+        });
+        if (!options.skipSmoke) {
+          const serverBin = resolveServerBin(process.env, process.argv[1]);
+          if (!serverBin) {
+            process.stderr.write("demo build: cannot locate the server bundle\n");
+            process.exitCode = 1;
+            return;
+          }
+          const results = await verifyDemoBundle({ serverBin, bundleDir: options.out });
+          let failed = 0;
+          for (const result of results) {
+            process.stdout.write(
+              `demo smoke: ${result.ok ? "ok" : "FAIL"} ${result.name}${result.detail ? ` (${result.detail})` : ""}\n`,
+            );
+            if (!result.ok) failed += 1;
+          }
+          if (failed > 0) {
+            process.exitCode = 1;
+            return;
+          }
+        }
+        process.stdout.write(
+          `demo baked: ${meta.sessions.length} session(s) -> ${options.out} (${meta.projectName})\n`,
+        );
+      } catch (error) {
+        process.stderr.write(
+          `demo build failed: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        process.exitCode = 1;
+      }
+    },
+  );
+
+demo
+  .command("verify")
+  .description("run the smoke tests against a baked bundle")
+  .requiredOption("--dir <dir>", "bundle dir")
+  .action(async (options: { dir: string }) => {
+    try {
+      const serverBin = resolveServerBin(process.env, process.argv[1]);
+      if (!serverBin) {
+        process.stderr.write("demo verify: cannot locate the server bundle\n");
+        process.exitCode = 1;
+        return;
+      }
+      const results = await verifyDemoBundle({ serverBin, bundleDir: options.dir });
+      let failed = 0;
+      for (const result of results) {
+        process.stdout.write(
+          `demo smoke: ${result.ok ? "ok" : "FAIL"} ${result.name}${result.detail ? ` (${result.detail})` : ""}\n`,
+        );
+        if (!result.ok) failed += 1;
+      }
+      if (failed > 0) process.exitCode = 1;
+    } catch (error) {
+      process.stderr.write(
+        `demo verify failed: ${error instanceof Error ? error.message : String(error)}\n`,
+      );
+      process.exitCode = 1;
+    }
+  });
+
+demo
+  .command("serve")
+  .description("serve a baked bundle locally (same profile as the hosted demo)")
+  .requiredOption("--dir <dir>", "bundle dir")
+  .option("--port <n>", "port (default: 4784)", "4784")
+  .option("--host <addr>", "host (default: 127.0.0.1)", "127.0.0.1")
+  .action(async (options: { dir: string; port: string; host: string }) => {
+    const port = Number(options.port);
+    if (!Number.isInteger(port) || port <= 0 || port > 65_535) {
+      process.stderr.write(`demo serve: invalid port ${options.port}\n`);
+      process.exitCode = 1;
+      return;
+    }
+    process.exitCode = await runDemoServe({ bundleDir: options.dir, port, host: options.host });
+  });
+
+function collectInto(values: string[]): (value: string, previous: string[]) => string[] {
+  return (value: string, previous: string[]) => [...(previous ?? values), value];
+}
 
 void program.parseAsync();
