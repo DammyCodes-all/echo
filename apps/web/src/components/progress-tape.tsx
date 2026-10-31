@@ -11,11 +11,12 @@ type ProgressTapeProps = {
 
 function segmentClass(state: ProgressState | undefined, isCurrent: boolean): string {
   const base = "h-1.5 flex-1 rounded-full transition-colors";
-  const ring = isCurrent ? " outline-2 outline-offset-2 outline-dusk-accent" : "";
-  if (state === "understood") return `${base} bg-dusk-accent${ring}`;
-  if (state === "skipped") return `${base} bg-dusk-muted/50${ring}`;
-  if (state === "viewed") return `${base} bg-dusk-pill${ring}`;
-  return `${base} bg-dusk-track${ring}`;
+  // The accent marks only where the reader is; finished segments stay neutral.
+  if (isCurrent) return `${base} bg-dusk-accent`;
+  if (state === "understood") return `${base} bg-dusk-muted`;
+  if (state === "skipped") return `${base} bg-dusk-muted/40`;
+  if (state === "viewed") return `${base} bg-dusk-pill`;
+  return `${base} bg-dusk-track`;
 }
 
 function segmentLabel(index: number, state: ProgressState | undefined): string {
@@ -51,7 +52,7 @@ export function ProgressTape({
         {isLive ? (
           <span
             title="Session still going — new changes land here"
-            className="h-1.5 w-4 rounded-full bg-dusk-peach-wash outline-1 outline-dusk-peach"
+            className="h-1.5 w-4 rounded-full bg-dusk-muted/50"
           />
         ) : null}
       </div>
