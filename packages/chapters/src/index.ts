@@ -18,6 +18,7 @@ export {
   hashDiffId,
   isStaleByHash,
   isTrivialFile,
+  MAX_FILES_PER_CHANGE,
   MAX_FILES_PER_GROUP,
   mergeSessionGroups,
   normalizeDiffForId,
@@ -27,6 +28,7 @@ export {
   type SkeletonChange,
   type SnapshotPair,
   sessionBudget,
+  splitFilesByArea,
 } from "./changes";
 export {
   buildChangeNarrationMessages,
