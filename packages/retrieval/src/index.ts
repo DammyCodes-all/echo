@@ -111,6 +111,33 @@ function payloadText(kind: string, payload: unknown): string {
           : null;
     if (said !== null) return `agent said: ${said}`.slice(0, 300);
   }
+  // Muse native payloads nest readable content under `event`: tool calls
+  // carry names + JSON args, model/task output carries text chunks. Tool
+  // result batches are split into one summary per result before this runs
+  // (see splitMuseResults), so a long first result cannot crowd the rest
+  // out of the 300-char window. Without this the generic fallback shows
+  // envelope noise and the model refuses for lack of usable evidence.
+  const nested = record.event;
+  if (nested !== null && typeof nested === "object") {
+    const event = nested as Record<string, unknown>;
+    if (Array.isArray(event.tool_calls)) {
+      const calls: string[] = [];
+      for (const call of event.tool_calls) {
+        if (call === null || typeof call !== "object") continue;
+        const entry = call as Record<string, unknown>;
+        const name = typeof entry.name === "string" ? entry.name : "tool";
+        calls.push(`${name}${museCallTarget(entry)}`);
+      }
+      if (calls.length > 0) return `tool calls: ${calls.join("; ")}`.slice(0, 300);
+    }
+    if (typeof event.chunk === "string" && event.chunk.length > 0) {
+      const prefix = kind === "model.response" ? "agent said" : "output";
+      return `${prefix}: ${summarizeMuseText(event.chunk)}`
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, MUSE_SUMMARY_CHARS);
+    }
+  }
   if (name !== null) {
     const target =
       input !== undefined && typeof input.path === "string"
@@ -154,6 +181,88 @@ function payloadText(kind: string, payload: unknown): string {
   }
   if (typeof record.outcome === "string") return `${kind}: ${record.outcome}`.slice(0, 200);
   return `${kind}: ${JSON.stringify(record).slice(0, 200)}`;
+}
+
+// Muse tool-call args are a JSON string; pull the path/command/file out with
+// patterns instead of parsing so malformed args degrade to no target.
+function museCallTarget(call: Record<string, unknown>): string {
+  const args = call.args;
+  if (typeof args !== "string") return "";
+  for (const key of ["path", "command", "file", "pattern"]) {
+    const match = args.match(new RegExp(`"${key}"\\s*:\\s*"([^"]{1,80})"`));
+    if (match?.[1] !== undefined) return ` ${match[1]}`;
+  }
+  return "";
+}
+
+// Muse summaries get a wider window than the 300-char opencode shapes:
+// tool outputs lead with progress lines and put the decisive detail
+// (assertion diffs, failure sections) hundreds of chars in. Eight items at
+// this width still sit far under the 48k bundle budget.
+const MUSE_SUMMARY_CHARS = 800;
+
+// Muse exec results wrap command output in a JSON envelope; the output is
+// what answers questions, so it leads and the envelope compresses to a
+// command + exit prefix. Anything that is not an exec envelope passes
+// through untouched.
+function summarizeMuseText(text: string): string {
+  if (!text.startsWith("{")) return text;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return text;
+  }
+  if (parsed === null || typeof parsed !== "object") return text;
+  const record = parsed as Record<string, unknown>;
+  if (typeof record.command !== "string" || typeof record.output !== "string") return text;
+  const exit = record.exit_code ?? record.exitCode;
+  const head = `exec ${record.command} exit ${typeof exit === "number" ? exit : "?"}`.trim();
+  return record.output.length > 0 ? `${head}: ${record.output}` : head;
+}
+
+// One summary per tool result, or null when the event is not a Muse batch
+// with readable result text (the normal single-summary path then applies).
+function splitMuseResults(event: TapeEvent): string[] | null {
+  if (event.payload === null || typeof event.payload !== "object") return null;
+  const nested = (event.payload as Record<string, unknown>).event;
+  if (nested === null || typeof nested !== "object") return null;
+  const results = (nested as Record<string, unknown>).results;
+  if (!Array.isArray(results)) return null;
+  const summaries: string[] = [];
+  for (const result of results) {
+    if (result !== null && typeof result === "object") {
+      const text = (result as Record<string, unknown>).text;
+      if (typeof text === "string" && text.length > 0) {
+        summaries.push(
+          `tool result: ${summarizeMuseText(text)}`
+            .replace(/\s+/g, " ")
+            .trim()
+            .slice(0, MUSE_SUMMARY_CHARS),
+        );
+      }
+    }
+  }
+  return summaries.length > 0 ? summaries : null;
+}
+
+// Muse lifecycle envelopes (proposed/intent/completed ids) and skill-catalog
+// echoes summarize to id soup or harness chatter, not session evidence.
+// Penalized, never excluded: heavy term overlap can still admit them.
+function isMuseLifecycleNoise(payload: unknown, summary: string): boolean {
+  if (summary.includes("<read-skill-result")) return true;
+  if (payload === null || typeof payload !== "object") return false;
+  const nested = (payload as Record<string, unknown>).event;
+  if (nested === null || typeof nested !== "object") return false;
+  const inner = nested as Record<string, unknown>;
+  const kind = inner.kind;
+  if (kind === "proposed" || kind === "side_effect_intent" || kind === "model_response_created") {
+    return true;
+  }
+  if (kind === "rejected" || kind === "cancelled") return true;
+  // Task-completed envelopes are bare ids; result batches share the outer
+  // kind but carry results and must never be penalized.
+  return kind === "completed" && !Array.isArray(inner.results);
 }
 
 function eventFilePath(kind: string, payload: unknown, summary: string): string | null {
@@ -218,6 +327,22 @@ const TRY_WORDS = new Set([
   "abandoned",
 ]);
 
+// Change-questions must find edit evidence: "what changed" shares no terms
+// with "edit_file src/ledger.js", so the verbs expand to tool vocabulary.
+const CHANGE_WORDS = new Set([
+  "change",
+  "changed",
+  "changes",
+  "changing",
+  "modify",
+  "modified",
+  "update",
+  "updated",
+]);
+const CHANGE_SYNONYMS = ["edit", "write"];
+const DELETE_WORDS = new Set(["delete", "deleted", "remove", "removed"]);
+const DELETE_SYNONYMS = ["rm"];
+
 /**
  * Retrieval over redacted tape events, FTS5-backed since the hackathon
  * build (porter stemmer, prefix terms). The scoring contract is unchanged
@@ -242,6 +367,12 @@ export function buildEvidenceBundle(
   const questionTokens = new Set(tokenize(query.question));
   for (const symbol of query.symbols ?? []) {
     for (const token of tokenize(symbol)) questionTokens.add(token);
+  }
+  if ([...questionTokens].some((token) => CHANGE_WORDS.has(token))) {
+    for (const synonym of CHANGE_SYNONYMS) questionTokens.add(synonym);
+  }
+  if ([...questionTokens].some((token) => DELETE_WORDS.has(token))) {
+    for (const synonym of DELETE_SYNONYMS) questionTokens.add(synonym);
   }
   const queryFile = query.filePath ?? null;
 
@@ -268,25 +399,43 @@ export function buildEvidenceBundle(
   const wantsAttempts = tokenize(query.question).some((token) => TRY_WORDS.has(token));
 
   const scored: Array<{ item: EvidenceItem; score: number; seq: number; relevant: boolean }> = [];
-  const documents = events.map((event) => {
-    const summary = payloadText(event.kind, event.payload);
-    // Scope is a ranking boost (fileMatched), never a relabel: stamping every
-    // doc with the query file makes fileMatched true tape-wide, which admits
-    // unrelated events and breaks pre-model refusal for scoped questions.
-    const filePath = eventFilePath(event.kind, event.payload, summary);
-    return { summary, filePath, text: `${summary} ${filePath ?? ""}` };
-  });
+  // A Muse tool-result batch holds several tool outputs in one event; each
+  // result becomes its own unit so every output ranks and displays on its
+  // own instead of sharing one 300-char window.
+  const units: Array<{ event: TapeEvent; summary: string; filePath: string | null }> = [];
+  for (const event of events) {
+    const split = event.diagnostics.length === 0 ? splitMuseResults(event) : null;
+    if (split === null) {
+      const summary = payloadText(event.kind, event.payload);
+      // Scope is a ranking boost (fileMatched), never a relabel: stamping every
+      // doc with the query file makes fileMatched true tape-wide, which admits
+      // unrelated events and breaks pre-model refusal for scoped questions.
+      const filePath = eventFilePath(event.kind, event.payload, summary);
+      units.push({ event, summary, filePath });
+    } else {
+      for (const summary of split) {
+        units.push({ event, summary, filePath: eventFilePath(event.kind, event.payload, summary) });
+      }
+    }
+  }
+  const documents = units.map((unit) => ({
+    summary: unit.summary,
+    filePath: unit.filePath,
+    text: `${unit.summary} ${unit.filePath ?? ""}`,
+  }));
   const terms = expandTerms(questionTokens);
   const fts = openFts(documents.map((doc) => doc.text));
   try {
-    for (let i = 0; i < events.length; i++) {
-      const event = events[i];
+    for (let i = 0; i < units.length; i++) {
+      const unit = units[i];
       const doc = documents[i];
-      if (event === undefined || doc === undefined) continue;
+      if (unit === undefined || doc === undefined) continue;
+      const { event } = unit;
       const { summary, filePath } = doc;
       const mapped = eventKind(event.kind);
       const overlap = fts.overlap(i, terms);
       let score = overlap + mapped.weight;
+      if (isMuseLifecycleNoise(event.payload, summary)) score -= 4;
       const fileMatched = queryFile !== null && filePath === queryFile;
       if (fileMatched) score += 3;
       if (wantsAttempts && superseded.has(event.event_id)) score += 2;
