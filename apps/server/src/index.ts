@@ -1,4 +1,4 @@
-import { mkdirSync } from "node:fs";
+import { createReadStream, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { loadEchoConfig, resolveEchoPaths } from "@echo/config";
 import {
@@ -26,6 +26,16 @@ import { createArchitectureService } from "./architecture";
 import { createAskService } from "./ask";
 import { createChecksV2Service } from "./checks-v2";
 import { createCodeIndexService } from "./code-index";
+import {
+  createDemoPolicy,
+  type DemoAdmission,
+  type DemoPolicy,
+  demoReadonly,
+  demoUsageTokens,
+  recordedExamples,
+  resolveDemoLimits,
+  resolveDemoStatic,
+} from "./demo";
 import { ensureEnabledProjects } from "./enabled-projects";
 import { createEngagementService } from "./engagement";
 import { loadLocalEnv } from "./env";
@@ -41,7 +51,7 @@ import { createStoryService, filterEmptySessions, isSessionQuiet } from "./story
 
 const VERSION = "0.1.0";
 const DEFAULT_PORT = 4783;
-const HOST = "127.0.0.1";
+const DEMO = process.env.ECHO_MODE === "demo";
 
 function resolvePort(): number {
   const raw = process.env.ECHO_PORT;
@@ -54,12 +64,19 @@ function resolvePort(): number {
   return port;
 }
 
+function resolveHost(): string {
+  const raw = process.env.ECHO_HOST;
+  if (raw !== undefined && raw !== "") return raw;
+  // The container has no loopback clients; local mode never binds wide.
+  return DEMO ? "0.0.0.0" : "127.0.0.1";
+}
+
 const startedAt = Date.now();
 loadLocalEnv();
 const paths = resolveEchoPaths();
 mkdirSync(paths.dataDir, { recursive: true });
 const db = openEchoDb(join(paths.dataDir, "echo.sqlite"));
-const app = Fastify({ logger: true });
+const app = Fastify({ logger: true, trustProxy: DEMO });
 const story = createStoryService({ db, dataDir: paths.dataDir, log: app.log });
 // Fire-and-forget finalize hook: never awaited (model latency would stall
 // polling) and never throws into ingest (errors are logged here).
@@ -107,10 +124,65 @@ const techStack = createProjectTechStackService(
   },
 );
 
+// Demo visitors each get service instances with an in-memory overlay seeded
+// from the baked files, so answers and questions never touch baked data and
+// visitors sharing a boot do not share check/ask state. Same-NAT visitors
+// still collide; the baked bundle stays untouched either way.
+const demoPolicy: DemoPolicy | null = DEMO ? createDemoPolicy(resolveDemoLimits()) : null;
+const demoAskServices = new Map<string, ReturnType<typeof createAskService>>();
+const demoChecksServices = new Map<string, ReturnType<typeof createChecksV2Service>>();
+
+function askFor(ip: string): ReturnType<typeof createAskService> {
+  const cached = demoAskServices.get(ip);
+  if (cached) return cached;
+  const service = createAskService(db, paths.dataDir, { log: app.log, demo: true });
+  demoAskServices.set(ip, service);
+  return service;
+}
+
+function checksFor(ip: string): ReturnType<typeof createChecksV2Service> {
+  const cached = demoChecksServices.get(ip);
+  if (cached) return cached;
+  const service = createChecksV2Service(
+    { db, dataDir: paths.dataDir, log: app.log },
+    { demo: true },
+  );
+  demoChecksServices.set(ip, service);
+  return service;
+}
+
+async function demoExamples(ip: string, sessionId: string): Promise<string[]> {
+  const thread = await askFor(ip).thread(sessionId);
+  if (thread.status !== 200 || !("messages" in thread.body)) return [];
+  return recordedExamples(thread.body);
+}
+
+async function demoLimited(
+  reply: FastifyReply,
+  verdict: Extract<DemoAdmission, { ok: false }>,
+  examples: () => Promise<string[]>,
+): Promise<FastifyReply> {
+  if (verdict.reason === "rate_limited") {
+    if (verdict.retryAfterMs !== null) {
+      reply.header("Retry-After", Math.max(1, Math.ceil(verdict.retryAfterMs / 1000)));
+    }
+    return reply
+      .code(429)
+      .send({ error: { code: "rate_limited", message: "demo rate limit reached; retry shortly" } });
+  }
+  return reply.code(429).send({
+    error: {
+      code: "budget_exhausted",
+      message: "demo budget reached; try the recorded examples",
+      details: { examples: await examples() },
+    },
+  });
+}
+
 app.get("/api/health", async () => ({
   status: "ok",
   version: VERSION,
-  mode: process.env.ECHO_MODE === "demo" ? "demo" : "local",
+  mode: DEMO ? "demo" : "local",
   uptimeMs: Date.now() - startedAt,
 }));
 
@@ -198,6 +270,7 @@ app.get<{ Params: { id: string } }>("/api/projects/:id/code", async (request, re
 });
 
 app.post<{ Params: { id: string } }>("/api/projects/:id/code/reindex", async (request, reply) => {
+  if (DEMO) return reply.code(403).send(demoReadonly());
   try {
     const result = codeIndex.reindex(request.params.id, { force: true });
     if (!result) {
@@ -321,6 +394,7 @@ app.get<{ Params: { id: string } }>("/api/projects/:id/architecture", async (req
 app.post<{ Params: { id: string } }>(
   "/api/projects/:id/architecture/generate",
   async (request, reply) => {
+    if (DEMO) return reply.code(403).send(demoReadonly());
     const outcome = await architecture.generate(request.params.id);
     return reply.code(outcome.status).send(outcome.body);
   },
@@ -356,6 +430,7 @@ app.get<{ Params: { id: string } }>(
 app.post<{ Params: { id: string } }>(
   "/api/projects/:id/architecture/chat",
   async (request, reply) => {
+    if (DEMO) return reply.code(403).send(demoReadonly());
     const parsed = ArchitectureChatRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({
@@ -374,6 +449,7 @@ app.post<{ Params: { id: string } }>(
 app.post<{ Params: { id: string } }>(
   "/api/projects/:id/architecture/apply",
   async (request, reply) => {
+    if (DEMO) return reply.code(403).send(demoReadonly());
     const parsed = ArchitectureApplyRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({
@@ -388,6 +464,7 @@ app.post<{ Params: { id: string } }>(
 app.post<{ Params: { id: string } }>(
   "/api/projects/:id/architecture/undo",
   async (request, reply) => {
+    if (DEMO) return reply.code(403).send(demoReadonly());
     const outcome = architecture.undo(request.params.id);
     return reply.code(outcome.status).send(outcome.body);
   },
@@ -449,31 +526,61 @@ app.post<{ Params: { id: string } }>("/api/sessions/:id/ask", async (request, re
       error: { code: "invalid_request", message: "question is required (max 2000 chars)" },
     });
   }
+  if (DEMO && demoPolicy) {
+    const verdict = demoPolicy.admitAsk(request.ip);
+    if (!verdict.ok) {
+      return demoLimited(reply, verdict, () => demoExamples(request.ip, request.params.id));
+    }
+    const outcome = await askFor(request.ip).answer(request.params.id, parsed.data);
+    demoPolicy.recordTokens(demoUsageTokens(outcome.usage));
+    return reply.code(outcome.status).send(outcome.body);
+  }
   const outcome = await ask.answer(request.params.id, parsed.data);
   return reply.code(outcome.status).send(outcome.body);
 });
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/ask/thread", async (request, reply) => {
-  const outcome = await ask.thread(request.params.id);
+  const service = DEMO ? askFor(request.ip) : ask;
+  const outcome = await service.thread(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
 });
 
 app.post<{ Params: { id: string } }>(
   "/api/sessions/:id/checks-v2/generate",
   async (request, reply) => {
+    // Demo serves the baked set: no model draft, no persist, same public shape.
+    // A missing bake fails closed instead of drafting live.
+    if (DEMO) {
+      const baked = checksFor(request.ip).state(request.params.id);
+      if (
+        baked.status === 200 &&
+        typeof baked.body === "object" &&
+        baked.body !== null &&
+        "questions" in baked.body &&
+        Array.isArray((baked.body as { questions: unknown }).questions) &&
+        (baked.body as { questions: unknown[] }).questions.length === 0
+      ) {
+        return reply.code(503).send({
+          error: { code: "check_unavailable", message: "no baked check for this session" },
+        });
+      }
+      return reply.code(baked.status).send(baked.body);
+    }
     const outcome = await checksV2.generate(request.params.id);
     return reply.code(outcome.status).send(outcome.body);
   },
 );
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/checks-v2", async (request, reply) => {
-  const outcome = checksV2.state(request.params.id);
+  const service = DEMO ? checksFor(request.ip) : checksV2;
+  const outcome = service.state(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
 });
 
 app.post<{ Params: { id: string } }>(
   "/api/sessions/:id/checks-v2/check-me",
   async (request, reply) => {
+    if (DEMO) return reply.code(403).send(demoReadonly());
     const parsed = CheckMeRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.code(400).send({
@@ -494,17 +601,28 @@ app.post<{ Params: { id: string } }>(
         error: { code: "invalid_request", message: "questionId and confidence are required" },
       });
     }
+    if (DEMO && demoPolicy) {
+      const verdict = demoPolicy.admitAnswer(request.ip);
+      if (!verdict.ok) {
+        return demoLimited(reply, verdict, () => demoExamples(request.ip, request.params.id));
+      }
+      const outcome = await checksFor(request.ip).answer(request.params.id, parsed.data);
+      demoPolicy.recordTokens(demoUsageTokens(outcome.usage));
+      return reply.code(outcome.status).send(outcome.body);
+    }
     const outcome = await checksV2.answer(request.params.id, parsed.data);
     return reply.code(outcome.status).send(outcome.body);
   },
 );
 
 app.post<{ Params: { id: string } }>("/api/sessions/:id/checks-v2/skip", async (request, reply) => {
+  if (DEMO) return reply.code(403).send(demoReadonly());
   const outcome = checksV2.skip(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
 });
 
 app.post<{ Params: { id: string } }>("/api/sessions/:id/engagement", async (request, reply) => {
+  if (DEMO) return reply.code(403).send(demoReadonly());
   const outcome = engagement.record(request.params.id, request.body);
   return reply.code(outcome.status).send(outcome.body);
 });
@@ -526,6 +644,15 @@ app.get<{ Params: { id: string } }>("/api/sessions/:id/history", async (request,
 });
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/story", async (request, reply) => {
+  // Demo serves the baked artifact only: the tape is frozen, so there is
+  // nothing to generate and no quiet window to wait out.
+  if (DEMO) {
+    const baked = story.readStory(request.params.id);
+    if (baked.outcome === "unknown_session" || !baked.story) {
+      return reply.code(404).send({ error: { code: "not_found", message: "unknown session" } });
+    }
+    return baked.story;
+  }
   // Read-through cache: generates on missing/stale, serves the artifact when
   // the tape watermark still matches. A session that went quiet less than a
   // minute ago reports waiting instead of narrating half-finished work.
@@ -591,6 +718,34 @@ app.get<{ Params: { id: string; commit: string }; Querystring: { path?: string }
   },
 );
 
+if (DEMO) {
+  // The demo is a public surface: deny framing and MIME sniffing on every
+  // response. The full ARCH §17 CSP stays out until a browser pass proves
+  // the app renders cleanly under it.
+  app.addHook("onSend", async (_request, reply, payload) => {
+    reply.header("X-Content-Type-Options", "nosniff");
+    reply.header("Referrer-Policy", "no-referrer");
+    reply.header("X-Frame-Options", "DENY");
+    return payload;
+  });
+  // Same-origin web assets, registered last: explicit /api routes win over
+  // the wildcard regardless of order.
+  const demoWebDir = process.env.ECHO_DEMO_WEB_DIR ?? "";
+  if (demoWebDir === "") app.log.warn("demo mode without ECHO_DEMO_WEB_DIR: web assets will 404");
+  app.get("/*", async (request, reply) => {
+    const hit = demoWebDir === "" ? null : resolveDemoStatic(demoWebDir, request.raw.url ?? "/");
+    if (!hit) {
+      return reply.code(404).send({ error: { code: "not_found", message: "not found" } });
+    }
+    reply.header("Content-Type", hit.contentType);
+    reply.header(
+      "Cache-Control",
+      hit.immutable ? "public, max-age=31536000, immutable" : "no-store",
+    );
+    return reply.send(createReadStream(hit.file));
+  });
+}
+
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
   await ingest.stop();
@@ -606,37 +761,41 @@ process.on("SIGTERM", () => void shutdown("SIGTERM"));
 let museWatcher: { start: () => void; stop: () => void } | null = null;
 
 try {
-  await app.listen({ host: HOST, port: resolvePort() });
-  // Enabled but sessionless repos get their folder (empty state) from boot.
-  await ensureEnabledProjects(db, config.projects, app.log);
-  ingest.start();
-  museIngest.start(config.poll_interval_ms);
-  // The watcher only shortens poll latency: every event it reports also
-  // arrives via the interval, so a dead watcher degrades to polling.
-  museWatcher = createMuseWatcher({
-    sessionsDir: museIngest.sessionsDir,
-    log: app.log,
-    onDirty: () => {
-      void museIngest
-        .runOnce()
-        .then((result) => {
-          if (result.eventsAdded > 0) {
-            app.log.info({ ...result }, "ingested muse sessions (watch)");
-          }
-        })
-        .catch((error) => {
-          app.log.error({ err: String(error) }, "muse watch ingest failed");
-        });
-    },
-  });
-  museWatcher.start();
-  const initial = await ingest.runOnce();
-  if (initial.eventsAdded > 0) {
-    app.log.info({ ...initial }, "ingested opencode sessions");
-  }
-  const museInitial = await museIngest.runOnce();
-  if (museInitial.eventsAdded > 0) {
-    app.log.info({ ...museInitial }, "ingested muse sessions");
+  await app.listen({ host: resolveHost(), port: resolvePort() });
+  if (DEMO) {
+    app.log.info("demo mode: ingest disabled, serving baked data");
+  } else {
+    // Enabled but sessionless repos get their folder (empty state) from boot.
+    await ensureEnabledProjects(db, config.projects, app.log);
+    ingest.start();
+    museIngest.start(config.poll_interval_ms);
+    // The watcher only shortens poll latency: every event it reports also
+    // arrives via the interval, so a dead watcher degrades to polling.
+    museWatcher = createMuseWatcher({
+      sessionsDir: museIngest.sessionsDir,
+      log: app.log,
+      onDirty: () => {
+        void museIngest
+          .runOnce()
+          .then((result) => {
+            if (result.eventsAdded > 0) {
+              app.log.info({ ...result }, "ingested muse sessions (watch)");
+            }
+          })
+          .catch((error) => {
+            app.log.error({ err: String(error) }, "muse watch ingest failed");
+          });
+      },
+    });
+    museWatcher.start();
+    const initial = await ingest.runOnce();
+    if (initial.eventsAdded > 0) {
+      app.log.info({ ...initial }, "ingested opencode sessions");
+    }
+    const museInitial = await museIngest.runOnce();
+    if (museInitial.eventsAdded > 0) {
+      app.log.info({ ...museInitial }, "ingested muse sessions");
+    }
   }
 } catch (error) {
   app.log.error(error);

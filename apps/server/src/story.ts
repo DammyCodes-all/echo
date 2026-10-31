@@ -967,7 +967,31 @@ export function createStoryService(deps: StoryServiceDeps, options: StoryService
     return { outcome: "generated", story: persisted };
   }
 
-  return { maybeGenerateStory };
+  // Demo read: serves the baked artifact or reports it missing. Never
+  // generates, never writes — the demo tape is frozen by construction.
+  function readStory(sessionId: string): StoryOutcome {
+    const session = getSession(db, sessionId);
+    if (!session) return { outcome: "unknown_session", story: null };
+    // Baked bundles move between build and serve, so ref paths may be stale;
+    // the conventional layout beside them is the fallback, as in loadStory.
+    const ref = getArtifactRef(db, sessionId, "story");
+    const candidates =
+      ref && typeof ref.path === "string" && ref.path.length > 0
+        ? [ref.path, storyArtifactPath(dataDir, session.projectId, sessionId)]
+        : [storyArtifactPath(dataDir, session.projectId, sessionId)];
+    for (const path of candidates) {
+      if (!existsSync(path)) continue;
+      try {
+        const story = SessionStorySchema.parse(JSON.parse(readFileSync(path, "utf8")) as unknown);
+        return { outcome: "fresh", story };
+      } catch {
+        // Corrupt artifact reads as missing; gaps are data.
+      }
+    }
+    return { outcome: "unavailable", story: null };
+  }
+
+  return { maybeGenerateStory, readStory };
 }
 
 export type StoryService = ReturnType<typeof createStoryService>;

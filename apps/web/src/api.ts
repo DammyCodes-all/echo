@@ -39,6 +39,13 @@ type FetchOptions = {
   timeoutMs?: number;
 };
 
+export interface HealthResponse {
+  status: string;
+  version: string;
+  mode: "local" | "demo";
+  uptimeMs: number;
+}
+
 function requestSignal(options: FetchOptions): AbortSignal | undefined {
   if (options.timeoutMs === undefined) return options.signal;
   const timeout = AbortSignal.timeout(options.timeoutMs);
@@ -68,6 +75,7 @@ async function postJson<T>(url: string, body: unknown, options: FetchOptions = {
 }
 
 export const api = {
+  health: () => getJson<HealthResponse>("/api/health"),
   projects: () => getJson<ProjectSummary[]>("/api/projects"),
   project: (projectId: string) =>
     getJson<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
