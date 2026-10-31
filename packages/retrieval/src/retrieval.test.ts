@@ -451,3 +451,38 @@ describe("fts recall", () => {
     expect(bundle.items.map((item) => item.text).join("\n")).toContain("prettier");
   });
 });
+
+describe("strict overlap", () => {
+  it("rejects stem-only matches that expanded recall admits", () => {
+    const events = [makeEvent(1, "tool.completed", "Change c_1 touches src/app.ts")];
+    const expanded = buildEvidenceBundle(events, { question: "What changed in the refactor?" });
+    expect(expanded.items).toHaveLength(1);
+    const strict = buildEvidenceBundle(
+      events,
+      { question: "What changed in the refactor?" },
+      { strictOverlap: true },
+    );
+    expect(strict.items).toHaveLength(0);
+  });
+
+  it("still admits exact token matches", () => {
+    const events = [makeEvent(1, "tool.completed", "the service runs nightly")];
+    const strict = buildEvidenceBundle(
+      events,
+      { question: "Why does the service run nightly?" },
+      { strictOverlap: true },
+    );
+    expect(strict.items).toHaveLength(1);
+    expect(strict.items[0]?.eventId).toBe("fixture-fts-1");
+  });
+
+  it("ignores edge punctuation: alpha. matches alpha", () => {
+    const events = [makeEvent(1, "tool.completed", "digest alpha ax1 ax2")];
+    const strict = buildEvidenceBundle(
+      events,
+      { question: "Tell me about alpha." },
+      { strictOverlap: true },
+    );
+    expect(strict.items).toHaveLength(1);
+  });
+});

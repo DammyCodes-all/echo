@@ -360,19 +360,25 @@ const DELETE_SYNONYMS = ["rm"];
 export function buildEvidenceBundle(
   events: TapeEvent[],
   query: RetrievalQuery,
-  options: { maxItems?: number; maxChars?: number } = {},
+  options: { maxItems?: number; maxChars?: number; strictOverlap?: boolean } = {},
 ): EvidenceBundle {
   const maxItems = options.maxItems ?? 8;
   const maxChars = options.maxChars ?? 48_000;
+  // Strict overlap is exact-token matching for pre-filtered scopes (change
+  // slices): no synonym injection and no stemmed/prefix FTS matching, so an
+  // out-of-scope question still yields an empty bundle and refuses pre-model.
+  const strict = options.strictOverlap ?? false;
   const questionTokens = new Set(tokenize(query.question));
   for (const symbol of query.symbols ?? []) {
     for (const token of tokenize(symbol)) questionTokens.add(token);
   }
-  if ([...questionTokens].some((token) => CHANGE_WORDS.has(token))) {
-    for (const synonym of CHANGE_SYNONYMS) questionTokens.add(synonym);
-  }
-  if ([...questionTokens].some((token) => DELETE_WORDS.has(token))) {
-    for (const synonym of DELETE_SYNONYMS) questionTokens.add(synonym);
+  if (!strict) {
+    if ([...questionTokens].some((token) => CHANGE_WORDS.has(token))) {
+      for (const synonym of CHANGE_SYNONYMS) questionTokens.add(synonym);
+    }
+    if ([...questionTokens].some((token) => DELETE_WORDS.has(token))) {
+      for (const synonym of DELETE_SYNONYMS) questionTokens.add(synonym);
+    }
   }
   const queryFile = query.filePath ?? null;
 
@@ -423,8 +429,16 @@ export function buildEvidenceBundle(
     filePath: unit.filePath,
     text: `${unit.summary} ${unit.filePath ?? ""}`,
   }));
-  const terms = expandTerms(questionTokens);
+  const terms = strict ? [...questionTokens] : expandTerms(questionTokens);
   const fts = openFts(documents.map((doc) => doc.text));
+  // Exact-token document sets for strict scopes; FTS stays stemmed/prefix.
+  // Edge punctuation is stripped so "alpha." matches "alpha" while interior
+  // dots/slashes survive ("src/app.ts" stays one token).
+  const stripEdges = (token: string): string => token.replace(/^[./-]+|[./-]+$/g, "");
+  const strictTerms = strict ? terms.map(stripEdges).filter((term) => term.length >= 3) : [];
+  const docTokenSets = strict
+    ? documents.map((doc) => new Set(tokenize(doc.text).map(stripEdges)))
+    : [];
   try {
     for (let i = 0; i < units.length; i++) {
       const unit = units[i];
@@ -433,7 +447,11 @@ export function buildEvidenceBundle(
       const { event } = unit;
       const { summary, filePath } = doc;
       const mapped = eventKind(event.kind);
-      const overlap = fts.overlap(i, terms);
+      const strictSet = strict ? (docTokenSets[i] ?? new Set<string>()) : null;
+      const overlap =
+        strict && strictSet !== null
+          ? strictTerms.filter((term) => strictSet.has(term)).length
+          : fts.overlap(i, terms);
       let score = overlap + mapped.weight;
       if (isMuseLifecycleNoise(event.payload, summary)) score -= 4;
       const fileMatched = queryFile !== null && filePath === queryFile;
