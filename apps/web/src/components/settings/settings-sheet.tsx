@@ -437,7 +437,7 @@ export function SettingsMenu() {
           </span>
         </button>
         <fieldset data-stop="group" data-label="Motion" className="m-0 border-0 p-0 px-3 py-2.5">
-          <legend className="float-left w-full pb-2 font-mono text-[11px] uppercase tracking-[0.14em] text-dusk-muted">
+          <legend className="float-left w-full pb-2 text-[11px] uppercase tracking-[0.14em] text-dusk-muted">
             Motion
           </legend>
           <div className="grid w-full grid-cols-2 gap-1 rounded-full border border-dusk-hairline bg-dusk-track p-1">
@@ -575,7 +575,7 @@ const SETTINGS_CSS = `
 .echo-settings-panel[data-leaving="true"] { animation: echo-settings-out .12s ease-in both; }
 .echo-settings-sheet[data-leaving="true"] { animation: echo-settings-sheet-out .14s ease-in both; }
 .echo-settings-scrim[data-leaving="true"] { animation: echo-settings-fade-out .14s ease-in both; }
-.echo-settings-row:focus-visible { outline: 2px solid #8c9bff; outline-offset: -2px; }
+.echo-settings-row:focus-visible { outline: 2px solid #2d88ff; outline-offset: -2px; }
 .echo-settings-row, .echo-settings-panel [role="menuitemradio"], .echo-settings-sheet [role="menuitemradio"] { cursor: pointer; }
 @keyframes echo-settings-in {
   from { opacity: 0; transform: translateY(-4px) scale(.95); }
