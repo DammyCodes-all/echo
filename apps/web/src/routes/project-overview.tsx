@@ -54,12 +54,17 @@ export function ProjectOverviewPage() {
   });
 
   // Server order is last activity DESC: only genuinely live sessions move.
+  // Sessions with no diffs stay out until they have one; live ones always
+  // show so in-progress work never vanishes mid-run.
   const list = sessions.data ?? [];
+  const hasContent = (s: (typeof list)[number]): boolean =>
+    s.changeCount > 0 || s.status === "recording" || s.captureState === "recording";
+  const content = list.filter(hasContent);
   const filtering = query.trim().length > 0;
-  const visible = filtering ? list.filter((s) => matchesSession(s, query)) : list;
-  const checked = list.filter((s) => s.checkStatus === "checked").length;
-  const skipped = list.filter((s) => s.checkStatus === "skipped").length;
-  const highRisk = list.reduce((sum, s) => sum + s.highRiskCount, 0);
+  const visible = filtering ? content.filter((s) => matchesSession(s, query)) : content;
+  const checked = content.filter((s) => s.checkStatus === "checked").length;
+  const skipped = content.filter((s) => s.checkStatus === "skipped").length;
+  const highRisk = content.reduce((sum, s) => sum + s.highRiskCount, 0);
 
   return (
     <div className="lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start lg:gap-6">
@@ -109,7 +114,7 @@ export function ProjectOverviewPage() {
                   <HugeiconsIcon icon={Layers01Icon} size={20} strokeWidth={1.8} />
                 </span>
                 <dd className="text-2xl font-semibold tracking-tight tabular-nums">
-                  {list.length}
+                  {content.length}
                 </dd>
               </div>
               <dt className="mt-1 text-xs text-dusk-muted">Sessions</dt>
@@ -201,10 +206,10 @@ export function ProjectOverviewPage() {
 
       <section className="mt-8 space-y-3 lg:mt-0">
         <h2 className="text-xl font-semibold tracking-tight">Agent sessions</h2>
-        {filtering && sessions.data ? (
+        {filtering ? (
           <p className="text-sm text-dusk-muted" role="status">
-            {visible.length} of {sessions.data.length} session
-            {sessions.data.length === 1 ? "" : "s"}
+            {visible.length} of {content.length} session
+            {content.length === 1 ? "" : "s"}
           </p>
         ) : null}
         {sessions.isPending ? (
@@ -237,6 +242,12 @@ export function ProjectOverviewPage() {
               : "No sessions captured for this project yet."}
           </div>
         ) : null}
+        {sessions.data && sessions.data.length > 0 && content.length === 0 ? (
+          <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
+            No sessions with code changes yet — quiet sessions appear once their agent actually
+            changes code.
+          </div>
+        ) : null}
         {visible.length > 0 ? (
           <div className="grid gap-5 sm:grid-cols-2">
             {visible.map((session) => (
@@ -244,16 +255,20 @@ export function ProjectOverviewPage() {
             ))}
           </div>
         ) : null}
-        {sessions.data && sessions.data.length > 0 && visible.length === 0 ? (
+        {content.length > 0 && visible.length === 0 ? (
           <div className="rounded-dusk-card bg-dusk-surface p-8">
-            <p className="text-sm text-dusk-muted">No sessions match “{query.trim()}”.</p>
-            <button
-              type="button"
-              onClick={() => setSearchParams({}, { replace: true })}
-              className="mt-3 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm font-semibold text-dusk-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
-            >
-              Clear search
-            </button>
+            <p className="text-sm text-dusk-muted">
+              {filtering ? `No sessions match “${query.trim()}”.` : "Nothing to show."}
+            </p>
+            {filtering ? (
+              <button
+                type="button"
+                onClick={() => setSearchParams({}, { replace: true })}
+                className="mt-3 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm font-semibold text-dusk-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
+              >
+                Clear search
+              </button>
+            ) : null}
           </div>
         ) : null}
       </section>
