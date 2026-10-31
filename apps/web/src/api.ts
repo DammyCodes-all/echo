@@ -8,6 +8,7 @@ import type {
   AskResponse,
   AskThread,
   Change,
+  ChangeCodeResponse,
   ChangeId,
   CheckAttemptV2,
   ChecksV2Response,
@@ -194,6 +195,10 @@ export const api = {
     sessionId: string,
     input: { changeId: ChangeId; version: number; state: ProgressState },
   ) => postJson<Progress>(`/api/sessions/${encodeURIComponent(sessionId)}/progress`, input),
+  changeCode: (sessionId: string, changeId: string) =>
+    getJson<ChangeCodeResponse>(
+      `/api/sessions/${encodeURIComponent(sessionId)}/changes/${encodeURIComponent(changeId)}/code`,
+    ),
   engagementState: (sessionId: string, cardIds?: string[]) => {
     const query =
       cardIds && cardIds.length > 0 ? `?cardIds=${encodeURIComponent(cardIds.join(","))}` : "";
