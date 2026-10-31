@@ -158,7 +158,7 @@ export function AskThreadPanel({
     >
       <div className="flex items-start justify-between gap-3 border-b border-dusk-hairline px-6 py-4">
         <div>
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Ask why</p>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Ask why</p>
           <p className="mt-1 text-xs text-dusk-muted">
             Answers cite the tape — or say not on the tape.
           </p>
