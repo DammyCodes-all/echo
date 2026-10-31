@@ -10,6 +10,7 @@ import {
   type CreatedFrom,
   type DiffFile,
   groupDiffIntoChanges,
+  MAX_FILES_PER_CHANGE,
   mergeSessionGroups,
   parseChangeDraft,
   rollupIdFor,
@@ -18,6 +19,11 @@ import {
 import {
   CHANGES_FILE_NAME,
   type Change,
+  type ChangeCodeFile,
+  type ChangeCodeHunk,
+  type ChangeCodeLine,
+  ChangeCodeResponseSchema,
+  ChangeIdSchema,
   ChangeSchema,
   PROGRESS_FILE_NAME,
   type Progress,
@@ -141,6 +147,75 @@ function splitDiffByFile(rawDiff: string): DiffFile[] {
     out.push({ path, diff: text });
   }
   return out;
+}
+
+/** Cap on served diff lines per file; added/removed counts still cover the whole file. */
+const MAX_CODE_LINES_PER_FILE = 600;
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+/**
+ * Parse one per-file unified diff into numbered hunks. Counts always cover
+ * every +/- line; served lines stop at the cap with truncated set. Binary
+ * chunks carry no renderable lines and report truncated as the gap marker.
+ */
+function parseCodeHunks(
+  diff: string,
+): Pick<ChangeCodeFile, "added" | "removed" | "truncated" | "hunks"> {
+  const hunks: ChangeCodeHunk[] = [];
+  let added = 0;
+  let removed = 0;
+  let kept = 0;
+  let truncated = false;
+  let current: ChangeCodeHunk | null = null;
+  let prevNo = 0;
+  let nextNo = 0;
+  const push = (line: ChangeCodeLine) => {
+    if (kept >= MAX_CODE_LINES_PER_FILE) {
+      truncated = true;
+      return;
+    }
+    current?.lines.push(line);
+    kept += 1;
+  };
+  for (const raw of diff.replace(/\r\n/g, "\n").split("\n")) {
+    if (raw.startsWith("Binary files ") && raw.endsWith(" differ")) {
+      truncated = true;
+      continue;
+    }
+    const header = HUNK_HEADER.exec(raw);
+    if (header !== null) {
+      current = {
+        prevStart: Number(header[1]),
+        prevLines: header[2] === undefined ? 1 : Number(header[2]),
+        nextStart: Number(header[3]),
+        nextLines: header[4] === undefined ? 1 : Number(header[4]),
+        lines: [],
+      };
+      hunks.push(current);
+      prevNo = current.prevStart;
+      nextNo = current.nextStart;
+      continue;
+    }
+    if (current === null || raw === "") continue;
+    const marker = raw[0];
+    if (marker === "+") {
+      added += 1;
+      push({ kind: "add", prevNo: null, nextNo, text: raw.slice(1) });
+      nextNo += 1;
+    } else if (marker === "-") {
+      removed += 1;
+      push({ kind: "del", prevNo, nextNo: null, text: raw.slice(1) });
+      prevNo += 1;
+    } else if (marker === " ") {
+      push({ kind: "context", prevNo, nextNo, text: raw.slice(1) });
+      prevNo += 1;
+      nextNo += 1;
+    }
+    // Anything else (file headers, "\ No newline" markers) is skipped:
+    // only hunk content lines are served.
+  }
+  return { added, removed, truncated, hunks };
 }
 
 // Prompt texts in tape order for the grouping's promptRefs linkage. Only
@@ -387,21 +462,25 @@ export function createChangesService(
     if (snapshots.length < 2) diagnostics.push("needs_two_snapshots");
 
     const refs = getChangeRefs(db, sessionId);
-    // The rollup keeps one stable id per session so regens update it in
-    // place instead of minting a new rollup row per fold shift.
-    const rollupId = rollupIdFor(sessionId);
+    // Each fold chunk keeps a stable per-session id so regens update rows
+    // in place instead of minting new rollup rows per fold shift. The set
+    // is precomputed: 512 chunks cover 5120 folded files, past any real
+    // session, and recognition must not depend on this run's fold.
+    const rollupIds = new Set(
+      Array.from({ length: 512 }, (_, index) => rollupIdFor(sessionId, index)),
+    );
     // The file wins: a ref without file content never blocks. Skip only what
     // the artifact actually carries; a recorded-but-missing id regenerates
     // at its recorded version instead of bumping, so orphans heal in place.
     // Span versions freeze at run start: groups within one run share the
     // span's next version instead of incrementing per group (that produced
-    // v14-style runs meaning "14th group", not "14th rewrite"). The rollup
-    // stays out of the span map: its span overlaps real spans by design.
+    // v14-style runs meaning "14th group", not "14th rewrite"). Rollups
+    // stay out of the span map: their spans overlap real spans by design.
     const refMaxVersion = new Map<string, number>();
     const frozenSpanVersion = new Map<string, number>();
     for (const ref of refs) {
       refMaxVersion.set(ref.changeId, Math.max(refMaxVersion.get(ref.changeId) ?? 0, ref.version));
-      if (ref.changeId === rollupId) continue;
+      if (rollupIds.has(ref.changeId)) continue;
       const span = `${ref.prevOid}\n${ref.nextOid}`;
       frozenSpanVersion.set(span, Math.max(frozenSpanVersion.get(span) ?? 0, ref.version));
     }
@@ -410,6 +489,10 @@ export function createChangesService(
     const previous = readArtifactFile(artifactPath, sessionId);
     const carried = new Map<string, Change>();
     for (const change of previous?.changes ?? []) {
+      // Pre-split rows never carry: the fold below rebuilds them small at
+      // the recorded version, so progress survives and the backfill cannot
+      // stale-loop on an artifact that regenerates byte-identical.
+      if (change.files.length > MAX_FILES_PER_CHANGE) continue;
       carried.set(`${change.id}:v${change.version}`, change);
     }
     const carriedIds = new Set([...carried.values()].map((change) => change.id));
@@ -425,6 +508,18 @@ export function createChangesService(
     const watermarkHit =
       previous?.snapshotWatermark?.snapshotCount === watermark.snapshotCount &&
       previous?.snapshotWatermark?.lastOid === watermark.lastOid;
+    // Fold shape changed under old artifacts: a stored change wider than
+    // the reader cap is a pre-split rollup that must regenerate, even when
+    // the snapshots themselves are unchanged.
+    const needsResplit = (previous?.changes ?? []).some(
+      (change) => change.files.length > MAX_FILES_PER_CHANGE,
+    );
+    // Same for the summary: the builder is deterministic, so drift means
+    // its shape changed under a quiet session and one rewrite heals it.
+    const needsSummaryRewrite =
+      previous !== null &&
+      previous.summary !==
+        buildSessionSummaryFromDigests(previous.changes.map((change) => change.digest));
 
     const prompts = promptTextsFor(db, sessionId);
     // Earlier digests only, oldest first: carried rows in artifact order,
@@ -453,8 +548,9 @@ export function createChangesService(
     // Watermark hit with nothing to fill: snapshots unchanged and every
     // row already has prose (or the model is off). Skip the pair loop
     // entirely — diffing hundreds of pairs just to skip them is the slow
-    // path this early exit removes.
-    if (watermarkHit && previous) {
+    // path this early exit removes. A pre-split rollup or a drifted
+    // summary always regenerates.
+    if (watermarkHit && previous && !needsResplit && !needsSummaryRewrite) {
       const needsFill =
         modelConfig !== null &&
         previous.changes.some((change) => (change.origin ?? "skeleton") === "skeleton");
@@ -512,16 +608,18 @@ export function createChangesService(
       }
       {
         const skeleton = buildSkeletonChange(group, span);
-        // The rollup keeps one stable id per session; everything else keeps
-        // its content hash, so regens update rows instead of piling new ones.
-        const id = group.rollup === true ? rollupId : skeleton.id;
+        // Rollups keep stable per-session ids (one per fold chunk);
+        // everything else keeps its content hash, so regens update rows
+        // instead of piling new ones.
+        const id =
+          group.rollup === true ? rollupIdFor(sessionId, group.rollupIndex ?? 0) : skeleton.id;
         const spanKey = `${span.prevOid}\n${span.nextOid}`;
         // Group-relevant moment texts: the grouping links prompts that name
         // the group's files, the only moment text this pipeline retains.
         const groupPrompts = group.promptRefs
           .map((index) => prompts[index])
           .filter((text): text is string => typeof text === "string");
-        // The rollup keeps one stable id per session and refreshes in place:
+        // Each rollup chunk keeps its stable id and refreshes in place:
         // same id, same version, new content when the folded set changes.
         // Progress never resets; a byte-identical rebuild stays "fresh".
         if (group.rollup === true) {
@@ -696,22 +794,24 @@ export function createChangesService(
     }
     if (modelFallback) diagnostics.push("changes_model_fallback");
 
-    if (fresh.length === 0 && filled === 0 && previous) {
-      // Rerun-safe: nothing new means nothing is rewritten, so reruns are
-      // byte-identical and existing rows keep their timestamps.
-      const progressPath = progressArtifactPath(dataDir, session.projectId, sessionId);
-      if (!existsSync(progressPath)) persistProgressFile(sessionId, session.projectId);
-      return { outcome: "fresh", artifact: previous };
-    }
     // Rebuild, never pile on: the list is what is current this run. Fell-out
     // rows leave the list (their DB rows and progress stay, just hidden);
     // carried rows keep id, version, prose and progress untouched.
     const changes = ordered;
     const summary = buildSessionSummaryFromDigests(changes.map((change) => change.digest));
+    // Rerun-safe: nothing new and the same summary means nothing is
+    // rewritten, so reruns are byte-identical and existing rows keep their
+    // timestamps. A drifted summary (shape changed under a quiet session)
+    // falls through to a prose-preserving rewrite below.
+    if (fresh.length === 0 && filled === 0 && previous && previous.summary === summary) {
+      const progressPath = progressArtifactPath(dataDir, session.projectId, sessionId);
+      if (!existsSync(progressPath)) persistProgressFile(sessionId, session.projectId);
+      return { outcome: "fresh", artifact: previous };
+    }
     const payload = {
       sessionId,
       generatedAt: clock().toISOString(),
-      generator: usedModel ? CHANGE_MODEL_GENERATOR : CHANGES_GENERATOR,
+      generator: usedModel ? CHANGE_MODEL_GENERATOR : (previous?.generator ?? CHANGES_GENERATOR),
       summary,
       diagnostics,
       changes,
@@ -765,6 +865,19 @@ export function createChangesService(
       ) {
         return { sessionId: session.id, reason: "stale" };
       }
+      // Pre-split rollups self-heal on the backfill tick even when their
+      // snapshots are quiet: the reader never sees a giant change twice.
+      if (artifact.changes.some((change) => change.files.length > MAX_FILES_PER_CHANGE)) {
+        return { sessionId: session.id, reason: "stale" };
+      }
+      // The summary builder is deterministic, so any drift means its shape
+      // changed under a quiet session: one prose-preserving rewrite heals it.
+      const summary = buildSessionSummaryFromDigests(
+        artifact.changes.map((change) => change.digest),
+      );
+      if (artifact.summary !== summary) {
+        return { sessionId: session.id, reason: "stale" };
+      }
       if (
         modelOn &&
         fillCandidate === null &&
@@ -808,6 +921,89 @@ export function createChangesService(
     return { status: 200, body };
   }
 
+  /**
+   * On-demand unified diff for one stored change, between its own snapshot
+   * pair and filtered to its own file list. Computed per request from
+   * shadow git (local, milliseconds) and never persisted.
+   */
+  function getChangeCode(sessionId: string, changeId: string): ChangesOutcome {
+    const session = getSession(db, sessionId);
+    if (!session) {
+      return {
+        status: 404,
+        body: { error: { code: "not_found", message: "unknown session" } },
+      };
+    }
+    if (!ChangeIdSchema.safeParse(changeId).success) {
+      return {
+        status: 400,
+        body: {
+          error: {
+            code: "invalid_request",
+            message: "changeId must look like c_ plus 16 hex chars",
+          },
+        },
+      };
+    }
+    const artifact = readArtifactFile(
+      changesArtifactPath(dataDir, session.projectId, sessionId),
+      sessionId,
+    );
+    const change = artifact?.changes.find((entry) => entry.id === changeId) ?? null;
+    if (!change) {
+      return {
+        status: 404,
+        body: { error: { code: "not_found", message: "unknown change" } },
+      };
+    }
+    const shadowDir = join(dataDir, "projects", session.projectId, "shadow.git");
+    let rawDiff: string;
+    try {
+      rawDiff = diffShadowTrees(
+        shadowDir,
+        change.snapshotPair.prevOid,
+        change.snapshotPair.nextOid,
+      );
+    } catch (error) {
+      log.error(
+        { session_id: sessionId, change_id: changeId, err: String(error) },
+        "change code diff failed",
+      );
+      return {
+        status: 503,
+        body: {
+          error: { code: "code_unavailable", message: "the snapshots for this change are gone" },
+        },
+      };
+    }
+    const chunks = new Map(splitDiffByFile(rawDiff).map((file) => [file.path, file.diff]));
+    const files: ChangeCodeFile[] = change.files.map((file) => {
+      const chunk = chunks.get(file.path);
+      // A listed path with no diff chunk is a gap: served empty and flagged,
+      // never silently dropped from the file list.
+      if (chunk === undefined) {
+        return { path: file.path, added: 0, removed: 0, truncated: true, hunks: [] };
+      }
+      return { path: file.path, ...parseCodeHunks(chunk) };
+    });
+    const parsed = ChangeCodeResponseSchema.safeParse({
+      changeId: change.id,
+      version: change.version,
+      files,
+    });
+    if (!parsed.success) {
+      log.error(
+        { session_id: sessionId, change_id: changeId },
+        "change code response failed validation",
+      );
+      return {
+        status: 503,
+        body: { error: { code: "code_unavailable", message: "the diff could not be served" } },
+      };
+    }
+    return { status: 200, body: parsed.data };
+  }
+
   function recordProgress(sessionId: string, body: unknown): ChangesOutcome {
     const parsed =
       body !== null && typeof body === "object"
@@ -846,7 +1042,13 @@ export function createChangesService(
     return { status: 200, body: progress };
   }
 
-  return { maybeGenerateChanges, getChanges, recordProgress, findSessionNeedingChanges };
+  return {
+    maybeGenerateChanges,
+    getChanges,
+    getChangeCode,
+    recordProgress,
+    findSessionNeedingChanges,
+  };
 }
 
 export type ChangesService = ReturnType<typeof createChangesService>;
