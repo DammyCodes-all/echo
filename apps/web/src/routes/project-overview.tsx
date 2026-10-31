@@ -70,9 +70,7 @@ export function ProjectOverviewPage() {
     <div className="lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start lg:gap-6">
       <aside className="sticky top-[72px] max-h-[calc(100vh-96px)] space-y-4 overflow-y-auto overscroll-contain">
         <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-            Project summary
-          </p>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Project summary</p>
           {techStack.isPending ? (
             <div aria-hidden className="mt-2 space-y-2 motion-safe:animate-pulse">
               <div className="h-3.5 rounded-dusk-code bg-dusk-pill" />
@@ -104,9 +102,7 @@ export function ProjectOverviewPage() {
           </p>
         </div>
         <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-            Current state
-          </p>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Current state</p>
           <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-5 text-sm">
             <div>
               <div className="flex items-center gap-1.5">
@@ -156,9 +152,7 @@ export function ProjectOverviewPage() {
           </dl>
           {techStack.isPending ? (
             <div className="mt-4 border-t border-dusk-hairline pt-4">
-              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-                Tech stack
-              </p>
+              <p className="text-xs uppercase tracking-widest text-dusk-muted">Tech stack</p>
               <div aria-hidden className="mt-3 space-y-2.5 motion-safe:animate-pulse">
                 {["w-24", "w-32", "w-20"].map((width) => (
                   <div key={width} className="flex items-center gap-2">
@@ -171,9 +165,7 @@ export function ProjectOverviewPage() {
             </div>
           ) : techStack.isError ? (
             <div className="mt-4 border-t border-dusk-hairline pt-4">
-              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-                Tech stack
-              </p>
+              <p className="text-xs uppercase tracking-widest text-dusk-muted">Tech stack</p>
               <p className="mt-3 text-xs text-dusk-fail">Couldn&apos;t load the tech stack.</p>
               <button
                 type="button"
@@ -185,9 +177,7 @@ export function ProjectOverviewPage() {
             </div>
           ) : techStack.data && techStack.data.items.length > 0 ? (
             <div className="mt-4 border-t border-dusk-hairline pt-4">
-              <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-                Tech stack
-              </p>
+              <p className="text-xs uppercase tracking-widest text-dusk-muted">Tech stack</p>
               <dl className="mt-3 space-y-2 text-xs">
                 {techStack.data.items.map((item) => (
                   <div key={`${item.kind}-${item.name}`} className="flex items-center gap-2">
