@@ -1449,3 +1449,36 @@ describe("story quiet gate", () => {
     }
   });
 });
+
+describe("readStory", () => {
+  it("serves the baked artifact without generating", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch },
+      );
+      const baked = await service.maybeGenerateStory(sessionId);
+      expect(baked.story).not.toBeNull();
+      const read = service.readStory(sessionId);
+      expect(read.outcome).toBe("fresh");
+      expect(read.story?.summary).toBe(baked.story?.summary);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("reports unknown sessions and missing artifacts without generating", async () => {
+    const { dataDir, db, sessionId } = await seedSession();
+    try {
+      const service = createStoryService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, fetchImpl: throwingFetch },
+      );
+      expect(service.readStory("ses_missing").outcome).toBe("unknown_session");
+      expect(service.readStory(sessionId).outcome).toBe("unavailable");
+    } finally {
+      db.close();
+    }
+  });
+});

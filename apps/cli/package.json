@@ -16,6 +16,7 @@
     "@echo/config": "workspace:*",
     "@echo/contracts": "workspace:*",
     "@echo/db": "workspace:*",
+    "@echo/demo": "workspace:*",
     "commander": "^15.0.0",
     "ignore": "^7.0.5",
     "isomorphic-git": "^1.32.0"
