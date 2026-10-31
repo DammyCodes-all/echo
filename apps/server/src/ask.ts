@@ -13,7 +13,13 @@ import {
   TapeEventKindSchema,
 } from "@echo/contracts";
 import { type EchoDb, getArtifactRef, getSession, readAllEvents, type StoredEvent } from "@echo/db";
-import { type ModelConfig, ModelError, modelConfigFromEnv, requestJson } from "@echo/model";
+import {
+  type ChatUsage,
+  type ModelConfig,
+  ModelError,
+  modelConfigFromEnv,
+  requestJson,
+} from "@echo/model";
 import { redactJson } from "@echo/redaction";
 import {
   buildEvidenceBundle,
@@ -25,6 +31,8 @@ import {
 export interface AskOutcome {
   status: number;
   body: AskResponse | { error: { code: string; message: string } };
+  /** Token usage of the model call behind this outcome, when one ran. */
+  usage?: ChatUsage | null;
 }
 
 export interface ThreadOutcome {
@@ -43,6 +51,12 @@ interface AskServiceOptions {
   env?: NodeJS.ProcessEnv;
   /** Content-free diagnostics only; defaults to a silent noop (tests). */
   log?: AskLogger;
+  /**
+   * Demo mode: thread turns live in memory seeded from the baked file, and
+   * no thread file is ever written. Each service instance owns its overlay
+   * (one per demo visitor).
+   */
+  demo?: boolean;
 }
 
 const SYSTEM_PROMPT = [
@@ -50,7 +64,7 @@ const SYSTEM_PROMPT = [
   "Cite every factual claim with one or more evidence_ids.",
   "Distinguish what was observed (tool calls, results, snapshots) from what the agent wrote (agent_stated).",
   "Never present an inference about intent as the agent's reasoning.",
-  "If the evidence does not support an answer, refuse with refusal_reason not_on_tape.",
+  "If the evidence supports only part of the question, answer that part and leave the rest unclaimed; refuse with refusal_reason not_on_tape only when no part of the question is answerable from the evidence.",
   "Do not use outside knowledge about the repository, the libraries or the user.",
   "Keep the answer short; the UI supplies the detail.",
   'Reply with JSON: {"refusal": boolean, "refusal_reason": "not_on_tape"|"insufficient_evidence"|"ambiguous_question"|"model_error"|null, "answer": string, "claims": [{"text": string, "evidence_ids": string[], "quote": string|null}], "uncertainty": "low"|"medium"|"high"}.',
@@ -176,7 +190,23 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
     return join(dataDir, "projects", projectId, "sessions", sessionId, "artifacts", "story.json");
   }
 
+  const demoThreads = new Map<string, AskThread>();
+
   function loadThread(projectId: string, sessionId: string): AskThread {
+    if (options.demo === true) {
+      // Copies out: appendTurn mutates before persisting, so sharing the
+      // cached object would let a failed redaction gate corrupt the overlay.
+      const key = `${projectId}/${sessionId}`;
+      const cached = demoThreads.get(key);
+      if (cached) return structuredClone(cached);
+      const seeded = loadThreadFile(projectId, sessionId);
+      demoThreads.set(key, seeded);
+      return structuredClone(seeded);
+    }
+    return loadThreadFile(projectId, sessionId);
+  }
+
+  function loadThreadFile(projectId: string, sessionId: string): AskThread {
     const empty = (): AskThread => ({
       schemaVersion: 1,
       sessionId,
@@ -197,8 +227,8 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
     }
   }
 
-  /** Redacts then writes; false means nothing was persisted (fail closed). */
-  function persistThread(projectId: string, thread: AskThread): boolean {
+  /** Redaction gate + schema check shared by the file and demo-memory sinks. */
+  function scanThread(thread: AskThread): AskThread | null {
     let scanned: unknown;
     try {
       scanned = redactJson(thread).value;
@@ -208,16 +238,27 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
         { session_id: thread.sessionId, err: String(error) },
         "ask thread redaction failed",
       );
-      return false;
+      return null;
     }
     const parsed = AskThreadSchema.safeParse(scanned);
     if (!parsed.success) {
       log.error({ session_id: thread.sessionId }, "ask thread redaction failed schema check");
-      return false;
+      return null;
+    }
+    return parsed.data;
+  }
+
+  /** Redacts then writes; false means nothing was persisted (fail closed). */
+  function persistThread(projectId: string, thread: AskThread): boolean {
+    const parsed = scanThread(thread);
+    if (!parsed) return false;
+    if (options.demo === true) {
+      demoThreads.set(`${projectId}/${thread.sessionId}`, parsed);
+      return true;
     }
     const path = threadArtifactPath(projectId, thread.sessionId);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(parsed.data, null, 2)}\n`);
+    writeFileSync(path, `${JSON.stringify(parsed, null, 2)}\n`);
     return true;
   }
 
@@ -388,6 +429,7 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
     }
 
     let structured: StructuredAnswer;
+    let usage: ChatUsage | null = null;
     try {
       const result = await requestJson(
         config,
@@ -402,6 +444,7 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
         { fetchImpl, retryMaxTokens: Math.max(config.maxTokens * 2, 8192) },
       );
       structured = result.value;
+      usage = result.usage;
     } catch (error) {
       const message = error instanceof Error ? error.message : "model call failed";
       const code = error instanceof ModelError ? error.code : "model_error";
@@ -439,7 +482,7 @@ export function createAskService(db: EchoDb, dataDir: string, options: AskServic
       return redactionFailed();
     }
     cache.set(cacheKey, response);
-    return { status: 200, body: response };
+    return { status: 200, body: response, usage };
   }
 
   async function thread(sessionId: string): Promise<ThreadOutcome> {

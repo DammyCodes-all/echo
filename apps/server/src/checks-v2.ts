@@ -17,9 +17,10 @@ import {
   type CheckAttemptV2,
   type CheckKind,
   CheckKindSchema,
+  type ChecksV2Artifact,
+  ChecksV2ArtifactSchema,
   type ChecksV2Response,
   ChecksV2ResponseSchema,
-  ChecksV2StateSchema,
   type PictureBucket,
   type PublicCheckQuestion,
   type SessionStory,
@@ -40,6 +41,7 @@ import {
 } from "@echo/db";
 import {
   type ChatMessage,
+  type ChatUsage,
   type ModelConfig,
   ModelError,
   modelConfigFromEnv,
@@ -77,11 +79,19 @@ export interface ChecksV2ServiceOptions {
   env?: NodeJS.ProcessEnv;
   /** Overall model-call deadline per user action; defaults to 180s. */
   timeoutMs?: number;
+  /**
+   * Demo mode: artifacts live in memory seeded from the baked file, and no
+   * file, artifact-ref, or check-status write ever happens. Each service
+   * instance owns its overlay (one per demo visitor).
+   */
+  demo?: boolean;
 }
 
 export interface ChecksV2Outcome {
   status: number;
   body: unknown;
+  /** Token usage of the model call behind this outcome, when one ran. */
+  usage?: ChatUsage | null;
 }
 
 // --- Local draft schema (zod is re-exported by contracts; not a direct dep) ---
@@ -102,13 +112,7 @@ type CheckDraft = z.infer<typeof CheckDraftSchema>;
 
 const CheckDraftSetSchema = z.object({ questions: z.array(CheckDraftSchema) });
 
-// Persisted artifact = public state plus the set origin (offer vs check-me).
-// Origin decides completion bookkeeping: only offer-origin sets flip the
-// session to checked when fully answered; check-me sets stay personal.
-const ChecksV2ArtifactSchema = ChecksV2StateSchema.extend({
-  origin: z.enum(["offer", "check_me"]),
-});
-type ChecksV2Artifact = z.infer<typeof ChecksV2ArtifactSchema>;
+// Persisted artifact shape lives in contracts (the demo builder shares it).
 
 // --- Token grounding (small local copy of the story.ts approach) ---
 // Importing from story.ts would drag the whole story orchestrator into this
@@ -362,7 +366,18 @@ export function createChecksV2Service(
     return null;
   }
 
+  const demoMemory = new Map<string, ChecksV2Artifact | null>();
+
   function loadArtifact(projectId: string, sessionId: string): ChecksV2Artifact | null {
+    if (options.demo === true) {
+      const key = `${projectId}/${sessionId}`;
+      if (!demoMemory.has(key)) demoMemory.set(key, loadArtifactFile(projectId, sessionId));
+      return demoMemory.get(key) ?? null;
+    }
+    return loadArtifactFile(projectId, sessionId);
+  }
+
+  function loadArtifactFile(projectId: string, sessionId: string): ChecksV2Artifact | null {
     const path = artifactPath(projectId, sessionId);
     if (!existsSync(path)) return null;
     try {
@@ -378,8 +393,8 @@ export function createChecksV2Service(
     }
   }
 
-  /** Redacts then writes; false means nothing was persisted (fail closed). */
-  function persistArtifact(projectId: string, artifact: ChecksV2Artifact): boolean {
+  /** Redaction gate + schema check shared by the file and demo-memory sinks. */
+  function scanArtifact(artifact: ChecksV2Artifact): ChecksV2Artifact | null {
     let scanned: unknown;
     try {
       scanned = redactJson(artifact).value;
@@ -389,16 +404,27 @@ export function createChecksV2Service(
         { session_id: artifact.sessionId, err: String(error) },
         "checks-v2 redaction gate failed",
       );
-      return false;
+      return null;
     }
     const parsed = ChecksV2ArtifactSchema.safeParse(scanned);
     if (!parsed.success) {
       log.error({ session_id: artifact.sessionId }, "checks-v2 artifact failed schema check");
-      return false;
+      return null;
+    }
+    return parsed.data;
+  }
+
+  /** Redacts then writes; false means nothing was persisted (fail closed). */
+  function persistArtifact(projectId: string, artifact: ChecksV2Artifact): boolean {
+    const parsed = scanArtifact(artifact);
+    if (!parsed) return false;
+    if (options.demo === true) {
+      demoMemory.set(`${projectId}/${artifact.sessionId}`, parsed);
+      return true;
     }
     const path = artifactPath(projectId, artifact.sessionId);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(parsed.data, null, 2)}\n`);
+    writeFileSync(path, `${JSON.stringify(parsed, null, 2)}\n`);
     upsertArtifactRef(db, {
       sessionId: artifact.sessionId,
       kind: "checks_v2",
@@ -1042,6 +1068,7 @@ export function createChecksV2Service(
 
     let correct: boolean;
     let rubricHits: CheckAttemptV2["rubricHits"] = [];
+    let usage: ChatUsage | null = null;
     // The stored question carries the key/rubric/explanation; none of it
     // leaves the server except via the post-answer reveal.
     const explanation = question.explanation;
@@ -1073,6 +1100,7 @@ export function createChecksV2Service(
           ),
         );
         hits = result.value;
+        usage = result.usage;
       } catch (error) {
         return unavailable(error);
       }
@@ -1129,12 +1157,13 @@ export function createChecksV2Service(
         body: { error: { code: "redaction_failed", message: "answer not recorded" } },
       };
     }
-    if (status === "completed" && artifact.status !== "completed") {
+    if (status === "completed" && artifact.status !== "completed" && options.demo !== true) {
       setSessionCheckStatus(db, sessionId, "checked");
     }
     return {
       status: 200,
       body: { attempt, reveal: { summary: explanation, evidence } },
+      usage,
     };
   }
 
@@ -1174,7 +1203,7 @@ export function createChecksV2Service(
         body: { error: { code: "redaction_failed", message: "checks unavailable" } },
       };
     }
-    setSessionCheckStatus(db, sessionId, "skipped");
+    if (options.demo !== true) setSessionCheckStatus(db, sessionId, "skipped");
     return { status: 200, body: toPublic(next) };
   }
 
