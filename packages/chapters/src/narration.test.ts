@@ -74,6 +74,9 @@ describe("buildChangeNarrationMessages", () => {
       "not_asked | watch_out | unfinished",
       "50-100 whitespace-separated tokens",
       "Never invent file names",
+      "Write for someone who has never seen this codebase",
+      "internal names unless you explain them in the same sentence",
+      "describe behavior and outcomes, never function or hook swaps",
       "Do not include id, version, snapshotPair, or createdFrom",
     ]) {
       expect(system).toContain(line);
