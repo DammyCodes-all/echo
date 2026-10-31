@@ -24,6 +24,7 @@ import {
 import Fastify, { type FastifyReply } from "fastify";
 import { createArchitectureService } from "./architecture";
 import { createAskService } from "./ask";
+import { createChangesService } from "./changes";
 import { createChecksV2Service } from "./checks-v2";
 import { createCodeIndexService } from "./code-index";
 import {
@@ -37,7 +38,6 @@ import {
   resolveDemoStatic,
 } from "./demo";
 import { ensureEnabledProjects } from "./enabled-projects";
-import { createEngagementService } from "./engagement";
 import { loadLocalEnv } from "./env";
 import { createHistoryService } from "./history";
 import { createIngest } from "./ingest";
@@ -47,7 +47,6 @@ import { createMuseWatcher } from "./muse-watch";
 import { createProjectTechStackService } from "./project-tech-stack";
 import { buildSessionReview } from "./review-index";
 import { readSnapshotFile } from "./snapshot-view";
-import { createStoryService, filterEmptySessions, isSessionQuiet } from "./story";
 
 const VERSION = "0.1.0";
 const DEFAULT_PORT = 4783;
@@ -77,21 +76,26 @@ const paths = resolveEchoPaths();
 mkdirSync(paths.dataDir, { recursive: true });
 const db = openEchoDb(join(paths.dataDir, "echo.sqlite"));
 const app = Fastify({ logger: true, trustProxy: DEMO });
-const story = createStoryService({ db, dataDir: paths.dataDir, log: app.log });
+const changes = createChangesService({ db, dataDir: paths.dataDir, log: app.log });
 // Fire-and-forget finalize hook: never awaited (model latency would stall
 // polling) and never throws into ingest (errors are logged here).
-const storyHook = (sessionId: string): void => {
-  void story
-    .maybeGenerateStory(sessionId, { reason: "finalize" })
+const changesHook = (sessionId: string): void => {
+  void changes
+    .maybeGenerateChanges(sessionId)
     .catch((error) =>
-      app.log.error({ err: String(error), session_id: sessionId }, "story finalize failed"),
+      app.log.error({ err: String(error), session_id: sessionId }, "changes finalize failed"),
     );
+};
+// Quiescence fans out to every finalize hook; each owns its errors, so one
+// slow or failing hook never blocks or breaks the others.
+const quiescentHook = (sessionId: string): void => {
+  changesHook(sessionId);
 };
 const ingest = createIngest({
   dataDir: paths.dataDir,
   db,
   log: app.log,
-  onSessionQuiescent: storyHook,
+  onSessionQuiescent: quiescentHook,
 });
 const config = loadEchoConfig();
 const museIngest = createMuseIngest({
@@ -99,11 +103,10 @@ const museIngest = createMuseIngest({
   db,
   log: app.log,
   projects: config.projects,
-  onSessionQuiescent: storyHook,
+  onSessionQuiescent: quiescentHook,
 });
 const ask = createAskService(db, paths.dataDir, { log: app.log });
 const checksV2 = createChecksV2Service({ db, dataDir: paths.dataDir, log: app.log });
-const engagement = createEngagementService(db);
 const history = createHistoryService(db, paths.dataDir);
 const codeIndex = createCodeIndexService({ db });
 const learn = createLearnService({ db, dataDir: paths.dataDir });
@@ -199,13 +202,9 @@ app.get<{ Params: { id: string } }>("/api/projects/:id", async (request, reply) 
 });
 
 app.get<{ Params: { id: string } }>("/api/projects/:id/sessions", async (request) => {
-  // Content-free skeletons never reach the UI, and neither do sessions that
-  // haven't gone quiet yet; recording sessions and unreadable artifacts stay
-  // visible. lastActivity is the tape's latest event (or the session touch).
-  const nowMs = Date.now();
-  return filterEmptySessions(db, listSessions(db, request.params.id)).filter((session) =>
-    isSessionQuiet(session.lastActivity, nowMs),
-  );
+  // The reader serves every session (live ones render the in-progress slot);
+  // story-era quiet/emptiness filtering is gone with the story pipeline.
+  return listSessions(db, request.params.id);
 });
 
 app.get<{ Params: { id: string } }>("/api/projects/:id/learn", async (request, reply) => {
@@ -535,7 +534,12 @@ app.post<{ Params: { id: string } }>("/api/sessions/:id/ask", async (request, re
     demoPolicy.recordTokens(demoUsageTokens(outcome.usage));
     return reply.code(outcome.status).send(outcome.body);
   }
-  const outcome = await ask.answer(request.params.id, parsed.data);
+  // The reader anchors Ask to a change (c_ id) outside the frozen AskRequest
+  // schema; forward it raw so the service can scope, while persistence stays
+  // on cardId (h_ or null) per the thread contract.
+  const rawBody = request.body as { changeId?: unknown };
+  const changeId = typeof rawBody.changeId === "string" ? rawBody.changeId : null;
+  const outcome = await ask.answer(request.params.id, { ...parsed.data, changeId });
   return reply.code(outcome.status).send(outcome.body);
 });
 
@@ -621,54 +625,19 @@ app.post<{ Params: { id: string } }>("/api/sessions/:id/checks-v2/skip", async (
   return reply.code(outcome.status).send(outcome.body);
 });
 
-app.post<{ Params: { id: string } }>("/api/sessions/:id/engagement", async (request, reply) => {
-  if (DEMO) return reply.code(403).send(demoReadonly());
-  const outcome = engagement.record(request.params.id, request.body);
+app.get<{ Params: { id: string } }>("/api/sessions/:id/changes", async (request, reply) => {
+  const outcome = changes.getChanges(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
 });
 
-app.get<{ Params: { id: string }; Querystring: { cardIds?: string } }>(
-  "/api/sessions/:id/engagement",
-  async (request, reply) => {
-    const raw = request.query.cardIds;
-    const cardIds =
-      raw === undefined || raw === "" ? undefined : raw.split(",").map((part) => part.trim());
-    const outcome = engagement.state(request.params.id, cardIds);
-    return reply.code(outcome.status).send(outcome.body);
-  },
-);
+app.post<{ Params: { id: string } }>("/api/sessions/:id/progress", async (request, reply) => {
+  const outcome = changes.recordProgress(request.params.id, request.body);
+  return reply.code(outcome.status).send(outcome.body);
+});
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/history", async (request, reply) => {
   const outcome = history.forSession(request.params.id);
   return reply.code(outcome.status).send(outcome.body);
-});
-
-app.get<{ Params: { id: string } }>("/api/sessions/:id/story", async (request, reply) => {
-  // Demo serves the baked artifact only: the tape is frozen, so there is
-  // nothing to generate and no quiet window to wait out.
-  if (DEMO) {
-    const baked = story.readStory(request.params.id);
-    if (baked.outcome === "unknown_session" || !baked.story) {
-      return reply.code(404).send({ error: { code: "not_found", message: "unknown session" } });
-    }
-    return baked.story;
-  }
-  // Read-through cache: generates on missing/stale, serves the artifact when
-  // the tape watermark still matches. A session that went quiet less than a
-  // minute ago reports waiting instead of narrating half-finished work.
-  const outcome = await story.maybeGenerateStory(request.params.id, { reason: "read-through" });
-  if (outcome.outcome === "unknown_session") {
-    return reply.code(404).send({ error: { code: "not_found", message: "unknown session" } });
-  }
-  if (outcome.outcome === "waiting" && !outcome.story) {
-    return reply.code(202).send({ waiting: true, sessionId: request.params.id });
-  }
-  if (!outcome.story) {
-    return reply
-      .code(500)
-      .send({ error: { code: "redaction_failed", message: "story unavailable" } });
-  }
-  return outcome.story;
 });
 
 app.get<{ Params: { id: string } }>("/api/sessions/:id/snapshots", async (request) =>
@@ -748,6 +717,7 @@ if (DEMO) {
 
 async function shutdown(signal: string) {
   app.log.info({ signal }, "shutting down");
+  if (changesTimer !== null) clearInterval(changesTimer);
   await ingest.stop();
   await museIngest.stop();
   museWatcher?.stop();
@@ -759,6 +729,12 @@ process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
 
 let museWatcher: { start: () => void; stop: () => void } | null = null;
+// Backfill: one session per tick grows changes for old sessions, heals drift
+// and fills skeletons with prose when the model is on. Never throws into the
+// loop; a slow run simply delays the next tick's pick, never overlaps it
+// (the service is idempotent, but overlapping narrations would double spend).
+let changesTimer: NodeJS.Timeout | null = null;
+let changesBackfillRunning = false;
 
 try {
   await app.listen({ host: resolveHost(), port: resolvePort() });
@@ -796,6 +772,37 @@ try {
     if (museInitial.eventsAdded > 0) {
       app.log.info({ ...museInitial }, "ingested muse sessions");
     }
+    changesTimer = setInterval(() => {
+      if (changesBackfillRunning) return;
+      let pick: { sessionId: string; reason: string } | null = null;
+      try {
+        pick = changes.findSessionNeedingChanges(process.env.ECHO_MODEL !== "off");
+      } catch (error) {
+        app.log.error({ err: String(error) }, "changes backfill pick failed");
+        return;
+      }
+      if (!pick) return;
+      changesBackfillRunning = true;
+      void changes
+        .maybeGenerateChanges(pick.sessionId)
+        .then((result) => {
+          if (result.outcome === "generated") {
+            app.log.info(
+              { session_id: pick.sessionId, reason: pick.reason },
+              "changes backfill generated",
+            );
+          }
+        })
+        .catch((error) =>
+          app.log.error(
+            { err: String(error), session_id: pick.sessionId },
+            "changes backfill failed",
+          ),
+        )
+        .finally(() => {
+          changesBackfillRunning = false;
+        });
+    }, 20_000);
   }
 } catch (error) {
   app.log.error(error);
