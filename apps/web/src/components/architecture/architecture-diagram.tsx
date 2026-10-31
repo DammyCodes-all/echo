@@ -151,7 +151,7 @@ function ArchNode({ data }: NodeProps<Node<ArchNodeData, "arch">>) {
     <div
       className={`relative h-full w-full rounded-dusk-code px-3 py-2 ${data.pulsing ? "arch-pulse" : ""}`}
       style={{
-        backgroundColor: `rgba(140, 155, 255, ${tintStrength.toFixed(2)})`,
+        backgroundColor: `rgba(45, 136, 255, ${tintStrength.toFixed(2)})`,
         backgroundBlendMode: "screen",
         border:
           data.status === "proposed"
@@ -179,7 +179,7 @@ function ArchNode({ data }: NodeProps<Node<ArchNodeData, "arch">>) {
       />
       <p className="truncate text-[13px] font-semibold leading-5 text-dusk-ink">{data.label}</p>
       {data.status === "proposed" ? (
-        <span className="mt-1 inline-block rounded-dusk-pill bg-dusk-peach-wash px-2 py-px font-mono text-[10px] uppercase tracking-widest text-dusk-peach">
+        <span className="mt-1 inline-block rounded-dusk-pill bg-dusk-peach-wash px-2 py-px text-[10px] uppercase tracking-widest text-dusk-peach">
           proposed
         </span>
       ) : null}
@@ -208,7 +208,7 @@ function ArchGroupNode({ data }: NodeProps<Node<ArchGroupData, "archGroup">>) {
       className="h-full w-full rounded-dusk-swatch"
       style={{ border: `1.5px dashed ${duskDarkTokens.color.dashedBorder}` }}
     >
-      <span className="absolute left-3 top-2 font-mono text-[11px] uppercase tracking-widest text-dusk-muted">
+      <span className="absolute left-3 top-2 text-[11px] uppercase tracking-widest text-dusk-muted">
         {data.label}
       </span>
     </div>
@@ -235,7 +235,7 @@ interface ArchitectureDiagramProps {
 function NeighborList({ title, names }: { title: string; names: string[] }) {
   return (
     <div>
-      <p className="font-mono text-[10px] uppercase tracking-widest text-dusk-muted">{title}</p>
+      <p className="text-[10px] uppercase tracking-widest text-dusk-muted">{title}</p>
       <p className="mt-0.5 text-[13px] leading-5 text-dusk-ink">
         {names.length > 0 ? names.join(", ") : "—"}
       </p>
