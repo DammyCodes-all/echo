@@ -1,7 +1,8 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { ChangeSchema, type TapeEvent } from "@echo/contracts";
+import { rollupIdFor } from "@echo/chapters";
+import { ChangeCodeResponseSchema, ChangeSchema, type TapeEvent } from "@echo/contracts";
 import {
   appendEvents,
   deleteEchoSession,
@@ -457,7 +458,7 @@ describe("changes service", () => {
     }
   });
 
-  it("folds big sessions and keeps one stable rollup across regens", async () => {
+  it("folds big sessions into small rollups with stable ids across regens", async () => {
     const dataDir = mkdtempSync(join(tmpdir(), "echo-changes-data-"));
     const root = mkdtempSync(join(tmpdir(), "echo-changes-root-"));
     const projectId = "prj_changes";
@@ -502,15 +503,18 @@ describe("changes service", () => {
       const first = await service.maybeGenerateChanges(sessionId);
       expect(first.outcome).toBe("generated");
       const changes = first.artifact?.changes ?? [];
-      // 12 candidates fold to 5: one rollup plus four kept.
-      expect(changes).toHaveLength(5);
-      const rollups = changes.filter((change) => change.files.length >= 10);
-      expect(rollups).toHaveLength(1);
-      const rollupId = rollups[0]?.id;
-      expect(rollupId).toMatch(/^c_[0-9a-f]{16}$/);
+      // 12 candidates fold to 4 kept plus 3 rollup chunks; every change
+      // stays small enough to read in a minute.
+      expect(changes).toHaveLength(7);
+      for (const change of changes) {
+        expect(change.files.length).toBeLessThanOrEqual(10);
+      }
+      const rollupIds = new Set([0, 1, 2].map((index) => rollupIdFor(sessionId, index)));
+      const rollups = changes.filter((change) => rollupIds.has(change.id));
+      expect(rollups).toHaveLength(3);
       expect(getChangeRefs(db, sessionId)).toHaveLength(changes.length);
 
-      // One more pair: the rollup keeps its id, nothing duplicates.
+      // One more pair: the rollup ids stay put, nothing duplicates.
       writeFileSync(join(root, "f0.txt"), "round 3 file 0\nline A 3\nline B 3\nmore\n");
       await take("tool.post", "evt_3");
       const second = await service.maybeGenerateChanges(sessionId);
@@ -518,10 +522,129 @@ describe("changes service", () => {
       const again = second.artifact?.changes ?? [];
       const ids = again.map((change) => change.id);
       expect(new Set(ids).size).toBe(ids.length);
-      expect(again.filter((change) => change.files.length >= 10)).toHaveLength(1);
-      expect(again.find((change) => change.files.length >= 10)?.id).toBe(rollupId);
-      expect(again.length).toBeLessThanOrEqual(6);
+      for (const change of again) {
+        expect(change.files.length).toBeLessThanOrEqual(10);
+      }
+      expect(again.filter((change) => rollupIds.has(change.id))).toHaveLength(3);
+      expect(again.length).toBeLessThanOrEqual(7);
       expect(getChangeRefs(db, sessionId)).toHaveLength(again.length);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("resplits a stored giant rollup on the next run, then stays fresh", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      // Simulate a pre-split artifact: one change wider than the reader cap,
+      // snapshots untouched so only the shape flags it stale.
+      const path = join(dataDir, "projects", projectId, "sessions", sessionId, "changes.json");
+      const stored = JSON.parse(readFileSync(path, "utf8")) as {
+        changes: Array<{ files: Array<{ path: string; note: string }> }>;
+      };
+      expect(stored.changes.length).toBeGreaterThan(0);
+      const head = stored.changes[0];
+      if (head === undefined) throw new Error("seed produced no changes");
+      head.files = Array.from({ length: 11 }, (_, i) => ({
+        path: `wide/f${i}.txt`,
+        note: "wide file",
+      }));
+      writeFileSync(path, JSON.stringify(stored));
+      expect(service.findSessionNeedingChanges(false)).toEqual({
+        sessionId,
+        reason: "stale",
+      });
+      const second = await service.maybeGenerateChanges(sessionId);
+      expect(second.outcome).toBe("generated");
+      for (const change of second.artifact?.changes ?? []) {
+        expect(change.files.length).toBeLessThanOrEqual(10);
+      }
+      // Healed once: the next run is fresh, not a regen loop.
+      const third = await service.maybeGenerateChanges(sessionId);
+      expect(third.outcome).toBe("fresh");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rewrites a drifted summary without touching row prose", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      const before = first.artifact?.changes ?? [];
+      // Simulate an old-shape summary over unchanged rows and snapshots.
+      const path = join(dataDir, "projects", projectId, "sessions", sessionId, "changes.json");
+      const stored = JSON.parse(readFileSync(path, "utf8")) as { summary: string };
+      stored.summary = "A stale summary shape from before the excerpt cap.";
+      writeFileSync(path, JSON.stringify(stored));
+      expect(service.findSessionNeedingChanges(false)).toEqual({
+        sessionId,
+        reason: "stale",
+      });
+      const second = await service.maybeGenerateChanges(sessionId);
+      expect(second.outcome).toBe("generated");
+      expect(second.artifact?.summary).not.toBe(stored.summary);
+      // Rows byte-identical: same ids, versions, prose, and generator stamp.
+      expect(second.artifact?.changes).toEqual(before);
+      expect(second.artifact?.generator).toBe(first.artifact?.generator);
+      const third = await service.maybeGenerateChanges(sessionId);
+      expect(third.outcome).toBe("fresh");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("serves numbered hunks for one stored change", async () => {
+    const { db, dataDir, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      const change = first.artifact?.changes[0];
+      if (!change) throw new Error("seed produced no changes");
+      const outcome = service.getChangeCode(sessionId, change.id);
+      expect(outcome.status).toBe(200);
+      const body = ChangeCodeResponseSchema.parse(outcome.body);
+      expect(body.changeId).toBe(change.id);
+      expect(body.version).toBe(change.version);
+      expect(body.files.map((file) => file.path)).toEqual(["notes.txt"]);
+      const file = body.files[0];
+      if (!file) throw new Error("code response has no files");
+      // notes.txt went from "a" to "a b c d": one context line, three adds.
+      expect(file.added).toBe(3);
+      expect(file.removed).toBe(0);
+      expect(file.truncated).toBe(false);
+      expect(file.hunks).toHaveLength(1);
+      const hunk = file.hunks[0];
+      if (!hunk) throw new Error("code response has no hunks");
+      expect(hunk.lines.map((line) => line.kind)).toEqual(["context", "add", "add", "add"]);
+      expect(hunk.lines[0]).toMatchObject({ prevNo: 1, nextNo: 1, text: "a" });
+      expect(hunk.lines[3]).toMatchObject({ prevNo: null, nextNo: 4, text: "d" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("refuses unknown sessions, bad ids, and unknown changes", async () => {
+    const { db, dataDir, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      const change = first.artifact?.changes[0];
+      if (!change) throw new Error("seed produced no changes");
+      expect(service.getChangeCode("ses_missing", change.id).status).toBe(404);
+      const bad = service.getChangeCode(sessionId, "not-an-id");
+      expect(bad.status).toBe(400);
+      expect(JSON.stringify(bad.body)).toContain("invalid_request");
+      const missing = service.getChangeCode(sessionId, "c_0000000000000000");
+      expect(missing.status).toBe(404);
+      expect(JSON.stringify(missing.body)).toContain("not_found");
     } finally {
       db.close();
     }
