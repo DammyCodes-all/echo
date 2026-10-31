@@ -1,13 +1,18 @@
-import type { AskEvidence, AskThreadMessage } from "@echo/contracts";
+import type { AskEvidence, AskRequest, AskThreadMessage } from "@echo/contracts";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api } from "../api";
 
 export type AskCardRef = { id: string; headline: string } | null;
 
+/** Reader anchor: a review change (c_ id) with its title as the headline. */
+export type AskChangeRef = { id: string; title: string } | null;
+
 type AskThreadPanelProps = {
   sessionId: string;
   card: AskCardRef;
+  /** Reader change anchor; takes precedence over card and is sent as changeId. */
+  change?: AskChangeRef;
   onClearCard: () => void;
   // Second arg carries the thread message's cardId so the host can resolve
   // the citation target; callers that only need the citation can ignore it.
@@ -69,7 +74,7 @@ function ThreadMessageView({
                       <button
                         key={id}
                         type="button"
-                        title={`${cited.kind} · ${cited.ts} — jump to the card this cites`}
+                        title={`${cited.kind} · ${cited.ts} — jump to the change this cites`}
                         onClick={() => onCitationClick(cited, message.cardId)}
                         className="rounded-dusk-code bg-dusk-track px-1.5 py-0.5 font-mono text-[10px] text-dusk-accent-soft"
                       >
@@ -100,12 +105,16 @@ function ThreadMessageView({
 export function AskThreadPanel({
   sessionId,
   card,
+  change,
   onClearCard,
   onCitationClick,
   onClose,
 }: AskThreadPanelProps) {
   const queryClient = useQueryClient();
   const [question, setQuestion] = useState("");
+  // The reader anchors to a change (c_ id); the story page anchors to a card
+  // (h_ id). Either way the anchor headline labels the thread.
+  const anchorHeadline = change?.title ?? card?.headline ?? null;
 
   const threadQuery = useQuery({
     queryKey: ["ask-thread", sessionId],
@@ -113,15 +122,19 @@ export function AskThreadPanel({
   });
 
   const askMutation = useMutation({
-    mutationFn: (text: string) =>
+    mutationFn: (text: string) => {
       // Server is the source of truth: send, then refetch the thread rather
-      // than hand-appending the response locally.
-      api.ask(sessionId, {
+      // than hand-appending the response locally. A change anchor travels as
+      // changeId with cardId null: the thread schema only accepts h_ ids.
+      const changeId = change?.id ?? null;
+      return api.ask(sessionId, {
         question: text,
         filePath: null,
         symbols: [],
-        cardId: card?.id ?? null,
-      }),
+        cardId: changeId !== null ? null : (card?.id ?? null),
+        ...(changeId !== null ? { changeId } : {}),
+      } as AskRequest);
+    },
     onSuccess: () => {
       setQuestion("");
       void queryClient.invalidateQueries({ queryKey: ["ask-thread", sessionId] });
@@ -160,10 +173,10 @@ export function AskThreadPanel({
         </button>
       </div>
 
-      {card ? (
+      {anchorHeadline ? (
         <div className="flex items-center justify-between gap-2 border-b border-dusk-hairline px-6 py-2">
           <p className="truncate text-xs text-dusk-muted">
-            Asking about: <span className="text-dusk-ink">{card.headline}</span>
+            Asking about: <span className="text-dusk-ink">{anchorHeadline}</span>
           </p>
           <button
             type="button"
@@ -220,7 +233,9 @@ export function AskThreadPanel({
             onKeyDown={(event) => {
               if (event.key === "Enter") submit();
             }}
-            placeholder={card ? `Ask about “${card.headline}”…` : "Why did the agent do that?"}
+            placeholder={
+              anchorHeadline ? `Ask about “${anchorHeadline}”…` : "Why did the agent do that?"
+            }
             disabled={askMutation.isPending}
             className="min-w-0 flex-1 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink outline-none placeholder:text-dusk-muted disabled:opacity-40"
           />
