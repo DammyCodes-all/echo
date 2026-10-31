@@ -262,7 +262,7 @@ export function ProjectSort() {
 const SORT_CSS = `
 .es-sort-panel { animation: es-sort-in 0.15s ease-out both; transform-origin: 100% 0%; }
 .es-sort-panel[data-leaving="true"] { animation: es-sort-out 0.12s ease-in both; }
-.es-sort-row:focus-visible { outline: 2px solid #8c9bff; outline-offset: -2px; }
+.es-sort-row:focus-visible { outline: 2px solid #2d88ff; outline-offset: -2px; }
 @keyframes es-sort-in {
   from { opacity: 0; transform: translateY(-4px) scale(.95); }
   to { opacity: 1; transform: none; }
