@@ -10,6 +10,7 @@ import {
 } from "../components/architecture/architecture-diagram";
 import { Skeleton } from "../components/skeleton";
 import { useArchitectureStream } from "../hooks/use-architecture-stream";
+import { useDemoMode } from "../hooks/use-demo-mode";
 
 function patchNodeIds(patch: ArchitecturePatch): string[] {
   const ids = new Set<string>();
@@ -38,6 +39,9 @@ function patchNodeIds(patch: ArchitecturePatch): string[] {
 }
 
 export function ProjectArchitecturePage() {
+  // The read-only demo rejects generate/undo/chat (403): hide those controls
+  // and leave the baked map plus the evidence-only touched-files table.
+  const demoMode = useDemoMode();
   const { projectId = "" } = useParams();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
@@ -139,24 +143,26 @@ export function ProjectArchitecturePage() {
               tree. Hover a part for detail, click to pin it for the chat.
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => undo.mutate()}
-              disabled={undo.isPending || !architecture || architecture.version <= 1}
-              className="rounded-dusk-pill bg-dusk-secondary px-4 py-2 text-sm font-semibold text-dusk-accent-soft transition-opacity disabled:opacity-50"
-            >
-              {undo.isPending ? "Undoing…" : "Undo"}
-            </button>
-            <button
-              type="button"
-              onClick={() => generate.mutate()}
-              disabled={generate.isPending || generating || arch.isPending}
-              className="rounded-dusk-pill bg-dusk-accent px-4 py-2 text-sm font-semibold text-dusk-base transition-opacity disabled:opacity-50"
-            >
-              {architecture ? "Regenerate" : "Generate architecture"}
-            </button>
-          </div>
+          {demoMode ? null : (
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => undo.mutate()}
+                disabled={undo.isPending || !architecture || architecture.version <= 1}
+                className="rounded-dusk-pill bg-dusk-secondary px-4 py-2 text-sm font-semibold text-dusk-accent-soft transition-opacity disabled:opacity-50"
+              >
+                {undo.isPending ? "Undoing…" : "Undo"}
+              </button>
+              <button
+                type="button"
+                onClick={() => generate.mutate()}
+                disabled={generate.isPending || generating || arch.isPending}
+                className="rounded-dusk-pill bg-dusk-accent px-4 py-2 text-sm font-semibold text-dusk-base transition-opacity disabled:opacity-50"
+              >
+                {architecture ? "Regenerate" : "Generate architecture"}
+              </button>
+            </div>
+          )}
         </div>
         {undoError ? <p className="text-sm text-dusk-fail">{undoError}</p> : null}
 
@@ -182,17 +188,27 @@ export function ProjectArchitecturePage() {
           </div>
         ) : architecture === null && !generating ? (
           <div className="space-y-3 rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
-            <p>
-              No architecture map yet. Generate one from the project&apos;s code, README and docs.
-            </p>
-            <button
-              type="button"
-              onClick={() => generate.mutate()}
-              disabled={generate.isPending}
-              className="rounded-dusk-pill bg-dusk-accent px-4 py-2 font-semibold text-dusk-base transition-opacity disabled:opacity-50"
-            >
-              Generate architecture
-            </button>
+            {demoMode ? (
+              <p>
+                No architecture map in this demo recording — the touched-files table below is
+                evidence only.
+              </p>
+            ) : (
+              <>
+                <p>
+                  No architecture map yet. Generate one from the project&apos;s code, README and
+                  docs.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => generate.mutate()}
+                  disabled={generate.isPending}
+                  className="rounded-dusk-pill bg-dusk-accent px-4 py-2 font-semibold text-dusk-base transition-opacity disabled:opacity-50"
+                >
+                  Generate architecture
+                </button>
+              </>
+            )}
           </div>
         ) : generating || generate.isPending ? (
           <div
@@ -228,7 +244,7 @@ export function ProjectArchitecturePage() {
                 </button>
               </div>
             ) : null}
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className={demoMode ? undefined : "grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]"}>
               <ArchitectureDiagram
                 architecture={architecture}
                 evidence={arch.data?.evidence ?? {}}
@@ -237,13 +253,15 @@ export function ProjectArchitecturePage() {
                 pinnedId={pinned?.id ?? null}
                 onPin={setPinned}
               />
-              <ArchitectureChat
-                projectId={projectId}
-                pinned={pinned}
-                onClearPin={() => setPinned(null)}
-                onHighlight={setHighlightedIds}
-                onPatched={onPatched}
-              />
+              {demoMode ? null : (
+                <ArchitectureChat
+                  projectId={projectId}
+                  pinned={pinned}
+                  onClearPin={() => setPinned(null)}
+                  onHighlight={setHighlightedIds}
+                  onPatched={onPatched}
+                />
+              )}
             </div>
           </div>
         ) : null}
