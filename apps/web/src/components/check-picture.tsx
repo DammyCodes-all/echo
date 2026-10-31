@@ -46,7 +46,7 @@ export function CheckPicture({
   return (
     <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-5">
       <div>
-        <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+        <p className="text-xs uppercase tracking-widest text-dusk-muted">
           Your understanding picture
         </p>
         <p className="mt-2 text-sm text-dusk-muted">
