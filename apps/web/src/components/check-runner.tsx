@@ -33,7 +33,8 @@ type CheckRunnerProps = {
   state: ChecksV2Response;
   focusQuestionId: string | null;
   onUpdate: (state: ChecksV2Response) => void;
-  onSkip: () => void;
+  /** Absent when skipping is unavailable (the read-only demo rejects it). */
+  onSkip?: () => void;
   onDone: () => void;
 };
 
@@ -143,7 +144,7 @@ export function CheckRunner({
   }
 
   async function handleSkip() {
-    if (skipping) return;
+    if (skipping || !onSkip) return;
     setSkipping(true);
     try {
       onSkip();
@@ -187,14 +188,16 @@ export function CheckRunner({
           <button type="button" onClick={() => setRevealedId(null)} className={PRIMARY}>
             {unanswered.length > 0 ? "Next" : "See your picture"}
           </button>
-          <button
-            type="button"
-            onClick={() => void handleSkip()}
-            disabled={skipping}
-            className="rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-muted disabled:opacity-40"
-          >
-            Skip — no pressure
-          </button>
+          {onSkip ? (
+            <button
+              type="button"
+              onClick={() => void handleSkip()}
+              disabled={skipping}
+              className="rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-muted disabled:opacity-40"
+            >
+              Skip — no pressure
+            </button>
+          ) : null}
         </div>
       </div>
     );

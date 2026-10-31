@@ -14,6 +14,7 @@ export const ErrorCodeSchema = z.enum([
   "check_gate_failed",
   "daemon_unavailable",
   "readonly_demo",
+  "rate_limited",
 ]);
 export type ErrorCode = z.infer<typeof ErrorCodeSchema>;
 
@@ -561,6 +562,14 @@ export const ChecksV2StateSchema = z.object({
   currentQuestionId: z.string().min(1).nullable(),
 });
 export type ChecksV2State = z.infer<typeof ChecksV2StateSchema>;
+
+// Persisted artifact = public state plus the set origin (offer vs check-me).
+// Origin decides completion bookkeeping: only offer-origin sets flip the
+// session to checked when fully answered; check-me sets stay personal.
+export const ChecksV2ArtifactSchema = ChecksV2StateSchema.extend({
+  origin: z.enum(["offer", "check_me"]),
+});
+export type ChecksV2Artifact = z.infer<typeof ChecksV2ArtifactSchema>;
 
 export const ChecksV2ResponseSchema = z.object({
   schemaVersion: z.literal(1),
