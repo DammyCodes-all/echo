@@ -1,4 +1,4 @@
-import { createBrowserRouter, Navigate } from "react-router";
+import { createBrowserRouter, Navigate, useParams } from "react-router";
 import { AppLayout } from "./layout";
 import { DemoPage } from "./routes/demo";
 import { NotFoundPage } from "./routes/not-found";
@@ -7,7 +7,12 @@ import { ProjectLayout } from "./routes/project-layout";
 import { ProjectLearnPage } from "./routes/project-learn";
 import { ProjectOverviewPage } from "./routes/project-overview";
 import { ProjectsPage } from "./routes/projects";
-import { StoryPage } from "./routes/story";
+import { ReaderPage } from "./routes/reader";
+
+function SessionToReaderRedirect() {
+  const { sessionId } = useParams();
+  return <Navigate to={`/sessions/${sessionId}/read`} replace />;
+}
 
 export const router = createBrowserRouter([
   {
@@ -26,7 +31,8 @@ export const router = createBrowserRouter([
           { path: "architecture", element: <ProjectArchitecturePage /> },
         ],
       },
-      { path: "sessions/:sessionId", element: <StoryPage /> },
+      { path: "sessions/:sessionId", element: <SessionToReaderRedirect /> },
+      { path: "sessions/:sessionId/read", element: <ReaderPage /> },
       { path: "demo", element: <DemoPage /> },
       { path: "*", element: <NotFoundPage /> },
     ],
