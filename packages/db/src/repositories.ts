@@ -3,6 +3,7 @@ import type {
   CaptureState,
   EngagementKind,
   EngagementTier,
+  ProgressState,
   SessionCheckStatus,
   TapeEvent,
   TapeWatermark,
@@ -36,6 +37,7 @@ export interface SessionSummary {
   checkStatus: SessionCheckStatus;
   highRiskCount: number;
   captureState: CaptureState;
+  changeCount: number;
 }
 
 export interface StoredEvent {
@@ -591,6 +593,8 @@ export function deleteEchoSession(db: EchoDb, sessionId: string): void {
     db.prepare("DELETE FROM events WHERE session_id = ?").run(sessionId);
     db.prepare("DELETE FROM reader_checkpoints WHERE session_id = ?").run(sessionId);
     db.prepare("DELETE FROM session_build_pins WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM change_refs WHERE session_id = ?").run(sessionId);
+    db.prepare("DELETE FROM change_progress WHERE session_id = ?").run(sessionId);
     db.prepare("DELETE FROM engagement_events WHERE session_id = ?").run(sessionId);
     db.prepare("DELETE FROM session_artifacts WHERE session_id = ?").run(sessionId);
     db.prepare("DELETE FROM review_transition_cache WHERE session_id = ?").run(sessionId);
@@ -704,7 +708,8 @@ export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
       `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
               COALESCE((SELECT MAX(e.observed_at) FROM events e WHERE e.session_id = s.id), s.updated_at) AS last_activity,
               s.status, s.capture_quality, s.check_status, s.story_summary, s.high_risk_count,
-              (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count
+              (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count,
+              (SELECT COUNT(*) FROM change_refs r WHERE r.session_id = s.id) AS change_count
        FROM sessions s WHERE s.project_id = ? ORDER BY last_activity DESC, s.id ASC`,
     )
     .all(projectId) as Array<Record<string, unknown>>;
@@ -725,7 +730,8 @@ export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary
       `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
               COALESCE((SELECT MAX(e.observed_at) FROM events e WHERE e.session_id = s.id), s.updated_at) AS last_activity,
               s.status, s.capture_quality, s.check_status, s.story_summary, s.high_risk_count,
-              (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count
+              (SELECT COUNT(DISTINCT COALESCE(e.record_key, e.id)) FROM events e WHERE e.session_id = s.id) AS event_count,
+              (SELECT COUNT(*) FROM change_refs r WHERE r.session_id = s.id) AS change_count
        FROM sessions s WHERE s.id = ?`,
     )
     .all(sessionId) as Array<Record<string, unknown>>;
@@ -785,6 +791,7 @@ function toSessionSummary(row: Record<string, unknown>): SessionSummary {
     summarySkeleton: false,
     checkStatus: String(row.check_status) as SessionCheckStatus,
     highRiskCount: Number(row.high_risk_count),
+    changeCount: Number(row.change_count ?? 0),
     captureState: deriveCaptureState(status, captureQuality),
   };
 }
@@ -1353,4 +1360,145 @@ export function getReviewTransition(
     | undefined;
   if (!row) return null;
   return { hunksJson: String(row.hunks_json), codeVersion: String(row.code_version) };
+}
+
+// ADR 0014 review reader: change refs carry snapshot-pair identity only
+// (ids/oids/hashes — never code bodies, which stay behind the redaction gate
+// in tape/shadow Git). Regen dedupes on id: the same span with a different
+// hash stores a new version row and keeps the old.
+export interface ChangeRefInput {
+  sessionId: string;
+  changeId: string;
+  version: number;
+  prevOid: string;
+  nextOid: string;
+}
+
+export interface ChangeRefRow {
+  sessionId: string;
+  changeId: string;
+  version: number;
+  prevOid: string;
+  nextOid: string;
+  createdAt: string;
+}
+
+export function recordChangeRef(db: EchoDb, ref: ChangeRefInput): void {
+  // First write wins per (session, change, version): regen dedupes on id, so a
+  // re-recorded identical version keeps its original created_at.
+  db.prepare(
+    `INSERT INTO change_refs
+       (session_id, change_id, version, prev_oid, next_oid, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, change_id, version) DO NOTHING`,
+  ).run(ref.sessionId, ref.changeId, ref.version, ref.prevOid, ref.nextOid, nowIso());
+}
+
+export function getChangeRefs(db: EchoDb, sessionId: string): ChangeRefRow[] {
+  const rows = db
+    .prepare(
+      `SELECT session_id, change_id, version, prev_oid, next_oid, created_at
+       FROM change_refs WHERE session_id = ? ORDER BY rowid`,
+    )
+    .all(sessionId) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    sessionId: String(row.session_id),
+    changeId: String(row.change_id),
+    version: Number(row.version),
+    prevOid: String(row.prev_oid),
+    nextOid: String(row.next_oid),
+    createdAt: String(row.created_at),
+  }));
+}
+
+/**
+ * Drops ref rows for changes no longer listed (e.g. a rollup superseded by
+ * the next fold). Progress rows are kept: the resume pointer only follows
+ * ids in the artifact, so hidden marks simply stop showing.
+ */
+export function pruneChangeRefs(db: EchoDb, sessionId: string, keepIds: string[]): void {
+  if (keepIds.length === 0) {
+    db.prepare("DELETE FROM change_refs WHERE session_id = ?").run(sessionId);
+    return;
+  }
+  const placeholders = keepIds.map(() => "?").join(",");
+  db.prepare(
+    `DELETE FROM change_refs WHERE session_id = ? AND change_id NOT IN (${placeholders})`,
+  ).run(sessionId, ...keepIds);
+}
+
+// Progress keys on (id, version) and is never reset by regen: a regen writes
+// new version rows, old states stay. Latest write wins per key.
+export interface ChangeProgressInput {
+  sessionId: string;
+  changeId: string;
+  version: number;
+  state: ProgressState;
+}
+
+export interface ChangeProgressRow {
+  sessionId: string;
+  changeId: string;
+  version: number;
+  state: ProgressState;
+  updatedAt: string;
+}
+
+export function recordProgress(db: EchoDb, input: ChangeProgressInput): void {
+  db.prepare(
+    `INSERT INTO change_progress
+       (session_id, change_id, version, state, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(session_id, change_id, version) DO UPDATE SET
+       state = excluded.state,
+       updated_at = excluded.updated_at`,
+  ).run(input.sessionId, input.changeId, input.version, input.state, nowIso());
+}
+
+export function getProgress(db: EchoDb, sessionId: string): ChangeProgressRow[] {
+  const rows = db
+    .prepare(
+      `SELECT session_id, change_id, version, state, updated_at
+       FROM change_progress WHERE session_id = ? ORDER BY rowid`,
+    )
+    .all(sessionId) as Array<Record<string, unknown>>;
+  return rows.map((row) => ({
+    sessionId: String(row.session_id),
+    changeId: String(row.change_id),
+    version: Number(row.version),
+    state: String(row.state) as ProgressState,
+    updatedAt: String(row.updated_at),
+  }));
+}
+
+// Resume is the first ordered change id whose current version is not
+// understood. The current version is the max recorded ref version (falling
+// back to max progress version when no ref exists yet); missing progress and
+// viewed/skipped all count as not-understood.
+export function getResumePointer(
+  db: EchoDb,
+  sessionId: string,
+  orderedChangeIds: string[],
+): string | null {
+  const maxRefVersion = db.prepare(
+    "SELECT MAX(version) AS max_version FROM change_refs WHERE session_id = ? AND change_id = ?",
+  );
+  const maxProgressVersion = db.prepare(
+    "SELECT MAX(version) AS max_version FROM change_progress WHERE session_id = ? AND change_id = ?",
+  );
+  const progressState = db.prepare(
+    "SELECT state FROM change_progress WHERE session_id = ? AND change_id = ? AND version = ?",
+  );
+  for (const changeId of orderedChangeIds) {
+    const ref = maxRefVersion.get(sessionId, changeId) as { max_version: number | null };
+    let version = ref.max_version === null ? null : Number(ref.max_version);
+    if (version === null) {
+      const prog = maxProgressVersion.get(sessionId, changeId) as { max_version: number | null };
+      if (prog.max_version === null) return changeId;
+      version = Number(prog.max_version);
+    }
+    const row = progressState.get(sessionId, changeId, version) as { state: string } | undefined;
+    if (row?.state !== "understood") return changeId;
+  }
+  return null;
 }
