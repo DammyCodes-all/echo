@@ -224,7 +224,7 @@ export function CheckRunner({
   return (
     <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-5">
       <div className="flex items-start justify-between gap-3">
-        <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
+        <p className="text-xs uppercase tracking-widest text-dusk-muted">
           Understanding check{remaining > 1 ? ` · ${remaining} left` : ""}
         </p>
         <button
