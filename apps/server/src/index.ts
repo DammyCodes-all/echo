@@ -630,6 +630,14 @@ app.get<{ Params: { id: string } }>("/api/sessions/:id/changes", async (request,
   return reply.code(outcome.status).send(outcome.body);
 });
 
+app.get<{ Params: { id: string; changeId: string } }>(
+  "/api/sessions/:id/changes/:changeId/code",
+  async (request, reply) => {
+    const outcome = changes.getChangeCode(request.params.id, request.params.changeId);
+    return reply.code(outcome.status).send(outcome.body);
+  },
+);
+
 app.post<{ Params: { id: string } }>("/api/sessions/:id/progress", async (request, reply) => {
   const outcome = changes.recordProgress(request.params.id, request.body);
   return reply.code(outcome.status).send(outcome.body);
