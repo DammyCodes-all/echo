@@ -20,7 +20,7 @@ How Direction A carries this:
 - Everything important is a rounded, breathing shape: cards `28px`, code pill
   `10px`, uncertainty `22px`, actions/confidence `999px`. No sharp tables.
 - Glow is reserved for "where you are" and "how sure": the active timeline
-  node and the 75% confidence fill share the `#8C9BFF` glow. Nothing else
+  node and the 75% confidence fill share the `#2D88FF` glow. Nothing else
   glows.
 
 ## 2. Voice
@@ -43,15 +43,15 @@ Rules:
 
 | Echo piece | Direction A component | Tokens / behavior |
 | --- | --- | --- |
-| Session timeline | Flowing rail `2px #2E2E4A` with nodes, not a table of rows | Nodes: `12px #EEEEFA` landed, `14px` dashed `1.5px #8A8AB0` on `#12121F` dead end, `20px #8C9BFF` active with `0 0 0 7px rgba(140,155,255,0.24), 0 0 22px rgba(140,155,255,0.5)` |
+| Session timeline | Flowing rail `2px #2E2E4A` with nodes, not a table of rows | Nodes: `12px #EEEEFA` landed, `14px` dashed `1.5px #8A8AB0` on `#12121F` dead end, `20px #2D88FF` active with `0 0 0 7px rgba(45,136,255,0.24), 0 0 22px rgba(45,136,255,0.5)` |
 | Dead-end tree | Dashed abandoned node beside the path that shipped | Pencil-sketch language: dashed ring, muted caption `13px #A6A6C4`; node counts as dead end only if the recorded sequence or agent-stated text supports it (spec §2) |
-| Confidence calibration | Soft glow band, not a hard percentage bar | Track `10px 999px #26263F`, fill `75% #8C9BFF` with `0 0 16px rgba(140,155,255,0.5)`; label `Fairly sure`, sub `3 of 4 checks passed` |
-| Evidence chips | Visible links back to exact session moments under every why | `6px 12px 999px #2A2A4C / #C9CEFF 14px`: `turn 14`, `auth.ts`; file chip pairs with `src/auth.ts +24 #6FD99A / -3 #FF8A8A` in `JetBrains Mono 14px` on `#2A2A4C radius 10px` |
+| Confidence calibration | Soft glow band, not a hard percentage bar | Track `10px 999px #26263F`, fill `75% #2D88FF` with `0 0 16px rgba(45,136,255,0.5)`; label `Fairly sure`, sub `3 of 4 checks passed` |
+| Evidence chips | Visible links back to exact session moments under every why | `6px 12px 999px #2A2A4C / #A9CFFF 14px`: `turn 14`, `auth.ts`; file chip pairs with `src/auth.ts +24 #6FD99A / -3 #FF8A8A` in `JetBrains Mono 14px` on `#2A2A4C radius 10px` |
 | Understanding checks | Conversational cards, never quiz-show | `Here is what happened` card: `bg #1C1C30, 1px rgba(255,255,255,0.06), 28px, 26px 24px, gap 10px`; status pills `rgba(111,217,154,0.14)/#6FD99A 3 passed`, `rgba(255,138,138,0.14)/#FF8A8A 1 failed`, 8px dot |
 | Refusal state | Friendly dashed container | `1.5px dashed #3E3E5C, 22px, 20px 22px, 17px/1.4 #EEEEFA` |
 
-Actions: primary `bg #8C9BFF color #12121F`, secondary `bg #26264A color
-#C9CEFF`, both `15px 22px, 999px, 16px 600`. Primary moves forward
+Actions: primary `bg #2D88FF color #12121F`, secondary `bg #26264A color
+#A9CFFF`, both `15px 22px, 999px, 16px 600`. Primary moves forward
 (`Show me why`); secondary replays (`Replay session`).
 
 ## 4. Tokens
@@ -68,10 +68,12 @@ remain in `apps/web/src`.
 
 Palette: `#12121F` base · `#1C1C30` surface · `#2A2A4C` pill ·
 `#26264A` secondary · `#26263F` track · `#2E2E4A` rail · `#3E3E5C` faint ·
-`#8A8AB0` dead end · `#EEEEFA` ink · `#A6A6C4` muted · `#8C9BFF` accent ·
-`#C9CEFF` accent-soft · `rgba(140,155,255,0.14)` accent wash ·
+`#8A8AB0` dead end · `#EEEEFA` ink · `#A6A6C4` muted · `#2D88FF` accent ·
+`#A9CFFF` accent-soft · `rgba(45,136,255,0.14)` accent wash ·
 `#FFB38A` peach + wash · `#6FD99A` pass + wash · `#FF8A8A` fail + wash ·
-`rgba(255,255,255,0.06/0.12)` hairlines. Hairline utilities
+`rgba(255,255,255,0.06/0.12)` hairlines. The accent was graphite blue
+(`#8C9BFF`) until the Oct 31 reader review moved it to Meta blue; base and
+surfaces are unchanged. Hairline utilities
 (`border-dusk-hairline`, `border-dusk-hairline-strong`) carry the border color;
 width/style stay structural Tailwind (`border`, `border-dashed`).
 
