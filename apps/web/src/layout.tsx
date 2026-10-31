@@ -8,7 +8,7 @@ import { useDemoMode } from "./hooks/use-demo-mode";
 function useSearchablePage(): boolean {
   const { pathname } = useLocation();
   if (pathname === "/" || pathname === "/projects") return true;
-  return pathname.endsWith("/overview") || pathname.endsWith("/architecture");
+  return pathname.endsWith("/overview");
 }
 
 export function AppLayout() {
