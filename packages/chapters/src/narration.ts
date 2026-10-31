@@ -8,7 +8,7 @@ import { type ChangeGroup, HEADS_UP_TYPES, type HeadsUpType, type SnapshotPair }
  * with validateSkeletonChange (one retry with error text, then skeleton).
  */
 
-export const CHANGE_NARRATION_PROMPT_VERSION = "changes-v1";
+export const CHANGE_NARRATION_PROMPT_VERSION = "changes-v2";
 
 /** Artifact generator when at least one fresh change came from the model. */
 export const CHANGE_MODEL_GENERATOR = "model-changes-v1";
@@ -55,6 +55,9 @@ const SYSTEM_PROMPT = [
   "Use ONLY the diff, the moment prompts/reasoning, and the earlier digests below.",
   "Never invent file names, paths, numbers, or behavior: every path you mention",
   "must appear in the Files list exactly as written.",
+  "Write for someone who has never seen this codebase: plain words, no",
+  "internal names unless you explain them in the same sentence. Steps",
+  "describe behavior and outcomes, never function or hook swaps.",
   "Caps (the server rejects anything outside them, then retries once):",
   "- title: 1-8 words.",
   "- summary: 2-3 sentences.",
