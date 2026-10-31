@@ -82,9 +82,7 @@ export function ProjectsPage() {
 
       {projects.data && projects.data.length === 0 ? (
         <div className="rounded-dusk-card bg-dusk-surface p-8">
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-            Waiting for a tape
-          </p>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Waiting for a tape</p>
           <p className="mt-3 max-w-xl text-sm leading-6 text-dusk-muted">
             Enable a repository with{" "}
             <code className="rounded-dusk-code bg-dusk-pill px-1.5 py-0.5 font-mono text-xs text-dusk-ink">
