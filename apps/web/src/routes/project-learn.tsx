@@ -56,7 +56,7 @@ export function ProjectLearnPage() {
   if (data.checkedCount === 0 && data.nextUp.length === 0) {
     return (
       <div className="rounded-dusk-card bg-dusk-surface p-8">
-        <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Learn</p>
+        <p className="text-xs uppercase tracking-widest text-dusk-muted">Learn</p>
         <p className="mt-3 max-w-xl text-sm leading-6 text-dusk-muted">
           No checks yet. Open a session, read its story, and take the understanding check there —
           this page collects the picture once checks land.
@@ -77,7 +77,7 @@ export function ProjectLearnPage() {
     <div className="space-y-6">
       {data.nextUp.length > 0 ? (
         <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Next up</p>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Next up</p>
           <ul className="mt-3 space-y-2 text-sm">
             {data.nextUp.map((entry) => (
               <li key={entry.sessionId}>
@@ -98,16 +98,14 @@ export function ProjectLearnPage() {
 
       {data.checkedCount === 0 ? (
         <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">Learn</p>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Learn</p>
           <p className="mt-2 text-sm leading-6 text-dusk-muted">
             No checks yet — the picture collects here once checks land. Start above.
           </p>
         </div>
       ) : (
         <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-            Calibration picture
-          </p>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Calibration picture</p>
           <p className="mt-2 text-sm leading-6 text-dusk-ink">
             {data.checkedCount} checked · {data.skippedCount} skipped · {data.notCheckedCount} not
             checked · {totalCards} cards pictured
@@ -127,9 +125,7 @@ export function ProjectLearnPage() {
 
       {data.weakAreas.length > 0 ? (
         <div className="rounded-dusk-card bg-dusk-surface px-6 py-5">
-          <p className="font-mono text-xs uppercase tracking-widest text-dusk-muted">
-            Weakest areas
-          </p>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Weakest areas</p>
           <ul className="mt-3 space-y-2 text-sm">
             {data.weakAreas.map((area) => (
               <li key={area.file} className="flex items-baseline justify-between gap-4">
