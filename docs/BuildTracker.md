@@ -1215,3 +1215,10 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 72 files / 692 passed (endpoint + hunk numbering + refusal cases, checks-join units), `pnpm build` ok; live endpoint probe on data copy returned real deletion hunks with correct counts/truncation flags + 400 on bad id; headless-chrome screenshots verified full-width layout, new icon, meta + rail stats, and the open diff viewer (temp-open reverted, confirmed via git diff); stored checks target legacy h_ cards so the result line correctly stays hidden there — join pinned by unit test instead
 - notes: Caught-up/empty/error states stay narrow. Probes ran on the /tmp data copy (alt ports); processes stopped; real data untouched. Stage and commit nothing.
+
+## 2026-10-31 — Zero-diff sessions hidden; state copies centered
+
+- item: overview shows only `changeCount > 0` sessions (recording no longer exempts zero-diff rows; empty copy updated); reader waiting/error, No-changes, and In-progress cards centered. Note: the earlier 4xl column entry is superseded — the committed rail layout (`ReaderRail` + 700px measure) replaced that width; the digest wall was fixed the same way (recap now shows the previous title, not the digest).
+- status: done
+- evidence: `tsc` clean, `biome check` clean on both touched files, `pnpm --filter @echo/web build` ok.
+- notes: Nothing staged or committed.

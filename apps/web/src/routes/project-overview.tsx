@@ -54,11 +54,10 @@ export function ProjectOverviewPage() {
   });
 
   // Server order is last activity DESC: only genuinely live sessions move.
-  // Sessions with no diffs stay out until they have one; live ones always
-  // show so in-progress work never vanishes mid-run.
+  // Zero-diff sessions stay out entirely — recording or not, a session
+  // appears only once it has at least one change.
   const list = sessions.data ?? [];
-  const hasContent = (s: (typeof list)[number]): boolean =>
-    s.changeCount > 0 || s.status === "recording" || s.captureState === "recording";
+  const hasContent = (s: (typeof list)[number]): boolean => s.changeCount > 0;
   const content = list.filter(hasContent);
   const filtering = query.trim().length > 0;
   const visible = filtering ? content.filter((s) => matchesSession(s, query)) : content;
@@ -221,19 +220,19 @@ export function ProjectOverviewPage() {
           </div>
         ) : null}
         {sessions.isError ? (
-          <div className="rounded-dusk-card border border-dusk-fail/40 bg-dusk-fail-wash p-8 text-sm text-dusk-fail">
+          <div className="rounded-dusk-card border border-dusk-fail/40 bg-dusk-fail-wash p-8 text-center text-sm text-dusk-fail">
             Could not load sessions.
           </div>
         ) : null}
         {sessions.data && sessions.data.length === 0 ? (
-          <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
+          <div className="rounded-dusk-card bg-dusk-surface p-8 text-center text-sm text-dusk-muted">
             {project.data && project.data.sessionCount > 0
-              ? "No sessions to show right now — active sessions appear a minute after they go quiet."
+              ? "No sessions to show right now — sessions appear once their agent changes code."
               : "No sessions captured for this project yet."}
           </div>
         ) : null}
         {sessions.data && sessions.data.length > 0 && content.length === 0 ? (
-          <div className="rounded-dusk-card bg-dusk-surface p-8 text-sm text-dusk-muted">
+          <div className="rounded-dusk-card bg-dusk-surface p-8 text-center text-sm text-dusk-muted">
             No sessions with code changes yet — quiet sessions appear once their agent actually
             changes code.
           </div>

@@ -336,7 +336,7 @@ export function ReaderPage() {
         description="Walk through what changed, one change at a time."
         breadcrumb={headerCrumb}
       >
-        <div className="mx-auto w-full max-w-[700px] rounded-dusk-card bg-dusk-surface px-6 py-8 text-sm text-dusk-muted">
+        <div className="mx-auto w-full max-w-[700px] rounded-dusk-card bg-dusk-surface px-6 py-8 text-center text-sm text-dusk-muted">
           <p>
             {waiting
               ? "This session hasn't gone quiet yet — changes appear here once the tape goes silent. Check back soon."
@@ -371,7 +371,7 @@ export function ReaderPage() {
     >
       <div className={`mx-auto w-full space-y-6 ${current !== null ? "" : "max-w-[700px]"}`}>
         {isEmpty ? (
-          <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-8">
+          <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-8 text-center">
             <p className="text-xs uppercase tracking-widest text-dusk-muted">No changes</p>
             <p className="text-dusk-body text-dusk-ink">
               {stillRecording
@@ -481,12 +481,12 @@ export function ReaderPage() {
                 />
               </div>
             ) : isLive && !showSummary ? (
-              <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-8">
+              <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-8 text-center">
                 <p className="text-xs uppercase tracking-widest text-dusk-muted">In progress</p>
                 <p className="text-dusk-body text-dusk-ink">
                   The session is still going. New changes will appear here when it goes quiet.
                 </p>
-                <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-wrap items-center justify-center gap-3">
                   <button type="button" onClick={() => jump(changes.length - 1)} className={QUIET}>
                     Back
                   </button>
