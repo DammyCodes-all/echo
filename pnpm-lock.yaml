@@ -248,6 +248,9 @@ importers:
       '@echo/capture-opencode':
         specifier: workspace:*
         version: link:../../packages/capture-opencode
+      '@echo/chapters':
+        specifier: workspace:*
+        version: link:../../packages/chapters
       '@echo/checks':
         specifier: workspace:*
         version: link:../../packages/checks
@@ -284,9 +287,6 @@ importers:
       '@echo/snapshots':
         specifier: workspace:*
         version: link:../../packages/snapshots
-      '@echo/story':
-        specifier: workspace:*
-        version: link:../../packages/story
       '@echo/tape':
         specifier: workspace:*
         version: link:../../packages/tape
@@ -426,6 +426,12 @@ importers:
       '@echo/tape':
         specifier: workspace:*
         version: link:../tape
+
+  packages/chapters:
+    dependencies:
+      '@echo/contracts':
+        specifier: workspace:*
+        version: link:../contracts
 
   packages/checks:
     dependencies:
@@ -585,19 +591,6 @@ importers:
       isomorphic-git:
         specifier: ^1.32.0
         version: 1.44.5
-
-  packages/story:
-    dependencies:
-      '@echo/contracts':
-        specifier: workspace:*
-        version: link:../contracts
-      '@echo/tape':
-        specifier: workspace:*
-        version: link:../tape
-    devDependencies:
-      '@echo/fixtures':
-        specifier: workspace:*
-        version: link:../fixtures
 
   packages/tape:
     dependencies:
