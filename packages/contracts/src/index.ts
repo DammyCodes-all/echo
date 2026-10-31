@@ -1,6 +1,7 @@
 export { z } from "zod";
 export * from "./api";
 export * from "./architecture";
+export * from "./changes";
 export * from "./code";
 export * from "./config";
 export * from "./evidence";
