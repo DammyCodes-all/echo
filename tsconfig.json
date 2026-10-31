@@ -10,6 +10,7 @@
       "@echo/capture": ["./packages/capture/src/index.ts"],
       "@echo/capture-muse": ["./packages/capture-muse/src/index.ts"],
       "@echo/capture-opencode": ["./packages/capture-opencode/src/index.ts"],
+      "@echo/chapters": ["./packages/chapters/src/index.ts"],
       "@echo/db": ["./packages/db/src/index.ts"],
       "@echo/fixtures": ["./packages/fixtures/src/index.ts"],
       "@echo/graph": ["./packages/graph/src/index.ts"],
@@ -19,7 +20,6 @@
       "@echo/retrieval": ["./packages/retrieval/src/index.ts"],
       "@echo/sandbox": ["./packages/sandbox/src/index.ts"],
       "@echo/snapshots": ["./packages/snapshots/src/index.ts"],
-      "@echo/story": ["./packages/story/src/index.ts"],
       "@echo/tape": ["./packages/tape/src/index.ts"]
     }
   },
