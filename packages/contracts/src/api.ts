@@ -35,6 +35,12 @@ export type CardId = z.infer<typeof CardIdSchema>;
 export const HunkIdSchema = CardIdSchema;
 export type HunkId = z.infer<typeof HunkIdSchema>;
 
+// Checks v2 card reference (ADR 0014 §g): per-change checks key on Change ids
+// (`c_` + 16 hex) with legacy story cards (`h_`) accepted until the deletion
+// slice removes old artifacts. Story cards themselves stay `h_`-only.
+export const CheckCardIdSchema = z.string().regex(/^[hc]_[0-9a-f]{16}$/);
+export type CheckCardId = z.infer<typeof CheckCardIdSchema>;
+
 export const ProjectSummarySchema = z.object({
   id: z.string().min(1),
   root: z.string().min(1),
@@ -113,6 +119,8 @@ export const SessionSummarySchema = z.object({
   checkStatus: SessionCheckStatusSchema,
   highRiskCount: z.number().int().nonnegative(),
   captureState: CaptureStateSchema,
+  /** Changes generated for the session. 0 with no diffs; the UI hides those. */
+  changeCount: z.number().int().nonnegative(),
 });
 export type SessionSummary = z.infer<typeof SessionSummarySchema>;
 
@@ -480,7 +488,7 @@ export type EngagementState = z.infer<typeof EngagementStateSchema>;
 
 const StoredCheckQuestionBaseSchema = z.object({
   id: z.string().min(1),
-  cardId: CardIdSchema,
+  cardId: CheckCardIdSchema,
   kind: CheckKindSchema,
   question: z.string().min(1),
   evidenceFactIds: z.array(z.string()),
@@ -541,7 +549,7 @@ export const CheckAttemptV2Schema = z.object({
 export type CheckAttemptV2 = z.infer<typeof CheckAttemptV2Schema>;
 
 export const CardPictureSchema = z.object({
-  cardId: CardIdSchema,
+  cardId: CheckCardIdSchema,
   bucket: PictureBucketSchema,
   questionId: z.string().min(1).nullable(),
 });
@@ -588,7 +596,7 @@ export const AskThreadMessageSchema = z.object({
   id: z.string().min(1),
   role: z.enum(["user", "assistant"]),
   text: z.string().min(1),
-  cardId: CardIdSchema.nullable(),
+  cardId: CheckCardIdSchema.nullable(),
   response: AskResponseSchema.nullable(),
   createdAt: z.string().min(1),
 });

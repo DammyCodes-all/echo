@@ -3,7 +3,9 @@ import {
   ARTIFACT_FILE_NAMES,
   AskThreadSchema,
   CardIdSchema,
+  CardPictureSchema,
   ChangeCardSchema,
+  CheckCardIdSchema,
   ChecksV2ResponseSchema,
   EngagementStateSchema,
   HunkIdSchema,
@@ -207,6 +209,7 @@ describe("story-first contracts", () => {
       checkStatus: "not_checked",
       highRiskCount: 0,
       captureState: "ready",
+      changeCount: 0,
     });
     expect(parsed.checkStatus).toBe("not_checked");
 
@@ -227,6 +230,7 @@ describe("story-first contracts", () => {
       checkStatus: "done",
       highRiskCount: 0,
       captureState: "ready",
+      changeCount: 0,
     });
     expect(bad.success).toBe(false);
   });
@@ -271,6 +275,47 @@ describe("story-first contracts", () => {
         tiers: { h_0123456789abcdef: "engaged" },
       }).success,
     ).toBe(true);
+  });
+
+  it("accepts c_ and h_ card ids for checks/picture/threads", () => {
+    expect(CheckCardIdSchema.safeParse("c_0123456789abcdef").success).toBe(true);
+    expect(CheckCardIdSchema.safeParse("h_0123456789abcdef").success).toBe(true);
+    for (const bad of ["x_0123456789abcdef", "c_0123456789ABCDEF", "", "src/a.ts"]) {
+      expect(CheckCardIdSchema.safeParse(bad).success).toBe(false);
+    }
+    // Stored + public checks accept both; legacy h_ still passes.
+    for (const cardId of ["h_0123456789abcdef", "c_0123456789abcdef"]) {
+      expect(StoredCheckQuestionSchema.safeParse({ ...storedMcq, cardId }).success).toBe(true);
+      expect(PublicCheckQuestionSchema.safeParse({ ...storedMcq, cardId }).success).toBe(true);
+      expect(
+        CardPictureSchema.safeParse({ cardId, bucket: "solid", questionId: null }).success,
+      ).toBe(true);
+    }
+    expect(StoredCheckQuestionSchema.safeParse({ ...storedMcq, cardId: "nope" }).success).toBe(
+      false,
+    );
+    // Ask threads carry the same widened reference.
+    expect(
+      AskThreadSchema.safeParse({
+        schemaVersion: 1,
+        sessionId: "ses_test",
+        updatedAt: "2026-10-28T10:00:00.000Z",
+        messages: [
+          {
+            id: "m1",
+            role: "user",
+            text: "why?",
+            cardId: "c_0123456789abcdef",
+            response: null,
+            createdAt: "2026-10-28T10:00:00.000Z",
+          },
+        ],
+      }).success,
+    ).toBe(true);
+    // Story cards stay h_-only until the deletion slice.
+    expect(ChangeCardSchema.safeParse(minimalCard({ id: "c_0123456789abcdef" })).success).toBe(
+      false,
+    );
   });
 
   it("pins the versioned artifact file layout", () => {
