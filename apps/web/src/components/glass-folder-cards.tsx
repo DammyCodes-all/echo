@@ -1370,7 +1370,7 @@ canvas.gf-sheet-art[data-ready] { opacity: 1; filter: none; }
 }
 .gf-key:hover { transform: translateY(-2px); }
 .gf-key:active { transform: translateY(0) scale(.93); transition-duration: .12s; }
-.gf-key:focus-visible { outline: 2px solid #8c9bff; outline-offset: 3px; }
+.gf-key:focus-visible { outline: 2px solid #2d88ff; outline-offset: 3px; }
 .gf-key--add {
   color: #fff;
   background: radial-gradient(120% 90% at 50% 0%, #3a3a3f 0%, #121214 55%, #050506 100%);
@@ -1398,9 +1398,9 @@ canvas.gf-sheet-art[data-ready] { opacity: 1; filter: none; }
     0 10px 18px -8px rgba(0, 0, 0, .3);
 }
 .gf-root[data-tone="dark"] .gf-key--more {
-  color: #c9ceff;
+  color: #a9cfff;
   background: linear-gradient(180deg, rgba(42, 42, 76, .92) 0%, rgba(30, 30, 52, .82) 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 0 0 1px rgba(140, 155, 255, .25), 0 10px 18px -8px rgba(0, 0, 0, .6);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22), 0 0 0 1px rgba(45, 136, 255, .25), 0 10px 18px -8px rgba(0, 0, 0, .6);
 }
 .gf-key--more[aria-expanded="true"] { transform: scale(.96); }
 .gf-glyph { display: block; max-width: none; fill: none; stroke: currentColor; stroke-linecap: round; }
