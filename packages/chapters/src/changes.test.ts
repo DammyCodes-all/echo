@@ -11,10 +11,13 @@ import {
   hashDiffId,
   isStaleByHash,
   isTrivialFile,
+  MAX_FILES_PER_CHANGE,
   mergeSessionGroups,
   normalizeDiffForId,
+  rollupIdFor,
   type SnapshotPair,
   sessionBudget,
+  splitFilesByArea,
 } from "./changes";
 
 const PAIR: SnapshotPair = { prevOid: "a".repeat(40), nextOid: "b".repeat(40) };
@@ -190,6 +193,64 @@ describe("groupDiffIntoChanges", () => {
   it("returns no groups for an empty file list", () => {
     expect(groupDiffIntoChanges({ files: [], prompts: ["hello"] })).toEqual([]);
   });
+
+  it("splits a wide trivial fold into area chunks of at most 10 files", () => {
+    const typo = (path: string) => ({
+      path,
+      diff: TYPO_DIFF.replaceAll("src/greet.ts", path),
+    });
+    const files = [
+      ...Array.from({ length: 12 }, (_, i) => typo(`apps/web/f${String(i).padStart(2, "0")}.ts`)),
+      ...Array.from({ length: 3 }, (_, i) => typo(`docs/n${i}.md`)),
+    ];
+    const groups = groupDiffIntoChanges({ files, prompts: [] });
+    expect(groups).toHaveLength(3);
+    expect(groups.every((group) => group.kind === "small")).toBe(true);
+    expect(groups.map((group) => group.files.length)).toEqual([10, 2, 3]);
+    expect(groups[0]?.files.map((file) => file.path)).toEqual(
+      Array.from({ length: 10 }, (_, i) => `apps/web/f${String(i).padStart(2, "0")}.ts`),
+    );
+  });
+});
+
+describe("splitFilesByArea", () => {
+  it("groups by top directory and caps chunks at 10", () => {
+    const files = [
+      ...Array.from({ length: 12 }, (_, i) => ({ path: `b/f${i}.ts`, diff: "" })),
+      ...Array.from({ length: 3 }, (_, i) => ({ path: `a/n${i}.md`, diff: "" })),
+      { path: "root.txt", diff: "" },
+    ];
+    const chunks = splitFilesByArea(files);
+    // Areas sort by name ("(root)" sorts first); b chunks 10 + 2.
+    expect(chunks.map((chunk) => chunk.length)).toEqual([1, 3, 10, 2]);
+    expect(chunks[0]?.map((file) => file.path)).toEqual(["root.txt"]);
+    expect(chunks[1]?.map((file) => file.path)).toEqual(["a/n0.md", "a/n1.md", "a/n2.md"]);
+    expect(chunks.flat().length).toBe(files.length);
+  });
+
+  it("is deterministic under shuffle", () => {
+    const files = Array.from({ length: 25 }, (_, i) => ({
+      path: `src/g${i}.ts`,
+      diff: "",
+    }));
+    const once = splitFilesByArea(files).map((chunk) => chunk.map((file) => file.path));
+    const twice = splitFilesByArea([...files].reverse()).map((chunk) =>
+      chunk.map((file) => file.path),
+    );
+    expect(twice).toEqual(once);
+    expect(once.map((chunk) => chunk.length)).toEqual([10, 10, 5]);
+  });
+});
+
+describe("rollupIdFor", () => {
+  it("is stable per index and keeps index 0 on the original seed", () => {
+    const sessionId = "ses_rollup";
+    expect(rollupIdFor(sessionId)).toBe(rollupIdFor(sessionId, 0));
+    expect(rollupIdFor(sessionId, 0)).toMatch(/^c_[0-9a-f]{16}$/);
+    expect(rollupIdFor(sessionId, 1)).toMatch(/^c_[0-9a-f]{16}$/);
+    expect(rollupIdFor(sessionId, 1)).not.toBe(rollupIdFor(sessionId, 0));
+    expect(rollupIdFor(sessionId, 1)).toBe(rollupIdFor(sessionId, 1));
+  });
 });
 
 describe("buildSkeletonChange", () => {
@@ -283,7 +344,7 @@ describe("buildSessionSummaryFromDigests", () => {
     const summary = buildSessionSummaryFromDigests([first.digest, second.digest]);
     expect(sentences(summary)).toBe(3);
     const glue = new Set(
-      "this session contains reviewed change changes they span file files across the recorded in short no nothing to summarize yet and is are".split(
+      "this session contains reviewed change changes they span file files across the recorded in short no nothing to summarize yet and is are more".split(
         " ",
       ),
     );
@@ -300,6 +361,18 @@ describe("buildSessionSummaryFromDigests", () => {
     }
     expect(summary).toContain("2 reviewed changes");
     expect(summary).toContain("2 files");
+  });
+
+  it("caps the excerpt list with a derived overflow count", () => {
+    const digests = Array.from({ length: 26 }, (_, i) =>
+      [`digest${i} alpha beta gamma delta epsilon zeta eta`, "filler words here"].join(" "),
+    );
+    const summary = buildSessionSummaryFromDigests(digests);
+    expect(sentences(summary)).toBe(3);
+    expect(summary).toContain("26 reviewed changes");
+    expect(summary).toContain("and 21 more");
+    expect(summary).not.toContain("digest5");
+    expect(summary).toContain("digest0");
   });
 
   it("handles empty and single digests", () => {
@@ -362,21 +435,49 @@ describe("mergeSessionGroups", () => {
     expect(mergeSessionGroups(groups)).toEqual(groups);
   });
 
-  it("folds 24 groups to 5 with the biggest kept", () => {
+  it("folds 24 groups to 4 kept plus small rollups with the biggest kept", () => {
     const groups = Array.from({ length: 24 }, (_, i) =>
       bigGroup(`src/f${String(i).padStart(2, "0")}.ts`, i + 1),
     );
     const merged = mergeSessionGroups(groups);
-    expect(merged).toHaveLength(5);
+    // 20 folded files split into two 10-file rollups; nothing giant.
+    expect(merged).toHaveLength(6);
     expect(merged[0]?.kind).toBe("small");
+    expect(merged[0]?.rollup).toBe(true);
+    expect(merged[0]?.rollupIndex).toBe(0);
+    expect(merged[1]?.rollup).toBe(true);
+    expect(merged[1]?.rollupIndex).toBe(1);
+    expect(merged[0]?.files).toHaveLength(10);
+    expect(merged[1]?.files).toHaveLength(10);
     // Biggest substantive groups survive (23, 22, 21, 20 lines).
-    const kept = merged.slice(1).map((group) => group.files[0]?.path);
+    const kept = merged.slice(2).map((group) => group.files[0]?.path);
     expect(kept).toEqual(["src/f23.ts", "src/f22.ts", "src/f21.ts", "src/f20.ts"]);
-    // Rollup spans first-to-last folded pair in input order.
-    expect(merged[0]?.span).toEqual({ prevOid: "psrc/f00.ts", nextOid: "nsrc/f19.ts" });
-    // Rollup dedupes files and stays a valid skeleton input.
-    const skeleton = buildSkeletonChange(merged[0] as ChangeGroup, PAIR);
-    expect(ChangeSchema.safeParse({ ...skeleton, version: 1 }).success).toBe(true);
+    // Each rollup spans its own folded pairs in input order.
+    expect(merged[0]?.span).toEqual({ prevOid: "psrc/f00.ts", nextOid: "nsrc/f09.ts" });
+    expect(merged[1]?.span).toEqual({ prevOid: "psrc/f10.ts", nextOid: "nsrc/f19.ts" });
+    // Rollups dedupe files and stay valid skeleton inputs.
+    for (const rollup of merged.slice(0, 2)) {
+      const skeleton = buildSkeletonChange(rollup as ChangeGroup, PAIR);
+      expect(ChangeSchema.safeParse({ ...skeleton, version: 1 }).success).toBe(true);
+    }
+  });
+
+  it("caps every emitted group at 10 files across areas", () => {
+    const groups = [
+      ...Array.from({ length: 14 }, (_, i) => bigGroup(`apps/a${i}.ts`, 30 + i)),
+      ...Array.from({ length: 14 }, (_, i) => bigGroup(`docs/d${i}.md`, 1)),
+    ];
+    const merged = mergeSessionGroups(groups);
+    for (const group of merged) {
+      expect(group.files.length).toBeLessThanOrEqual(MAX_FILES_PER_CHANGE);
+    }
+    // Folded docs land in their own area chunk, not mixed with apps files.
+    const rollups = merged.filter((group) => group.rollup === true);
+    expect(rollups.length).toBeGreaterThan(0);
+    for (const rollup of rollups) {
+      const areas = new Set(rollup.files.map((file) => file.path.split("/")[0]));
+      expect(areas.size).toBe(1);
+    }
   });
 
   it("is deterministic under shuffle", () => {
