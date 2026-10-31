@@ -8,6 +8,12 @@ import { createHash } from "node:crypto";
  */
 
 export const MAX_FILES_PER_GROUP = 4;
+/**
+ * Reader cap: no change carries more than ~10 files. A 52-file change
+ * cannot be understood in a minute, so the trivial fold and the session
+ * fold split wider sets by area instead of emitting one giant change.
+ */
+export const MAX_FILES_PER_CHANGE = 10;
 export const DIGEST_MIN_TOKENS = 50;
 export const DIGEST_MAX_TOKENS = 100;
 export const DIGEST_TARGET_TOKENS = 75;
@@ -37,11 +43,13 @@ export interface ChangeGroup {
   /** Provenance the skeleton copies into `createdFrom`; absent means snapshot_pair fallback. */
   createdFrom?: CreatedFrom;
   /**
-   * Set by the session fold on its leading rollup only. The server gives the
+   * Set by the session fold on its rollup chunks. The server gives each
    * rollup a stable per-session id (instead of a content hash) so regens
-   * update it in place instead of piling up a new rollup row per run.
+   * update rows in place instead of piling up new rollup rows per run.
    */
   rollup?: boolean;
+  /** Chunk index within the session fold, set on rollup groups only. */
+  rollupIndex?: number;
   /**
    * Snapshot span the group was grouped from, set by the server after the
    * per-pair grouping pass. The session rollup spans its folded members'
@@ -75,12 +83,47 @@ function groupLineCount(group: ChangeGroup): number {
   return touched;
 }
 
+/** Area of a path for the reader split: its top directory, or root. */
+function areaOf(path: string): string {
+  const head = path.split("/")[0] ?? "";
+  return head === "" || !path.includes("/") ? "(root)" : head;
+}
+
+/**
+ * Split files into area chunks of at most `maxPer` files. Areas sort by
+ * name, paths sort within, and oversized areas chunk sequentially, so the
+ * output is deterministic and every chunk stays readable in a minute.
+ */
+export function splitFilesByArea(
+  files: DiffFile[],
+  maxPer: number = MAX_FILES_PER_CHANGE,
+): DiffFile[][] {
+  const sorted = [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const areas = new Map<string, DiffFile[]>();
+  for (const file of sorted) {
+    const area = areaOf(file.path);
+    const list = areas.get(area) ?? [];
+    list.push(file);
+    areas.set(area, list);
+  }
+  const chunks: DiffFile[][] = [];
+  for (const area of [...areas.keys()].sort()) {
+    const list = areas.get(area) ?? [];
+    for (let i = 0; i < list.length; i += maxPer) {
+      chunks.push(list.slice(i, i + maxPer));
+    }
+  }
+  return chunks;
+}
+
 /**
  * Session-level fold. Per-pair grouping can still emit dozens of changes
  * for a long session; this merges down to the session budget, keeping the
- * most substantive groups and folding the rest into one leading "small"
- * rollup. Deterministic: rank is substantive-first, lines desc, path asc;
- * the rollup spans the folded members' first-to-last snapshot pair.
+ * most substantive groups and folding the rest into leading "small"
+ * rollups, one area chunk each (at most MAX_FILES_PER_CHANGE files, so the
+ * reader sees several small changes instead of one giant one).
+ * Deterministic: rank is substantive-first, lines desc, path asc; each
+ * rollup spans its own folded members' earliest-to-latest snapshot pair.
  * Returns the input untouched when it already fits the budget.
  */
 export function mergeSessionGroups(groups: ChangeGroup[]): ChangeGroup[] {
@@ -95,7 +138,8 @@ export function mergeSessionGroups(groups: ChangeGroup[]): ChangeGroup[] {
   }));
   ranked.sort((a, b) => a.small - b.small || b.lines - a.lines || (a.head < b.head ? -1 : 1));
   const kept = ranked.slice(0, Math.max(budget - 1, 1)).map((entry) => entry.group);
-  const folded = ranked.slice(Math.max(budget - 1, 1)).map((entry) => entry.group);
+  const foldedRanked = ranked.slice(Math.max(budget - 1, 1));
+  const folded = foldedRanked.map((entry) => entry.group);
   const seen = new Map<string, DiffFile>();
   for (const group of folded) {
     for (const file of group.files) {
@@ -108,32 +152,35 @@ export function mergeSessionGroups(groups: ChangeGroup[]): ChangeGroup[] {
       );
     }
   }
-  const files = [...seen.values()];
-  const refs = folded.flatMap((group) => group.promptRefs);
-  // Span endpoints in input (chronological) order, skipping members the
-  // caller never stamped. No stamped span means the build caller supplies it.
-  const stamped = ranked
-    .slice(Math.max(budget - 1, 1))
-    .sort((a, b) => a.index - b.index)
-    .map((entry) => entry.group.span)
-    .filter((span): span is SnapshotPair => span !== undefined);
-  const rollup: ChangeGroup = {
-    kind: "small",
-    rollup: true,
-    files,
-    promptRefs: [...new Set(refs)].sort((a, b) => a - b),
-    ...(stamped.length > 0 &&
-    stamped[0]?.prevOid !== undefined &&
-    stamped[stamped.length - 1]?.nextOid !== undefined
-      ? {
-          span: {
-            prevOid: (stamped[0] as SnapshotPair).prevOid,
-            nextOid: (stamped[stamped.length - 1] as SnapshotPair).nextOid,
-          },
-        }
-      : {}),
-  };
-  return [rollup, ...kept];
+  // Chronological member order, for per-chunk spans and prompt refs.
+  const ordered = [...foldedRanked].sort((a, b) => a.index - b.index).map((entry) => entry.group);
+  const rollups = splitFilesByArea([...seen.values()]).map((chunk, rollupIndex) => {
+    const paths = new Set(chunk.map((file) => file.path));
+    const members = ordered.filter((group) => group.files.some((file) => paths.has(file.path)));
+    const refs = members.flatMap((group) => group.promptRefs);
+    const stamped = members
+      .map((group) => group.span)
+      .filter((span): span is SnapshotPair => span !== undefined);
+    const rollup: ChangeGroup = {
+      kind: "small",
+      rollup: true,
+      rollupIndex,
+      files: chunk,
+      promptRefs: [...new Set(refs)].sort((a, b) => a - b),
+      ...(stamped.length > 0 &&
+      stamped[0]?.prevOid !== undefined &&
+      stamped[stamped.length - 1]?.nextOid !== undefined
+        ? {
+            span: {
+              prevOid: (stamped[0] as SnapshotPair).prevOid,
+              nextOid: (stamped[stamped.length - 1] as SnapshotPair).nextOid,
+            },
+          }
+        : {}),
+    };
+    return rollup;
+  });
+  return [...rollups, ...kept];
 }
 
 export interface HeadsUp {
@@ -200,11 +247,15 @@ export function hashDiffId(normalizedDiff: string, prevOid: string, nextOid: str
 }
 
 /**
- * Stable rollup id for a session. Content-hashed ids would mint a new rollup
- * row on every fold shift; this one lets regens update the same row.
+ * Stable rollup ids for a session, one per fold chunk. Content-hashed ids
+ * would mint new rollup rows on every fold shift; these let regens update
+ * the same rows. Index 0 keeps the original seed so existing rollup rows
+ * (and their progress) survive the one-to-many split.
  */
-export function rollupIdFor(sessionId: string): string {
-  const hex = createHash("sha256").update(`echo-rollup-v1\n${sessionId}`).digest("hex");
+export function rollupIdFor(sessionId: string, index = 0): string {
+  const seed =
+    index === 0 ? `echo-rollup-v1\n${sessionId}` : `echo-rollup-v1\n${sessionId}\n${index}`;
+  const hex = createHash("sha256").update(seed).digest("hex");
   return `c_${hex.slice(0, 16)}`;
 }
 
@@ -297,8 +348,9 @@ function promptRefsFor(files: DiffFile[], prompts: string[]): number[] {
 
 /**
  * Deterministic skeleton grouping, no model. Files sort by path, trivial
- * files fold into one leading "small" group, and substantive files chunk
- * into balanced groups of at most MAX_FILES_PER_GROUP (5 files -> 3 + 2).
+ * files fold into leading "small" groups (one area chunk each, at most
+ * MAX_FILES_PER_CHANGE files), and substantive files chunk into balanced
+ * groups of at most MAX_FILES_PER_GROUP (5 files -> 3 + 2).
  * An empty file list yields no groups: no diff means no change.
  */
 export function groupDiffIntoChanges(input: GroupDiffInput): ChangeGroup[] {
@@ -307,11 +359,13 @@ export function groupDiffIntoChanges(input: GroupDiffInput): ChangeGroup[] {
   const substantive = files.filter((file) => !isTrivialFile(file.diff));
   const groups: ChangeGroup[] = [];
   const provenance = input.createdFrom ? { createdFrom: input.createdFrom } : {};
-  if (trivial.length > 0) {
+  // Wide trivial folds split by area too: no change carries more than
+  // MAX_FILES_PER_CHANGE files, whatever its kind.
+  for (const chunk of splitFilesByArea(trivial)) {
     groups.push({
       kind: "small",
-      files: trivial,
-      promptRefs: promptRefsFor(trivial, input.prompts),
+      files: chunk,
+      promptRefs: promptRefsFor(chunk, input.prompts),
       ...provenance,
     });
   }
@@ -497,7 +551,11 @@ export function buildSessionSummaryFromDigests(digests: string[]): string {
       ? `They span ${fileCount} ${plural(fileCount, "file", "files")} across the changes.`
       : "They span the files recorded in the changes.";
   if (count === 1) return `${first} ${second}`;
+  // Cap the enumeration: with twenty changes the full list is a wall, not
+  // a summary. The overflow count is derived, never invented.
+  const MAX_EXCERPTS = 5;
   const excerpts = digests
+    .slice(0, MAX_EXCERPTS)
     .map((digest) =>
       digest
         .split(/\s+/)
@@ -506,7 +564,8 @@ export function buildSessionSummaryFromDigests(digests: string[]): string {
         .join(" "),
     )
     .join(" / ");
-  return `${first} ${second} In short, ${excerpts}.`;
+  const tail = count > MAX_EXCERPTS ? `${excerpts}; and ${count - MAX_EXCERPTS} more` : excerpts;
+  return `${first} ${second} In short, ${tail}.`;
 }
 
 /**
