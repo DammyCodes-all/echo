@@ -261,4 +261,29 @@ CREATE TABLE IF NOT EXISTS project_architecture_versions (
 );
 `,
   },
+  // ADR 0014 review reader: change refs carry snapshot-pair identity only
+  // (no code bodies — redaction gate), progress keys on (id, version) and is
+  // never reset by regen.
+  {
+    version: 13,
+    sql: `
+CREATE TABLE IF NOT EXISTS change_refs (
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  change_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  prev_oid TEXT NOT NULL,
+  next_oid TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, change_id, version)
+);
+CREATE TABLE IF NOT EXISTS change_progress (
+  session_id TEXT NOT NULL REFERENCES sessions(id),
+  change_id TEXT NOT NULL,
+  version INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (session_id, change_id, version)
+);
+`,
+  },
 ];
