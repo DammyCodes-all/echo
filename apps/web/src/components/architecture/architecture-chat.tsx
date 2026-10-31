@@ -58,7 +58,7 @@ function HistoryMessage({
         </button>
       ) : null}
       {patch && message.applied ? (
-        <p className="font-mono text-[11px] uppercase tracking-widest text-dusk-pass">Applied</p>
+        <p className="text-[11px] uppercase tracking-widest text-dusk-pass">Applied</p>
       ) : null}
     </div>
   );
