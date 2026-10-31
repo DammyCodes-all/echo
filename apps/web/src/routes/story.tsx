@@ -20,6 +20,7 @@ import { ProjectNavPill } from "../components/project-nav-pill";
 import { ScaffoldPage } from "../components/scaffold-page";
 import { ClaimBody, ClaimItem, type HistoryEntry, StoryCard } from "../components/story-card";
 import { VerificationPanel } from "../components/verification-panel";
+import { useDemoMode } from "../hooks/use-demo-mode";
 import { useEngagement } from "../hooks/use-engagement";
 import { sessionDisplayTitle } from "../session-display";
 
@@ -309,6 +310,9 @@ export function StoryPage() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { track } = useEngagement(sessionId);
+  // Demo forbids check-me and skip (403): hide those affordances up front so
+  // the visitor never taps a button that cannot work.
+  const demoMode = useDemoMode();
 
   useEffect(() => {
     track("story_opened");
@@ -667,7 +671,7 @@ export function StoryPage() {
                     onToggle={() => setExpandedId(expandedId === card.id ? null : card.id)}
                     onTrack={track}
                     onAsk={handleAsk}
-                    onCheck={handleCheckMe}
+                    onCheck={demoMode ? undefined : handleCheckMe}
                     destructive={isDestructive(card)}
                     dismissed={dismissedIds.has(card.id)}
                     onDismiss={() => toggleDismissed(card.id)}
@@ -787,7 +791,7 @@ export function StoryPage() {
                   state={checksQuery.data}
                   focusQuestionId={checkFocusId}
                   onUpdate={(next) => queryClient.setQueryData(["checks-v2", sessionId], next)}
-                  onSkip={() => void handleSkipCheck()}
+                  onSkip={demoMode ? undefined : () => void handleSkipCheck()}
                   onDone={handleRunnerDone}
                 />
               ) : checksQuery.data.status === "skipped" ? (
@@ -815,7 +819,7 @@ export function StoryPage() {
                     checksQuery.data.questions.length > 0 ? checksQuery.data.questions.length : null
                   }
                   onStart={() => void handleStartCheck()}
-                  onSkip={() => void handleSkipCheck()}
+                  onSkip={demoMode ? undefined : () => void handleSkipCheck()}
                   onCancel={handleCancelCheck}
                   starting={checkBusy}
                 />
