@@ -41,7 +41,7 @@ function patchNodeIds(patch: ArchitecturePatch): string[] {
 export function ProjectArchitecturePage() {
   // The read-only demo rejects generate/undo/chat (403): hide those controls
   // and leave the baked map plus the evidence-only touched-files table.
-  const demoMode = useDemoMode();
+  const { isDemo: demoMode } = useDemoMode();
   const { projectId = "" } = useParams();
   const queryClient = useQueryClient();
   const [searchParams] = useSearchParams();
