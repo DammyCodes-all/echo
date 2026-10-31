@@ -4,7 +4,8 @@ type CheckOfferProps = {
   hasHighRisk: boolean;
   questionCount: number | null;
   onStart: () => void;
-  onSkip: () => void;
+  /** Absent when skipping is unavailable (the read-only demo rejects it). */
+  onSkip?: () => void;
   onCancel: () => void;
   starting: boolean;
 };
@@ -62,14 +63,16 @@ export function CheckOffer({
         <button type="button" onClick={onStart} disabled={starting} className={PRIMARY}>
           Start check
         </button>
-        <button
-          type="button"
-          onClick={onSkip}
-          disabled={starting}
-          className="text-sm text-dusk-muted underline underline-offset-4 disabled:opacity-40"
-        >
-          Skip — no pressure
-        </button>
+        {onSkip ? (
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={starting}
+            className="text-sm text-dusk-muted underline underline-offset-4 disabled:opacity-40"
+          >
+            Skip — no pressure
+          </button>
+        ) : null}
       </div>
     );
   }
@@ -89,14 +92,16 @@ export function CheckOffer({
         <button type="button" onClick={onStart} disabled={starting} className={PRIMARY}>
           Start check
         </button>
-        <button
-          type="button"
-          onClick={onSkip}
-          disabled={starting}
-          className="text-sm text-dusk-muted underline underline-offset-4 disabled:opacity-40"
-        >
-          Skip — no pressure
-        </button>
+        {onSkip ? (
+          <button
+            type="button"
+            onClick={onSkip}
+            disabled={starting}
+            className="text-sm text-dusk-muted underline underline-offset-4 disabled:opacity-40"
+          >
+            Skip — no pressure
+          </button>
+        ) : null}
       </div>
     </div>
   );

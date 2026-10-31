@@ -224,6 +224,9 @@ importers:
       '@echo/db':
         specifier: workspace:*
         version: link:../../packages/db
+      '@echo/demo':
+        specifier: workspace:*
+        version: link:../../packages/demo
       commander:
         specifier: ^15.0.0
         version: 15.0.0
@@ -302,6 +305,12 @@ importers:
       minimatch:
         specifier: ^11.0.2
         version: 11.0.2
+      oxc-parser:
+        specifier: ^0.156.0
+        version: 0.156.0
+      undici:
+        specifier: ^8.12.3
+        version: 8.12.3
 
   apps/web:
     dependencies:
@@ -461,6 +470,18 @@ importers:
       drizzle-orm:
         specifier: ^0.44.7
         version: 0.44.7(better-sqlite3@12.11.1)
+
+  packages/demo:
+    dependencies:
+      '@echo/contracts':
+        specifier: workspace:*
+        version: link:../contracts
+      '@echo/db':
+        specifier: workspace:*
+        version: link:../db
+      '@echo/redaction':
+        specifier: workspace:*
+        version: link:../redaction
 
   packages/fixtures:
     dependencies:
