@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
@@ -782,4 +782,114 @@ describe("createChecksV2Service", () => {
       db.close();
     }
   }, 10_000);
+});
+
+describe("checks-v2 demo overlay", () => {
+  function artifactPath(dataDir: string, sessionId: string): string {
+    return join(
+      dataDir,
+      "projects",
+      PROJECT_ID,
+      "sessions",
+      sessionId,
+      "artifacts",
+      "checks_v2.json",
+    );
+  }
+
+  async function bake(dataDir: string, db: EchoDb, sessionId: string) {
+    const { fetchImpl } = stubFetchQueue([draftSet(), hitGrading()]);
+    const service = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV, fetchImpl });
+    const generated = await service.generate(sessionId);
+    expect(generated.status).toBe(200);
+    return ChecksV2ResponseSchema.parse(generated.body);
+  }
+
+  it("answers persist to memory while the baked file stays byte-identical", async () => {
+    const { db, dataDir } = seedSession("ses_v2_demo");
+    try {
+      const baked = await bake(dataDir, db, "ses_v2_demo");
+      const mcq = baked.questions.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb");
+      if (!mcq) throw new Error("expected the mcq question");
+      const before = readFileSync(artifactPath(dataDir, "ses_v2_demo"), "utf8");
+      const demo = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV, demo: true });
+      const answered = await demo.answer("ses_v2_demo", {
+        questionId: mcq.id,
+        confidence: "certain",
+        selectedOptionId: "o1",
+        answerText: null,
+      });
+      expect(answered.status).toBe(200);
+      const mid = ChecksV2ResponseSchema.parse(demo.state("ses_v2_demo").body);
+      expect(mid.attempts).toHaveLength(1);
+      expect(readFileSync(artifactPath(dataDir, "ses_v2_demo"), "utf8")).toBe(before);
+      // A fresh file-backed service sees none of it: nothing leaked to disk.
+      const fileBacked = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV });
+      expect(
+        ChecksV2ResponseSchema.parse(fileBacked.state("ses_v2_demo").body).attempts,
+      ).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("demo completion does not flip the session check status", async () => {
+    const { db, dataDir } = seedSession("ses_v2_demo_done");
+    try {
+      const baked = await bake(dataDir, db, "ses_v2_demo_done");
+      const mcq = baked.questions.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb");
+      const free = baked.questions.find((entry) => entry.cardId === "h_aaaaaaaaaaaaaaaa");
+      if (!mcq || !free) throw new Error("expected both questions");
+      const { fetchImpl } = stubFetchQueue([hitGrading()]);
+      const demo = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl, demo: true },
+      );
+      await demo.answer("ses_v2_demo_done", {
+        questionId: mcq.id,
+        confidence: "certain",
+        selectedOptionId: "o1",
+        answerText: null,
+      });
+      const answeredFree = await demo.answer("ses_v2_demo_done", {
+        questionId: free.id,
+        confidence: "guessing",
+        selectedOptionId: null,
+        answerText: "The change updated billing/retry.ts.",
+      });
+      expect(answeredFree.status).toBe(200);
+      expect(ChecksV2ResponseSchema.parse(demo.state("ses_v2_demo_done").body).status).toBe(
+        "completed",
+      );
+      expect(getSessionSummary(db, "ses_v2_demo_done")?.checkStatus).toBe("not_checked");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("demo enforces no-retakes within the visitor overlay", async () => {
+    const { db, dataDir } = seedSession("ses_v2_demo_retake");
+    try {
+      const baked = await bake(dataDir, db, "ses_v2_demo_retake");
+      const mcq = baked.questions.find((entry) => entry.cardId === "h_bbbbbbbbbbbbbbbb");
+      if (!mcq) throw new Error("expected the mcq question");
+      const demo = createChecksV2Service({ db, dataDir, log: silentLog }, { env: ENV, demo: true });
+      const first = await demo.answer("ses_v2_demo_retake", {
+        questionId: mcq.id,
+        confidence: "certain",
+        selectedOptionId: "o1",
+        answerText: null,
+      });
+      expect(first.status).toBe(200);
+      const second = await demo.answer("ses_v2_demo_retake", {
+        questionId: mcq.id,
+        confidence: "certain",
+        selectedOptionId: "o1",
+        answerText: null,
+      });
+      expect(second.status).toBe(400);
+    } finally {
+      db.close();
+    }
+  });
 });
