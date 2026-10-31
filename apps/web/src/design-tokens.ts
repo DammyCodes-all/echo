@@ -28,10 +28,10 @@ export const duskDarkTokens = {
     ink: "#EEEEFA",
     /** Secondary text, captions, labels. */
     muted: "#A6A6C4",
-    /** Primary accent (Graphite Blue): CTAs, active node, confidence fill. */
-    accent: "#8C9BFF",
+    /** Primary accent (Meta blue): CTAs, active node, confidence fill. */
+    accent: "#2D88FF",
     /** Text on secondary fills. */
-    accentSoft: "#C9CEFF",
+    accentSoft: "#A9CFFF",
     /** Kept highlight, currently swatch-only. */
     peach: "#FFB38A",
     /** Status pass. */
@@ -41,7 +41,7 @@ export const duskDarkTokens = {
     fail: "#FF8A8A",
     failWash: "rgba(255, 138, 138, 0.14)",
     /** Accent wash for active/turn chips and selection. */
-    accentWash: "rgba(140, 155, 255, 0.14)",
+    accentWash: "rgba(45, 136, 255, 0.14)",
     /** Peach wash for tool chips. */
     peachWash: "rgba(255, 179, 138, 0.14)",
     /** Card hairline on base. */
@@ -77,8 +77,8 @@ export const duskDarkTokens = {
     deadEnd: "1.5px dashed #8A8AB0",
   },
   shadow: {
-    activeNode: "0 0 0 7px rgba(140, 155, 255, 0.24), 0 0 22px rgba(140, 155, 255, 0.5)",
-    confidenceFill: "0 0 16px rgba(140, 155, 255, 0.5)",
+    activeNode: "0 0 0 7px rgba(45, 136, 255, 0.24), 0 0 22px rgba(45, 136, 255, 0.5)",
+    confidenceFill: "0 0 16px rgba(45, 136, 255, 0.5)",
   },
   layout: {
     artboardWidth: 560,
