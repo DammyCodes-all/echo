@@ -1222,3 +1222,10 @@ notes.
 - status: done
 - evidence: `tsc` clean, `biome check` clean on both touched files, `pnpm --filter @echo/web build` ok.
 - notes: Nothing staged or committed.
+
+## 2026-11-01 — Inbox heals: summaries, AI names, capture state (Muse sessions)
+
+- item: story deletion had orphaned the inbox — nothing wrote summaries, no story artifacts existed so every session read "recording" forever ("Still recording — changes pending…"), and Muse rows had no title. Fix: changes pipeline syncs `story_summary` from the artifact on every run; untitled sessions get one AI-generated name (first prompt + change titles → 6-words-or-fewer headline, 60-char `capSessionTitle` backstop), first-write-wins forever with agent titles never losing; capture state derives from tape silence (`isSessionQuiet`, moved to `@echo/contracts` for sharing) instead of the story artifact; backfill picks lagging rows with a new `meta` reason (title flag needs model on + nameable input, so model-off daemons never spin); content-fresh runs advance drifted/missing watermarks, fixing a pre-existing stale→fresh infinite backfill loop found live (pre-watermark zero-diff artifact picked every tick). Prompt text gated before leaving the process; model names gated before SQLite.
+- status: done
+- evidence: new tests watched red before the fix (db capture-state + server meta/watermark); full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 73 files / 706 passed (naming incl. no-call skip, redaction, cap; watermark advance with stash-verified red), `pnpm build` ok; live probe on a real-data copy converged (every session summary + derived state, agent titles intact, no stuck-recording); model-off titles correctly stay null for a model run (naming pinned by mocked-fetch tests). ADR 0016.
+- notes: Legacy frozen story summaries are replaced by living changes summaries on next touch. Quiet snapshot-less sessions keep null summary (nothing to summarize); quiet prompt-less sessions keep null title and are never flagged. No UI changes, so no browser pass. Stage and commit nothing.
