@@ -10,6 +10,7 @@ import {
   deriveEngagementTiers,
   ensureIngestProject,
   getArtifactRef,
+  getFirstPromptText,
   getReaderCheckpoint,
   getReviewTransition,
   getSession,
@@ -39,6 +40,8 @@ import {
   sessionHasUserData,
   setSessionCheckStatus,
   setSessionStoryState,
+  setSessionSummary,
+  setSessionTitleIfNull,
   upsertArtifactRef,
   upsertProject,
   upsertReaderCheckpoint,
@@ -652,18 +655,90 @@ describe("repositories", () => {
   it("defaults check status and capture state on new sessions", () => {
     const db = openTestDb();
     seed(db);
-    // No story artifact yet → still-recording (Q47), even with import_only quality.
-    const summary = getSessionSummary(db, "ses_1");
+    // A fresh touch with no events yet reads as recording; the rule is tape
+    // silence now, not the deleted story artifact.
+    const summary = getSessionSummary(db, "ses_1", Date.now());
     expect(summary).toMatchObject({
       checkStatus: "not_checked",
       summary: null,
       highRiskCount: 0,
       captureState: "recording",
     });
-    expect(listSessions(db, "prj_1")[0]).toMatchObject({
+    expect(listSessions(db, "prj_1", Date.now())[0]).toMatchObject({
       checkStatus: "not_checked",
       captureState: "recording",
     });
+    db.close();
+  });
+
+  it("derives capture state from tape silence once the tape goes quiet", () => {
+    const db = openTestDb();
+    seed(db, "partial");
+    appendEvents(db, "ses_1", [
+      makeEvent(0, {
+        event_id: "evt_old",
+        ts: "2026-10-27T10:00:00.000Z",
+        observed_at: "2026-10-27T10:00:00.050Z",
+      }),
+    ]);
+    const quietMs = Date.parse("2026-10-27T12:00:00.000Z");
+    expect(getSessionSummary(db, "ses_1", quietMs)?.captureState).toBe("partial");
+    expect(listSessions(db, "prj_1", quietMs)[0]?.captureState).toBe("partial");
+    db.close();
+  });
+
+  it("writes summaries without touching risk counts", () => {
+    const db = openTestDb();
+    seed(db);
+    setSessionStoryState(db, "ses_1", { summary: "old", highRiskCount: 3 });
+    setSessionSummary(db, "ses_1", "new summary");
+    expect(getSessionSummary(db, "ses_1")).toMatchObject({
+      summary: "new summary",
+      highRiskCount: 3,
+    });
+    db.close();
+  });
+
+  it("keeps the first session title forever", () => {
+    const db = openTestDb();
+    seed(db);
+    // Seeded title wins over any later write.
+    setSessionTitleIfNull(db, "ses_1", "late title");
+    expect(getSessionSummary(db, "ses_1")?.title).toBe("spike");
+    upsertSession(db, {
+      id: "ses_untitled",
+      projectId: "prj_1",
+      agent: "muse",
+      model: null,
+      directory: "/repo",
+      title: null,
+      startedAt: null,
+      tapePath: "/data/other.jsonl",
+      captureQuality: "partial",
+    });
+    setSessionTitleIfNull(db, "ses_untitled", "first words");
+    setSessionTitleIfNull(db, "ses_untitled", "second words");
+    expect(getSessionSummary(db, "ses_untitled")?.title).toBe("first words");
+    db.close();
+  });
+
+  it("reads the first prompt text in tape order", () => {
+    const db = openTestDb();
+    seed(db);
+    expect(getFirstPromptText(db, "ses_1")).toBeNull();
+    appendEvents(db, "ses_1", [
+      makeEvent(0, {
+        event_id: "evt_first",
+        kind: "prompt.submitted",
+        payload: { text: "first prompt" },
+      }),
+      makeEvent(1, {
+        event_id: "evt_second",
+        kind: "prompt.submitted",
+        payload: { text: "second prompt" },
+      }),
+    ]);
+    expect(getFirstPromptText(db, "ses_1")).toBe("first prompt");
     db.close();
   });
 
@@ -753,34 +828,34 @@ describe("repositories", () => {
     db.close();
   });
 
-  it("derives inbox capture state from the story artifact watermark", () => {
+  it("derives inbox capture state from tape silence", () => {
     const db = openTestDb();
     seed(db, "full");
     appendEvents(db, "ses_1", [makeEvent(0), makeEvent(1)]);
 
-    // (1) Fresh session with no story artifact → still-recording.
-    expect(getSessionSummary(db, "ses_1")).toMatchObject({ eventCount: 2 });
-    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("recording");
+    // (1) Warm tape → still-recording (events observed 30s before now).
+    const warmMs = Date.parse("2026-10-27T10:00:30.000Z");
+    expect(getSessionSummary(db, "ses_1", warmMs)).toMatchObject({ eventCount: 2 });
+    expect(getSessionSummary(db, "ses_1", warmMs)?.captureState).toBe("recording");
 
-    // (2) Story artifact watermarked at the current tape → quality-derived state.
-    upsertArtifactRef(db, {
-      sessionId: "ses_1",
-      kind: "story",
-      path: "/data/story_v1.md",
-      tapeWatermark: { eventCount: 2, sha256: "aaa" },
-      generator: "storyteller-0.1",
-      generatedAt: "2026-10-28T10:00:00.000Z",
-    });
-    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("ready");
-    expect(listSessions(db, "prj_1")[0]?.captureState).toBe("ready");
+    // (2) Quiet tape → quality-derived state, no artifact needed.
+    const quietMs = Date.parse("2026-10-27T12:00:00.000Z");
+    expect(getSessionSummary(db, "ses_1", quietMs)?.captureState).toBe("ready");
+    expect(listSessions(db, "prj_1", quietMs)[0]?.captureState).toBe("ready");
 
-    // (3) Tape grows past the watermark without a story refresh → recording again.
-    appendEvents(db, "ses_1", [makeEvent(2)]);
-    expect(getSessionSummary(db, "ses_1")).toMatchObject({ eventCount: 3 });
-    expect(getSessionSummary(db, "ses_1")?.captureState).toBe("recording");
+    // (3) Fresh event on a quiet tape → recording again.
+    appendEvents(db, "ses_1", [
+      makeEvent(2, {
+        event_id: "evt_fresh",
+        ts: "2026-10-27T11:59:50.000Z",
+        observed_at: "2026-10-27T11:59:55.000Z",
+      }),
+    ]);
+    expect(getSessionSummary(db, "ses_1", quietMs)).toMatchObject({ eventCount: 3 });
+    expect(getSessionSummary(db, "ses_1", quietMs)?.captureState).toBe("recording");
 
-    // (4) listSessions reflects the same stale-watermark state for the row.
-    const rows = listSessions(db, "prj_1");
+    // (4) listSessions reflects the same state for the row.
+    const rows = listSessions(db, "prj_1", quietMs);
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ id: "ses_1", eventCount: 3, captureState: "recording" });
     db.close();
