@@ -25,6 +25,7 @@ import {
   ChangeCodeResponseSchema,
   ChangeIdSchema,
   ChangeSchema,
+  capSessionTitle,
   PROGRESS_FILE_NAME,
   type Progress,
   ProgressSchema,
@@ -33,13 +34,17 @@ import {
 import {
   type EchoDb,
   getChangeRefs,
+  getFirstPromptText,
   getProgress,
   getSession,
   getSessionLastObservedAt,
+  getSessionTitle,
   listSnapshots,
   pruneChangeRefs,
   readAllEvents,
   recordChangeRef,
+  setSessionSummary,
+  setSessionTitleIfNull,
   recordProgress as storeProgressRow,
 } from "@echo/db";
 import {
@@ -49,7 +54,7 @@ import {
   modelConfigFromEnv,
   requestJson,
 } from "@echo/model";
-import { redactJson } from "@echo/redaction";
+import { redactJson, redactText } from "@echo/redaction";
 import { diffShadowTrees } from "@echo/snapshots";
 import { isSessionQuiet } from "./session-readiness";
 
@@ -80,7 +85,7 @@ export interface ChangesLogger {
 
 export interface ChangesBackfillPick {
   sessionId: string;
-  reason: "missing" | "stale" | "fill";
+  reason: "missing" | "stale" | "fill" | "meta";
 }
 
 export interface ChangesServiceDeps {
@@ -231,6 +236,65 @@ function promptTextsFor(db: EchoDb, sessionId: string): string[] {
     if (typeof text === "string" && text !== "") texts.push(text);
   }
   return texts.slice(-MAX_PROMPTS);
+}
+
+// Model-distilled session name from the first prompt plus change titles.
+// Runs at most once per session: first-write-wins forever, agent titles
+// never lose, and any failure just leaves the title null for the next run.
+async function nameSessionFromModel(args: {
+  db: EchoDb;
+  log: ChangesLogger;
+  fetchImpl: typeof fetch;
+  redactJsonImpl: typeof redactJson;
+  reasoningEffort: string;
+  sessionId: string;
+  config: ModelConfig | null;
+  changes: Change[];
+}): Promise<void> {
+  if (args.config === null) return;
+  if (getSessionTitle(args.db, args.sessionId) !== null) return;
+  const firstPrompt = getFirstPromptText(args.db, args.sessionId);
+  const titles = args.changes.map((change) => change.title).filter((title) => title !== "");
+  if (firstPrompt === null && titles.length === 0) return;
+  // Prompt text leaves the process only through the gate.
+  let redacted: ChatMessage[];
+  try {
+    redacted = args.redactJsonImpl([
+      {
+        role: "system",
+        content:
+          'Name this coding session in 6 words or fewer: a short topic phrase like an agent session title. Reply with JSON only: {"title": string}. No quotes, no trailing period.',
+      },
+      {
+        role: "user",
+        content: [
+          firstPrompt !== null ? `First request:\n${firstPrompt.slice(0, 500)}` : null,
+          titles.length > 0 ? `Changes:\n${titles.slice(0, 20).join("\n")}` : null,
+        ]
+          .filter((part): part is string => part !== null)
+          .join("\n\n"),
+      },
+    ]).value as ChatMessage[];
+  } catch {
+    return;
+  }
+  const parse = (value: unknown): string => {
+    if (typeof value !== "object" || value === null) throw new Error("name must be an object");
+    const title = (value as Record<string, unknown>).title;
+    if (typeof title !== "string" || title.trim() === "") throw new Error("name needs a title");
+    return title;
+  };
+  try {
+    const { value } = await requestJson(args.config, redacted, parse, {
+      fetchImpl: args.fetchImpl,
+      reasoningEffort: args.reasoningEffort,
+    });
+    // Names land in SQLite, so the model text passes the gate first too.
+    setSessionTitleIfNull(args.db, args.sessionId, capSessionTitle(redactText(value).value));
+  } catch (error) {
+    // Content-free diagnostic: never log the candidate name.
+    args.log.error({ session_id: args.sessionId, err: String(error) }, "session naming failed");
+  }
 }
 
 const ProgressArtifactSchema = z.object({
@@ -562,6 +626,18 @@ export function createChangesService(
           sessionId,
           previous.changes.map((change) => change.id),
         );
+        // Fresh artifact, possibly stale inbox columns: heal legacy rows.
+        setSessionSummary(db, sessionId, previous.summary);
+        await nameSessionFromModel({
+          db,
+          log,
+          fetchImpl,
+          redactJsonImpl,
+          reasoningEffort: env.META_REASONING_EFFORT ?? "low",
+          sessionId,
+          config: modelConfig,
+          changes: previous.changes,
+        });
         return { outcome: "fresh", artifact: previous };
       }
     }
@@ -806,7 +882,29 @@ export function createChangesService(
     if (fresh.length === 0 && filled === 0 && previous && previous.summary === summary) {
       const progressPath = progressArtifactPath(dataDir, session.projectId, sessionId);
       if (!existsSync(progressPath)) persistProgressFile(sessionId, session.projectId);
-      return { outcome: "fresh", artifact: previous };
+      // Watermark moved (or predates watermarks) while content didn't: advance
+      // the stored watermark so the backfill stops picking this session on
+      // every tick. Everything else stays byte-identical.
+      const advanced = { ...previous, snapshotWatermark: watermark };
+      if (
+        previous.snapshotWatermark?.snapshotCount !== watermark.snapshotCount ||
+        previous.snapshotWatermark?.lastOid !== watermark.lastOid
+      ) {
+        writeFileSync(artifactPath, `${JSON.stringify(advanced, null, 2)}\n`);
+      }
+      // Fresh artifact, possibly stale inbox columns: heal legacy rows.
+      setSessionSummary(db, sessionId, previous.summary);
+      await nameSessionFromModel({
+        db,
+        log,
+        fetchImpl,
+        redactJsonImpl,
+        reasoningEffort: env.META_REASONING_EFFORT ?? "low",
+        sessionId,
+        config: modelConfig,
+        changes: previous.changes,
+      });
+      return { outcome: "fresh", artifact: advanced };
     }
     const payload = {
       sessionId,
@@ -833,14 +931,26 @@ export function createChangesService(
       sessionId,
       scanned.changes.map((change) => change.id),
     );
+    setSessionSummary(db, sessionId, scanned.summary);
+    await nameSessionFromModel({
+      db,
+      log,
+      fetchImpl,
+      redactJsonImpl,
+      reasoningEffort: env.META_REASONING_EFFORT ?? "low",
+      sessionId,
+      config: modelConfig,
+      changes: scanned.changes,
+    });
     return { outcome: "generated", artifact: scanned };
   }
 
   /**
    * One session per tick for the backfill timer. Missing artifacts first,
-   * then snapshot-drifted ones, then skeleton rows due for narration when
-   * the model is on. Sessions with no diffs keep a watermark artifact and
-   * are skipped until their snapshots change — never reprocessed per poll.
+   * then snapshot-drifted ones, then inbox columns lagging the artifact,
+   * then skeleton rows due for narration when the model is on. Sessions
+   * with no diffs keep a watermark artifact and are skipped until their
+   * snapshots change — never reprocessed per poll.
    */
   function findSessionNeedingChanges(modelOn: boolean): ChangesBackfillPick | null {
     const sessions = db
@@ -877,6 +987,23 @@ export function createChangesService(
       );
       if (artifact.summary !== summary) {
         return { sessionId: session.id, reason: "stale" };
+      }
+      // Inbox columns lag the artifact on legacy rows: one cheap run heals
+      // them. The title flag needs the model on plus something to name
+      // from — otherwise an unnameable session gets picked every tick.
+      const inbox = db
+        .prepare(
+          `SELECT s.title, s.story_summary,
+            EXISTS(SELECT 1 FROM events e WHERE e.session_id = s.id AND e.kind = 'prompt.submitted') AS has_prompt
+           FROM sessions s WHERE s.id = ?`,
+        )
+        .get(session.id) as
+        | { title: unknown; story_summary: unknown; has_prompt: unknown }
+        | undefined;
+      const titleMissing = inbox?.title === null || inbox?.title === "";
+      const nameable = inbox?.has_prompt === 1 || artifact.changes.length > 0;
+      if (inbox?.story_summary !== artifact.summary || (modelOn && titleMissing && nameable)) {
+        return { sessionId: session.id, reason: "meta" };
       }
       if (
         modelOn &&
