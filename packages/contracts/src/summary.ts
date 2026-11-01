@@ -34,6 +34,27 @@ function splitSentences(text: string): string[] {
   return parts.map((part) => part.trim()).filter((part) => part !== "");
 }
 
+/**
+ * Session-title bound. Agent-less (Muse) rows take their name from the
+ * first prompt, shaped like agent session titles: short topic phrases, not
+ * sentences. Same word-boundary cut with an ellipsis as the summary cap.
+ */
+export const SESSION_TITLE_MAX_CHARS = 60;
+
+export function capSessionTitle(text: string): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat === "") return text;
+  const first = splitSentences(flat)[0] ?? flat;
+  const headline = (first === "" ? flat : first).replace(/[.!?]+$/, "");
+  if (headline.length <= SESSION_TITLE_MAX_CHARS) return headline;
+  const cut = headline.slice(0, SESSION_TITLE_MAX_CHARS);
+  const lastSpace = cut.lastIndexOf(" ");
+  if (lastSpace <= 0) return `${headline.slice(0, SESSION_TITLE_MAX_CHARS - 1).trimEnd()}…`;
+  const words = cut.slice(0, lastSpace).replace(/[.,;:!?\s]+$/, "");
+  if (words === "") return `${headline.slice(0, SESSION_TITLE_MAX_CHARS - 1).trimEnd()}…`;
+  return `${words}…`;
+}
+
 export function capStorySummary(text: string): string {
   const flat = text.replace(/\s+/g, " ").trim();
   if (flat === "") return text;
