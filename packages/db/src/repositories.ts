@@ -8,6 +8,7 @@ import type {
   TapeEvent,
   TapeWatermark,
 } from "@echo/contracts";
+import { isSessionQuiet } from "@echo/contracts";
 import { type EchoDb, withTransaction } from "./database";
 
 export interface ProjectSummary {
@@ -702,7 +703,11 @@ export function listProjectTouchedFiles(
   };
 }
 
-export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
+export function listSessions(
+  db: EchoDb,
+  projectId: string,
+  nowMs: number = Date.now(),
+): SessionSummary[] {
   const rows = db
     .prepare(
       `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
@@ -719,12 +724,16 @@ export function listSessions(db: EchoDb, projectId: string): SessionSummary[] {
     return {
       ...base,
       summarySkeleton: summarySkeletonFor(db, id),
-      captureState: resolveCaptureState(db, id, row),
+      captureState: resolveCaptureState(row, nowMs),
     };
   });
 }
 
-export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary | null {
+export function getSessionSummary(
+  db: EchoDb,
+  sessionId: string,
+  nowMs: number = Date.now(),
+): SessionSummary | null {
   const rows = db
     .prepare(
       `SELECT s.id, s.project_id, s.title, s.model, s.directory, s.started_at, s.ended_at,
@@ -741,7 +750,7 @@ export function getSessionSummary(db: EchoDb, sessionId: string): SessionSummary
   return {
     ...base,
     summarySkeleton: summarySkeletonFor(db, sessionId),
-    captureState: resolveCaptureState(db, String(row.id), row),
+    captureState: resolveCaptureState(row, nowMs),
   };
 }
 
@@ -753,20 +762,12 @@ function deriveCaptureState(status: string, captureQuality: string): CaptureStat
   return "ready";
 }
 
-// Q47 + ARCHITECTURE §13/§16: inbox rows for sessions with no story artifact yet
-// read as still-recording; a stale story (tape grew past the artifact watermark)
-// also reads as recording/growing. No artifact → "recording" always (overrides
-// the quality derivation, even import_only — predictable over precise).
-// N+1 artifact lookups are acceptable for inbox scale.
-function resolveCaptureState(
-  db: EchoDb,
-  sessionId: string,
-  row: Record<string, unknown>,
-): CaptureState {
-  const artifact = getArtifactRef(db, sessionId, "story");
-  if (!artifact) return "recording";
-  const eventCount = Number(row.event_count);
-  if (eventCount !== artifact.tapeWatermark.eventCount) return "recording";
+// Recording means the tape is still warm: same quietness rule as the reader
+// liveness flag, so inbox and reader agree. The old story-artifact override
+// died with the story pipeline — it pinned every artifact-less session to
+// "recording" forever. Pure function of the row: no N+1 lookups at all.
+function resolveCaptureState(row: Record<string, unknown>, nowMs: number): CaptureState {
+  if (!isSessionQuiet(String(row.last_activity), nowMs)) return "recording";
   return deriveCaptureState(String(row.status), String(row.capture_quality));
 }
 
@@ -823,6 +824,55 @@ export function setSessionStoryState(
   db.prepare(
     "UPDATE sessions SET story_summary = ?, high_risk_count = ?, updated_at = ? WHERE id = ?",
   ).run(state.summary, state.highRiskCount, nowIso(), sessionId);
+}
+
+/** Inbox summary sync from the changes pipeline; risk counts are untouched. */
+export function setSessionSummary(db: EchoDb, sessionId: string, summary: string): void {
+  db.prepare("UPDATE sessions SET story_summary = ?, updated_at = ? WHERE id = ?").run(
+    summary,
+    nowIso(),
+    sessionId,
+  );
+}
+
+/**
+ * First session name wins forever: fills agent-less (Muse) rows from the
+ * first prompt and never overwrites an existing title. Mirrors the
+ * upsertSession stability rule for the backfill path.
+ */
+export function setSessionTitleIfNull(db: EchoDb, sessionId: string, title: string): void {
+  db.prepare(
+    "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ? AND (title IS NULL OR title = '')",
+  ).run(title, nowIso(), sessionId);
+}
+
+/** Current session title, so the namer skips already-named rows before spending a model call. */
+export function getSessionTitle(db: EchoDb, sessionId: string): string | null {
+  const row = db.prepare("SELECT title FROM sessions WHERE id = ?").get(sessionId) as
+    | {
+        title: unknown;
+      }
+    | undefined;
+  return typeof row?.title === "string" && row.title !== "" ? row.title : null;
+}
+
+/** Earliest prompt text in tape order, for AI session-name input. */
+export function getFirstPromptText(db: EchoDb, sessionId: string): string | null {
+  const row = db
+    .prepare(
+      "SELECT payload_json FROM events WHERE session_id = ? AND kind = 'prompt.submitted' ORDER BY tape_seq ASC LIMIT 1",
+    )
+    .get(sessionId) as { payload_json: unknown } | undefined;
+  if (!row || typeof row.payload_json !== "string") return null;
+  let payload: unknown;
+  try {
+    payload = JSON.parse(row.payload_json) as unknown;
+  } catch {
+    return null;
+  }
+  if (payload === null || typeof payload !== "object") return null;
+  const text = (payload as Record<string, unknown>).text;
+  return typeof text === "string" && text !== "" ? text : null;
 }
 
 export interface EngagementEventInput {

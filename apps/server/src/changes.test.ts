@@ -9,6 +9,7 @@ import {
   type EchoDb,
   getChangeRefs,
   getProgress,
+  getSessionSummary,
   insertSnapshot,
   listSnapshots,
   openEchoDb,
@@ -23,6 +24,47 @@ import { createChangesService } from "./changes";
 
 const TAKEN_AT = new Date("2026-10-28T10:00:00.000Z");
 const silentLog = { info: () => {}, error: () => {} };
+const OFF_ENV = { ...process.env, ECHO_MODEL: "off" } as NodeJS.ProcessEnv;
+const MODEL_ENV = {
+  ...process.env,
+  ECHO_MODEL: "",
+  META_API_KEY: "test-key",
+  META_MODEL_ID: "test-model",
+} as NodeJS.ProcessEnv;
+
+function stubFetchSequence(answers: unknown[]) {
+  let calls = 0;
+  const fetchImpl = (async () => {
+    const answer = answers[Math.min(calls, answers.length - 1)];
+    calls += 1;
+    return new Response(
+      JSON.stringify({
+        choices: [{ finish_reason: "stop", message: { content: JSON.stringify(answer) } }],
+        usage: { prompt_tokens: 10, completion_tokens: 20 },
+      }),
+      { headers: { "Content-Type": "application/json" } },
+    );
+  }) as typeof fetch;
+  return { fetchImpl, calls: () => calls };
+}
+
+function nameTestDraft() {
+  return {
+    title: "Add project notes file",
+    summary:
+      "This change adds the project notes file. The new lines now carry the updated content for review.",
+    before: ["Before this change, the notes file held the earlier form."],
+    now: ["Now the file carries the updated version in place."],
+    howItWorks: [
+      "Change notes.txt: add the new lines.",
+      "Keep the surrounding content as is.",
+      "Review the new lines only.",
+    ],
+    headsUp: [],
+    files: [{ path: "notes.txt", note: "Change notes.txt: updated." }],
+    digest: Array.from({ length: 60 }, (_, i) => `token${i}`).join(" "),
+  };
+}
 
 function livePromptEvent(
   sessionId: string,
@@ -645,6 +687,145 @@ describe("changes service", () => {
       const missing = service.getChangeCode(sessionId, "c_0000000000000000");
       expect(missing.status).toBe(404);
       expect(JSON.stringify(missing.body)).toContain("not_found");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("syncs the inbox summary with the model off and leaves the title null", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      db.prepare("UPDATE sessions SET title = NULL WHERE id = ?").run(sessionId);
+      const service = createChangesService({ db, dataDir, log: silentLog }, { env: OFF_ENV });
+      appendEvents(db, sessionId, [
+        livePromptEvent(sessionId, projectId, "evt_p1", "2026-10-28T09:00:00.000Z"),
+      ]);
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      const row = getSessionSummary(db, sessionId);
+      expect(row?.summary).toBe(first.artifact?.summary);
+      expect(row?.title).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("names untitled sessions from the model, capped and redacted", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      db.prepare("UPDATE sessions SET title = NULL WHERE id = ?").run(sessionId);
+      // Fake secret built at runtime so no secret-shaped literal lives here.
+      const fakeKey = `sk-${"1".repeat(20)}`;
+      const { fetchImpl, calls } = stubFetchSequence([
+        nameTestDraft(),
+        { title: `Notes file with ${fakeKey} inside the draft` },
+      ]);
+      const service = createChangesService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      appendEvents(db, sessionId, [
+        livePromptEvent(sessionId, projectId, "evt_p1", "2026-10-28T09:00:00.000Z"),
+      ]);
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      // One narration call plus one naming call.
+      expect(calls()).toBe(2);
+      const title = getSessionSummary(db, sessionId)?.title ?? "";
+      expect(title).toContain("[REDACTED:api-key-prefix:");
+      expect(title).not.toContain(fakeKey);
+      expect(title.length).toBeLessThanOrEqual(60);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("never overwrites an agent title and spends no naming call", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      const { fetchImpl, calls } = stubFetchSequence([nameTestDraft()]);
+      const service = createChangesService(
+        { db, dataDir, log: silentLog },
+        { env: MODEL_ENV, fetchImpl },
+      );
+      appendEvents(db, sessionId, [
+        livePromptEvent(sessionId, projectId, "evt_p1", "2026-10-28T09:00:00.000Z"),
+      ]);
+      await service.maybeGenerateChanges(sessionId);
+      expect(getSessionSummary(db, sessionId)?.title).toBe("changes");
+      // Narration ran; naming skipped without a model call.
+      expect(calls()).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("advances a drifted watermark on content-fresh runs", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      // Simulate a pre-watermark artifact: same content, no watermark.
+      const path = join(dataDir, "projects", projectId, "sessions", sessionId, "changes.json");
+      const stored = JSON.parse(readFileSync(path, "utf8")) as Record<string, unknown>;
+      delete stored.snapshotWatermark;
+      writeFileSync(path, JSON.stringify(stored));
+      expect(service.findSessionNeedingChanges(false)).toEqual({ sessionId, reason: "stale" });
+      const second = await service.maybeGenerateChanges(sessionId);
+      expect(second.outcome).toBe("fresh");
+      // Watermark advanced, content untouched — and the backfill lets go.
+      const reread = JSON.parse(readFileSync(path, "utf8")) as {
+        snapshotWatermark: unknown;
+        changes: unknown[];
+      };
+      expect(reread.snapshotWatermark).toEqual(first.artifact?.snapshotWatermark);
+      expect(reread.changes).toEqual(first.artifact?.changes ?? []);
+      expect(service.findSessionNeedingChanges(false)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("heals missing inbox metadata on fresh runs and backfills it", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog }, { env: OFF_ENV });
+      appendEvents(db, sessionId, [
+        livePromptEvent(sessionId, projectId, "evt_p1", "2026-10-28T09:00:00.000Z"),
+      ]);
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      // Simulate a legacy row: artifact current, inbox columns empty.
+      db.prepare("UPDATE sessions SET title = NULL, story_summary = NULL WHERE id = ?").run(
+        sessionId,
+      );
+      expect(service.findSessionNeedingChanges(false)).toEqual({ sessionId, reason: "meta" });
+      const second = await service.maybeGenerateChanges(sessionId);
+      expect(second.outcome).toBe("fresh");
+      const row = getSessionSummary(db, sessionId);
+      expect(row?.summary).toBe(first.artifact?.summary);
+      // Model off: summary heals, title waits for a model run.
+      expect(row?.title).toBeNull();
+      expect(service.findSessionNeedingChanges(false)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("flags title-only gaps for the backfill only when the model is on", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog }, { env: OFF_ENV });
+      appendEvents(db, sessionId, [
+        livePromptEvent(sessionId, projectId, "evt_p1", "2026-10-28T09:00:00.000Z"),
+      ]);
+      await service.maybeGenerateChanges(sessionId);
+      db.prepare("UPDATE sessions SET title = NULL WHERE id = ?").run(sessionId);
+      // Summary current, title missing: flaggable only with the model on,
+      // or model-off daemons would pick it every tick without effect.
+      expect(service.findSessionNeedingChanges(false)).toBeNull();
+      expect(service.findSessionNeedingChanges(true)).toEqual({ sessionId, reason: "meta" });
     } finally {
       db.close();
     }
