@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { capStorySummary, STORY_SUMMARY_MAX_CHARS, STORY_SUMMARY_MAX_SENTENCES } from "./summary";
+import {
+  capSessionTitle,
+  capStorySummary,
+  SESSION_TITLE_MAX_CHARS,
+  STORY_SUMMARY_MAX_CHARS,
+  STORY_SUMMARY_MAX_SENTENCES,
+} from "./summary";
 
 describe("capStorySummary", () => {
   it("leaves short headlines untouched", () => {
@@ -54,6 +60,44 @@ describe("capStorySummary", () => {
     for (const input of inputs) {
       const once = capStorySummary(input);
       expect(capStorySummary(once)).toBe(once);
+    }
+  });
+});
+
+describe("capSessionTitle", () => {
+  it("keeps short prompts whole", () => {
+    expect(capSessionTitle("add a notes file")).toBe("add a notes file");
+    expect(capSessionTitle("Redesigning session experience")).toBe(
+      "Redesigning session experience",
+    );
+  });
+
+  it("takes the first sentence, then cuts on a word boundary", () => {
+    expect(capSessionTitle("Fix the login flow. Also update the docs page.")).toBe(
+      "Fix the login flow",
+    );
+    const long =
+      "Separated project workspace into overview learn and architecture areas with more words after";
+    const capped = capSessionTitle(long);
+    expect(capped.length).toBeLessThanOrEqual(SESSION_TITLE_MAX_CHARS);
+    expect(capped.endsWith("…")).toBe(true);
+    expect(capped).toBe("Separated project workspace into overview learn and…");
+  });
+
+  it("hard-cuts unbreakable tokens within the bound", () => {
+    expect(capSessionTitle("x".repeat(100))).toBe(`${"x".repeat(SESSION_TITLE_MAX_CHARS - 1)}…`);
+  });
+
+  it("is idempotent", () => {
+    const inputs = [
+      "add a notes file",
+      "Fix the login flow. Also update the docs page.",
+      "Separated project workspace into overview learn and architecture areas with more words after",
+      "x".repeat(100),
+    ];
+    for (const input of inputs) {
+      const once = capSessionTitle(input);
+      expect(capSessionTitle(once)).toBe(once);
     }
   });
 });
