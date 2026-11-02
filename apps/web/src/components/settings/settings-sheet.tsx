@@ -1,4 +1,16 @@
-import { Settings01Icon } from "@hugeicons/core-free-icons";
+import type { FolderResolveResponse, HooksStatus } from "@echo/contracts";
+import {
+  ArrowLeft01Icon,
+  ArrowRight01Icon,
+  Copy01Icon,
+  Delete02Icon,
+  Folder01Icon,
+  FolderAddIcon,
+  InformationCircleIcon,
+  Plug01Icon,
+  Settings01Icon,
+  Tick01Icon,
+} from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import type { KeyboardEvent } from "react";
 import {
@@ -25,10 +37,15 @@ interface HealthResponse {
   uptimeMs: number;
 }
 
-interface RepoRow {
-  id: string;
+interface Candidates {
   name: string;
+  matches: string[];
+  truncated: boolean;
 }
+
+type PickerWindow = Window & {
+  showDirectoryPicker?: () => Promise<{ name: string }>;
+};
 
 const MOTION_KEY = "echo-motion";
 const COMPACT_QUERY = "(max-width: 639px)";
@@ -110,8 +127,17 @@ export function SettingsMenu() {
   const [open, setOpen] = useState(false);
   const [motion, setMotion] = useState<MotionPref>("full");
   const [motionReady, setMotionReady] = useState(false);
-  const [repos, setRepos] = useState<RepoRow[] | null>(null);
+  const [repos, setRepos] = useState<string[] | null>(null);
   const [reposFailed, setReposFailed] = useState(false);
+  const [reposOpen, setReposOpen] = useState(false);
+  const [reposNote, setReposNote] = useState<{ text: string; ok: boolean } | null>(null);
+  const [removePath, setRemovePath] = useState<string | null>(null);
+  const [hooks, setHooks] = useState<HooksStatus | null>(null);
+  const [hooksBusy, setHooksBusy] = useState(false);
+  const [hooksNote, setHooksNote] = useState<string | null>(null);
+  const [folderBusy, setFolderBusy] = useState(false);
+  const [folderNote, setFolderNote] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<Candidates | null>(null);
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [healthOk, setHealthOk] = useState(true);
   const [copied, setCopied] = useState<string | null>(null);
@@ -152,7 +178,14 @@ export function SettingsMenu() {
     window.clearTimeout(leaveTimer.current);
     setLeaving(false);
     reason.current = next ? why : null;
-    if (!next) setCopied(null);
+    if (!next) {
+      setCopied(null);
+      setHooksNote(null);
+      setFolderNote(null);
+      setCandidates(null);
+      setReposOpen(false);
+      setReposNote(null);
+    }
     setOpen(next);
   }, []);
 
@@ -161,6 +194,11 @@ export function SettingsMenu() {
     setLeaving(false);
     reason.current = null;
     setCopied(null);
+    setHooksNote(null);
+    setFolderNote(null);
+    setCandidates(null);
+    setReposOpen(false);
+    setReposNote(null);
     setOpen(false);
     if (returnFocus) triggerRef.current?.focus({ preventScroll: true });
     after?.();
@@ -191,16 +229,17 @@ export function SettingsMenu() {
     [open, leaving, reducedMotion, finishClose],
   );
 
-  // Fetch display data lazily on open; the panel is read-only.
+  // Fetch display data lazily on open; actions refresh it in place.
   useEffect(() => {
     if (!open) return;
     let live = true;
     setReposFailed(false);
     void api
-      .projects()
-      .then((projects) => {
+      .settings()
+      .then((payload) => {
         if (!live) return;
-        setRepos(projects.map((p) => ({ id: p.id, name: p.name ?? p.root })));
+        setRepos(payload.projects);
+        setHooks(payload.hooks);
       })
       .catch(() => {
         if (live) setReposFailed(true);
@@ -307,6 +346,110 @@ export function SettingsMenu() {
     copyTimer.current = window.setTimeout(() => setCopied(null), 1500);
   }
 
+  function refreshSettings(): void {
+    setReposFailed(false);
+    void api
+      .settings()
+      .then((payload) => {
+        setRepos(payload.projects);
+        setHooks(payload.hooks);
+      })
+      .catch(() => setReposFailed(true));
+  }
+
+  async function handleInstallHooks(): Promise<void> {
+    if (demo || hooksBusy) return;
+    setHooksBusy(true);
+    setHooksNote(null);
+    try {
+      const result = await api.installHooks();
+      setHooksNote(
+        result.changed
+          ? `Installed ${result.eventsInstalled.length} hook events.`
+          : "Already installed — nothing changed.",
+      );
+      refreshSettings();
+    } catch (error) {
+      setHooksNote(error instanceof Error ? error.message : "Install failed.");
+    } finally {
+      setHooksBusy(false);
+    }
+  }
+
+  async function enablePickedPath(path: string): Promise<void> {
+    try {
+      const result = await api.enableProject(path);
+      setCandidates(null);
+      setFolderNote(`Now capturing ${result.path}.`);
+      refreshSettings();
+    } catch (error) {
+      setFolderNote(error instanceof Error ? error.message : "Could not add that folder.");
+    } finally {
+      setFolderBusy(false);
+    }
+  }
+
+  async function handleRemoveRepo(path: string): Promise<void> {
+    if (demo || removePath !== null) return;
+    setRemovePath(path);
+    setReposNote(null);
+    try {
+      const result = await api.disableProject(path);
+      const short = path.split("/").pop() ?? path;
+      setReposNote({
+        text: result.removed ? `Stopped capturing ${short}.` : `${short} wasn't in the list.`,
+        ok: true,
+      });
+      refreshSettings();
+    } catch (error) {
+      setReposNote({
+        text: error instanceof Error ? error.message : "Could not remove that folder.",
+        ok: false,
+      });
+    } finally {
+      setRemovePath(null);
+    }
+  }
+
+  async function handlePickFolder(): Promise<void> {
+    if (demo || folderBusy) return;
+    const picker = (window as PickerWindow).showDirectoryPicker;
+    if (picker === undefined) {
+      setFolderNote("This browser can't pick folders — copy the enable command below.");
+      return;
+    }
+    setFolderBusy(true);
+    setFolderNote(null);
+    setCandidates(null);
+    let name: string;
+    try {
+      name = (await picker()).name;
+    } catch {
+      // The picker dialog was dismissed; staying silent is the correct UX.
+      setFolderBusy(false);
+      return;
+    }
+    let resolved: FolderResolveResponse;
+    try {
+      resolved = await api.resolveFolder(name);
+    } catch (error) {
+      setFolderNote(error instanceof Error ? error.message : "Could not find that folder.");
+      setFolderBusy(false);
+      return;
+    }
+    if (resolved.matches.length === 0) {
+      setFolderNote(`No folder named "${name}" found. Is it on the daemon machine?`);
+      setFolderBusy(false);
+      return;
+    }
+    if (resolved.matches.length === 1 && resolved.matches[0] !== undefined) {
+      await enablePickedPath(resolved.matches[0]);
+      return;
+    }
+    setCandidates({ name, matches: resolved.matches, truncated: resolved.truncated });
+    setFolderBusy(false);
+  }
+
   function onKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     const stops = getStops(surfaceRef.current);
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -361,6 +504,7 @@ export function SettingsMenu() {
     : health?.mode === "demo"
       ? "degraded"
       : "ready";
+  const demo = health?.mode === "demo";
   const daemonLabel =
     daemonState === "ready"
       ? "Daemon running"
@@ -394,11 +538,13 @@ export function SettingsMenu() {
           tabIndex={-1}
           data-stop="item"
           data-label="Repositories"
+          aria-expanded={reposOpen}
           className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
-          onClick={() => {
-            requestClose(false, () => void navigate("/projects"));
-          }}
+          onClick={() => setReposOpen((was) => !was)}
         >
+          <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
+            <HugeiconsIcon icon={Folder01Icon} size={16} strokeWidth={1.8} />
+          </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-dusk-ink">Captured repositories</span>
             <span className="block truncate font-mono text-[11px] text-dusk-muted">
@@ -410,14 +556,190 @@ export function SettingsMenu() {
                     ? "None enabled yet"
                     : repos
                         .slice(0, 2)
-                        .map((r) => r.name)
+                        .map((r) => r.split("/").pop() ?? r)
                         .join(" · ") + (repos.length > 2 ? ` · +${repos.length - 2}` : "")}
             </span>
           </span>
-          <span aria-hidden="true" className="font-mono text-[11px] text-dusk-faint">
-            →
+          <span
+            aria-hidden
+            className={`inline-flex shrink-0 text-dusk-faint transition-transform ${reposOpen ? "rotate-90" : ""}`}
+          >
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
           </span>
         </button>
+        {reposOpen ? (
+          <div className="ml-7">
+            {(repos ?? []).map((path) => (
+              <div
+                key={path}
+                className="echo-settings-row flex w-full items-center gap-2 rounded-2xl px-3 py-1.5 transition-colors hover:bg-white/[0.07]"
+              >
+                <span
+                  title={path}
+                  className="min-w-0 flex-1 truncate font-mono text-xs text-dusk-ink"
+                >
+                  {path.split("/").pop() ?? path}
+                </span>
+                <button
+                  type="button"
+                  disabled={demo || removePath !== null}
+                  onClick={() => void handleRemoveRepo(path)}
+                  title={`Stop capturing ${path}`}
+                  aria-label={`Stop capturing ${path}`}
+                  className="inline-flex shrink-0 cursor-pointer items-center rounded p-1 text-dusk-muted transition-colors hover:text-dusk-fail disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={1.8} />
+                </button>
+              </div>
+            ))}
+            {reposNote !== null ? (
+              <p
+                className={`px-3 py-1 font-mono text-[11px] ${reposNote.ok ? "text-dusk-pass" : "text-dusk-fail"}`}
+              >
+                {reposNote.text}
+              </p>
+            ) : null}
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              data-stop="item"
+              data-label="Open projects"
+              className="echo-settings-row flex w-full cursor-pointer items-center gap-2 rounded-2xl px-3 py-1.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
+              onClick={() => {
+                requestClose(false, () => void navigate("/projects"));
+              }}
+            >
+              <span className="min-w-0 flex-1 truncate text-[13px] text-dusk-muted">
+                Open all projects
+              </span>
+              <span aria-hidden className="inline-flex shrink-0 text-dusk-faint">
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
+              </span>
+            </button>
+          </div>
+        ) : null}
+        {candidates !== null ? (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              data-stop="item"
+              data-label="Back to settings"
+              className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
+              onClick={() => setCandidates(null)}
+            >
+              <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
+                <HugeiconsIcon icon={ArrowLeft01Icon} size={16} strokeWidth={1.8} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-dusk-ink">
+                  Picked &ldquo;{candidates.name}&rdquo;
+                </span>
+                <span className="block truncate font-mono text-[11px] text-dusk-muted">
+                  {candidates.matches.length} matches — choose the right one
+                </span>
+              </span>
+            </button>
+            {candidates.matches.map((match) => (
+              <button
+                key={match}
+                type="button"
+                role="menuitem"
+                tabIndex={-1}
+                data-stop="item"
+                data-label={`Enable ${match}`}
+                disabled={folderBusy}
+                className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-50"
+                onClick={() => {
+                  setFolderBusy(true);
+                  setFolderNote(null);
+                  void enablePickedPath(match);
+                }}
+              >
+                <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
+                  <HugeiconsIcon icon={Folder01Icon} size={16} strokeWidth={1.8} />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span title={match} className="block truncate font-mono text-xs text-dusk-ink">
+                    {match}
+                  </span>
+                </span>
+              </button>
+            ))}
+            {candidates.truncated ? (
+              <p className="px-3 py-1 font-mono text-[11px] text-dusk-muted">
+                Stopped looking after the first matches — type the full path with the command below
+                for anything deeper.
+              </p>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              data-stop="item"
+              data-label="Capture hooks"
+              disabled={demo || hooksBusy}
+              className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-60"
+              onClick={() => void handleInstallHooks()}
+            >
+              <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
+                <HugeiconsIcon icon={Plug01Icon} size={16} strokeWidth={1.8} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-dusk-ink">
+                  {hooksBusy ? "Installing hooks…" : "Install capture hooks"}
+                </span>
+                <span className="block truncate font-mono text-[11px] text-dusk-muted">
+                  {hooksNote ??
+                    (demo
+                      ? "Read-only in demo mode"
+                      : hooks === null
+                        ? "Loading…"
+                        : hooks.installed
+                          ? `Installed · ${hooks.totalEvents} events`
+                          : hooks.eventsInstalled.length > 0
+                            ? `Partly installed · ${hooks.eventsInstalled.length} of ${hooks.totalEvents} — click to fill the gaps`
+                            : "Not installed — Echo can't capture Claude sessions")}
+                </span>
+              </span>
+              {hooks?.installed ? (
+                <span aria-hidden className="inline-flex shrink-0 text-dusk-pass">
+                  <HugeiconsIcon icon={Tick01Icon} size={14} strokeWidth={1.8} />
+                </span>
+              ) : null}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              tabIndex={-1}
+              data-stop="item"
+              data-label="Add folder"
+              disabled={demo || folderBusy}
+              className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-60"
+              onClick={() => void handlePickFolder()}
+            >
+              <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
+                <HugeiconsIcon icon={FolderAddIcon} size={16} strokeWidth={1.8} />
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm text-dusk-ink">
+                  {folderBusy ? "Looking for that folder…" : "Add a folder…"}
+                </span>
+                <span className="block truncate font-mono text-[11px] text-dusk-muted">
+                  {folderNote ?? (demo ? "Read-only in demo mode" : "Pick from your computer")}
+                </span>
+              </span>
+              <span aria-hidden className="inline-flex shrink-0 text-dusk-faint">
+                <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
+              </span>
+            </button>
+          </>
+        )}
         <button
           type="button"
           role="menuitem"
@@ -427,6 +749,9 @@ export function SettingsMenu() {
           className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
           onClick={() => void handleCopy("enable")}
         >
+          <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
+            <HugeiconsIcon icon={Copy01Icon} size={16} strokeWidth={1.8} />
+          </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-dusk-ink">
               {copied === "enable" ? "Copied" : "Copy enable command"}
@@ -471,6 +796,9 @@ export function SettingsMenu() {
           className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
           onClick={() => void handleCopy("support")}
         >
+          <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
+            <HugeiconsIcon icon={InformationCircleIcon} size={16} strokeWidth={1.8} />
+          </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-dusk-ink">
               {copied === "support" ? "Copied" : "Copy support info"}
