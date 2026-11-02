@@ -24,7 +24,7 @@ const HEADS_UP_STYLE: Record<HeadsUpType, { dot: string; label: string }> = {
 
 function CollapsedRow({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <details className="border-b border-dusk-hairline py-2.5">
+    <details className="py-3">
       <summary className="cursor-pointer text-xs uppercase tracking-widest text-dusk-muted">
         {title}
       </summary>
@@ -32,10 +32,6 @@ function CollapsedRow({ title, children }: { title: string; children: React.Reac
     </details>
   );
 }
-
-export type ChangeCardAskRef = { id: string; title: string };
-
-export type ChangeCardCheckResult = { answered: number; correct: number; total: number };
 
 export type ChangeConnection = {
   id: string;
@@ -46,17 +42,10 @@ export type ChangeConnection = {
 
 type ChangeCardProps = {
   change: Change;
-  /** Reader wiring: opens the Ask panel anchored to this change. */
-  onAsk?: (ref: ChangeCardAskRef) => void;
-  /** Reader wiring: triggers the per-change check for this change. */
-  onCheck?: (change: Change) => void;
-  checkBusy?: boolean;
   /** Served diff for this change; null while loading. */
   code?: ChangeCodeResponse | null;
   /** True when the diff request failed. */
   codeFailed?: boolean;
-  /** Answered/correct counts for this change's checks; null when none exist. */
-  checkResult?: ChangeCardCheckResult | null;
   /** Same-file neighbors in session order; empty when standalone. */
   connections?: ChangeConnection[];
   /** Reader wiring: jump to a connected change. */
@@ -65,12 +54,8 @@ type ChangeCardProps = {
 
 export function ChangeCard({
   change,
-  onAsk,
-  onCheck,
-  checkBusy = false,
   code = null,
   codeFailed = false,
-  checkResult = null,
   connections = [],
   onJumpToChange,
 }: ChangeCardProps) {
@@ -162,7 +147,7 @@ export function ChangeCard({
         </div>
       ) : null}
 
-      <div className="border-t border-dusk-hairline">
+      <div className="border-t border-dusk-hairline pt-1">
         <CollapsedRow title="Code">
           {code !== null ? (
             <ChangeCode code={code} />
@@ -174,39 +159,6 @@ export function ChangeCard({
             <p className="text-sm text-dusk-muted">Loading the diff…</p>
           )}
         </CollapsedRow>
-      </div>
-
-      <div>
-        <p className="text-xs uppercase tracking-widest text-dusk-muted">
-          Ask or check this change
-        </p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <button
-            type="button"
-            onClick={() => onAsk?.({ id: change.id, title: change.title })}
-            disabled={onAsk === undefined}
-            title={onAsk === undefined ? "Ask is not wired here" : "Ask about this change"}
-            className="shrink-0 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink disabled:opacity-40"
-          >
-            Ask about this change
-          </button>
-          <button
-            type="button"
-            onClick={() => onCheck?.(change)}
-            disabled={onCheck === undefined || checkBusy}
-            title={onCheck === undefined ? "Checks are not wired here" : "Check me on this change"}
-            className="shrink-0 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink disabled:opacity-40"
-          >
-            {checkBusy ? "Checking…" : "Check me on this"}
-          </button>
-        </div>
-        {checkResult !== null && checkResult.total > 0 ? (
-          <p className="mt-2 text-sm text-dusk-muted">
-            {checkResult.answered === checkResult.total
-              ? `${checkResult.correct} of ${checkResult.total} checks passed`
-              : `${checkResult.answered} of ${checkResult.total} checks answered`}
-          </p>
-        ) : null}
       </div>
     </article>
   );

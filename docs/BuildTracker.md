@@ -1271,3 +1271,17 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean (re-run after), `biome` clean (4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok
 - notes: Ask has no entry point now — `ask-thread-panel.tsx` and `/api/ask` remain in place but uncalled from the reader; restoring or deleting the feature is a product call, not this cleanup. Verified live diff: this slice coexists with the concurrent session's uncommitted card/rail/reader work (connections, Verify, progress-tape, change-code) with no overlap. Stage and commit nothing.
+
+## 2026-11-02 — ChangeCard: Ask/Check block removed (second pass)
+
+- item: removed the re-added "Ask or check this change" block from `ChangeCard` again (props `onAsk`/`onCheck`/`checkBusy`/`checkResult`, types `ChangeCardAskRef`/`ChangeCardCheckResult`, full button + status block) — the sibling session's uncommitted card work had restored it, rendering both buttons permanently disabled since `reader.tsx` no longer passes the handlers
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok
+- notes: Second removal of the same block — it will keep coming back until coordinated with the sibling session editing `change-card.tsx`. Stage and commit nothing.
+
+## 2026-11-02 — ChangeCard Code row: uncluster hairlines
+
+- item: the collapsible Code row was sandwiched between two hairlines 10px apart (wrapper `border-t` + `details border-b`) with the footer nav's `border-t` landing right after — dropped the `details` bottom border and widened row padding (`py-2.5` → `py-3`, wrapper `pt-1`), so the row now sits under one top hairline with the footer line a full gutter below
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean, `pnpm test` → 73 files / 715 passed, `pnpm build` ok
+- notes: `CollapsedRow` is card-local (single use for Code), no showcase dependency. Stage and commit nothing.
