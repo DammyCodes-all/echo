@@ -149,6 +149,33 @@ export async function chatCompletions(
   messages: ChatMessage[],
   options: ChatCompletionsOptions = {},
 ): Promise<ChatCompletionResult> {
+  try {
+    return await chatCompletionsOnce(config, messages, options);
+  } catch (error) {
+    if (
+      error instanceof ModelError &&
+      error.code === "model_error" &&
+      isBasetenConfig(config) &&
+      options.signal?.aborted !== true &&
+      (process.env.META_API_KEY ?? "").length > 0
+    ) {
+      let fallback: ModelConfig;
+      try {
+        fallback = modelConfigFromEnv({ ...process.env, ECHO_MODEL_PROVIDER: "meta" });
+      } catch {
+        throw error;
+      }
+      return await chatCompletionsOnce(fallback, messages, options);
+    }
+    throw error;
+  }
+}
+
+async function chatCompletionsOnce(
+  config: ModelConfig,
+  messages: ChatMessage[],
+  options: ChatCompletionsOptions = {},
+): Promise<ChatCompletionResult> {
   const fetchImpl = options.fetchImpl ?? fetch;
   const effort = options.reasoningEffort ?? config.reasoningEffort;
   if (effort !== undefined) assertReasoningEffort(effort);
@@ -277,4 +304,55 @@ export async function requestJson<T>(
     }
   }
   throw lastError ?? new ModelError("output_budget_exhausted", "no usable completion");
+}
+
+export function isBasetenConfig(config: ModelConfig): boolean {
+  return config.baseUrl.includes("baseten") || config.model.includes("muse-spark-open");
+}
+
+export function getMetaFallbackConfig(
+  env: NodeJS.ProcessEnv,
+  primary: ModelConfig,
+): ModelConfig | null {
+  if (!isBasetenConfig(primary)) return null;
+  if ((env.META_API_KEY ?? "").length === 0) return null;
+  return modelConfigFromEnv({ ...env, ECHO_MODEL_PROVIDER: "meta" });
+}
+
+function shouldFallbackToMeta(error: unknown, signal?: AbortSignal): boolean {
+  if (signal?.aborted === true) return false;
+  return error instanceof ModelError && error.code === "model_error";
+}
+
+export async function chatCompletionsWithFallback(
+  primary: ModelConfig,
+  fallback: ModelConfig | null,
+  messages: ChatMessage[],
+  options: ChatCompletionsOptions = {},
+): Promise<ChatCompletionResult> {
+  try {
+    return await chatCompletions(primary, messages, options);
+  } catch (error) {
+    if (fallback !== null && shouldFallbackToMeta(error, options.signal)) {
+      return await chatCompletions(fallback, messages, options);
+    }
+    throw error;
+  }
+}
+
+export async function requestJsonWithFallback<T>(
+  primary: ModelConfig,
+  fallback: ModelConfig | null,
+  messages: ChatMessage[],
+  parse: (value: unknown) => T,
+  options: RequestJsonOptions = {},
+): Promise<{ value: T; usage: ChatUsage | null }> {
+  try {
+    return await requestJson(primary, messages, parse, options);
+  } catch (error) {
+    if (fallback !== null && shouldFallbackToMeta(error, options.signal)) {
+      return await requestJson(fallback, messages, parse, options);
+    }
+    throw error;
+  }
 }

@@ -1,4 +1,6 @@
 import type { Change, ChangeCodeResponse, HeadsUpType } from "@echo/contracts";
+import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { ChangeCode } from "./change-code";
 
 const HEADS_UP_LABEL: Record<HeadsUpType, string> = {
@@ -34,8 +36,8 @@ function CollapsedRow({
   return (
     <details className="group py-3">
       <summary className="flex cursor-pointer list-none items-center gap-2 text-xs uppercase tracking-widest text-dusk-muted transition-colors hover:text-dusk-ink [&::-webkit-details-marker]:hidden">
-        <span aria-hidden className="shrink-0 transition-transform group-open:rotate-90">
-          ›
+        <span aria-hidden className="inline-flex shrink-0 transition-transform group-open:rotate-90">
+          <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} />
         </span>
         <span className="flex-1">{title}</span>
         {summary}

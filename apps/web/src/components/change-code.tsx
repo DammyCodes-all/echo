@@ -1,4 +1,6 @@
 import type { ChangeCodeFile, ChangeCodeResponse } from "@echo/contracts";
+import { ArrowRight01Icon, Copy01Icon, Tick01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { PatchDiff } from "@pierre/diffs/react";
 import { useState } from "react";
 
@@ -75,9 +77,9 @@ function CodeFile({ file, note }: { file: ChangeCodeFile; note: string | null })
         <div className="flex items-center gap-2 bg-dusk-surface px-3 py-2">
           <span
             aria-hidden
-            className="shrink-0 text-xs text-dusk-muted transition-transform group-open:rotate-90"
+            className="inline-flex shrink-0 text-dusk-muted transition-transform group-open:rotate-90"
           >
-            ›
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} />
           </span>
           <div className="min-w-0 flex-1">
             <FileHeader
@@ -148,10 +150,14 @@ function FileHeader({
           type="button"
           onClick={onCopy}
           title="Copy file path"
-          aria-label={`Copy path ${file.path}`}
-          className="rounded px-1 py-0.5 font-mono text-[11px] text-dusk-muted hover:text-dusk-ink"
+          aria-label={copied ? `Copied ${file.path}` : `Copy path ${file.path}`}
+          className="inline-flex rounded p-1 text-dusk-muted transition-colors hover:text-dusk-ink"
         >
-          {copied ? "copied" : "copy"}
+          <HugeiconsIcon
+            icon={copied ? Tick01Icon : Copy01Icon}
+            size={13}
+            strokeWidth={2}
+          />
         </button>
       </div>
     </div>

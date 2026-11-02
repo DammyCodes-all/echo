@@ -1,10 +1,14 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   chatCompletions,
+  chatCompletionsWithFallback,
+  getMetaFallbackConfig,
+  isBasetenConfig,
   type ModelConfig,
   ModelError,
   modelConfigFromEnv,
   requestJson,
+  requestJsonWithFallback,
 } from "./index";
 
 const config: ModelConfig = {
@@ -197,5 +201,113 @@ describe("model client", () => {
         reasoningEffort: "bogus",
       }),
     ).rejects.toThrowError(ModelError);
+  });
+
+  it("retries with Meta fallback after a Baseten model_error", async () => {
+    const primary: ModelConfig = {
+      baseUrl: "https://inference.baseten.co/v1",
+      apiKey: "bk",
+      model: "meta-models/muse-spark-open-1026",
+      maxTokens: 64,
+    };
+    const fallback: ModelConfig = { ...config };
+    const fetchImpl = vi
+      .fn()
+      .mockImplementationOnce(async () => new Response("bad", { status: 500 }))
+      .mockImplementationOnce(async () => jsonResponse(completion(JSON.stringify({ ok: 1 }))));
+    const { value } = await requestJsonWithFallback(
+      primary,
+      fallback,
+      [{ role: "user", content: "q" }],
+      (v) => v as { ok: number },
+      { fetchImpl: fetchImpl as typeof fetch },
+    );
+    expect(value).toEqual({ ok: 1 });
+    const urls = fetchImpl.mock.calls.map(([url]) => String(url));
+    expect(urls).toEqual([
+      "https://inference.baseten.co/v1/chat/completions",
+      "https://api.meta.ai/v1/chat/completions",
+    ]);
+  });
+
+  it("does not fallback on invalid_response or when primary is Meta", async () => {
+    const baseten: ModelConfig = {
+      baseUrl: "https://inference.baseten.co/v1",
+      apiKey: "bk",
+      model: "meta-models/muse-spark-open-1026",
+      maxTokens: 64,
+    };
+    const badJson = vi.fn(async () => jsonResponse("not-json"));
+    await expect(
+      requestJsonWithFallback(baseten, config, [{ role: "user", content: "q" }], (v) => v, {
+        fetchImpl: badJson as typeof fetch,
+      }),
+    ).rejects.toMatchObject({ code: "invalid_response" });
+    expect(badJson).toHaveBeenCalledTimes(1);
+
+    expect(isBasetenConfig(baseten)).toBe(true);
+    expect(isBasetenConfig(config)).toBe(false);
+    expect(getMetaFallbackConfig({ META_API_KEY: "k" }, config)).toBeNull();
+    expect(getMetaFallbackConfig({}, baseten)).toBeNull();
+    expect(getMetaFallbackConfig({ META_API_KEY: "k" }, baseten)?.model).toBe(
+      "muse-spark-1.3-contributor",
+    );
+  });
+
+  it("chatCompletionsWithFallback falls back once on transport model_error", async () => {
+    const primary: ModelConfig = {
+      baseUrl: "https://inference.baseten.co/v1",
+      apiKey: "bk",
+      model: "meta-models/muse-spark-open-1026",
+      maxTokens: 64,
+    };
+    const fetchImpl = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        throw new TypeError("fetch failed");
+      })
+      .mockImplementationOnce(async () => {
+        throw new TypeError("fetch failed");
+      })
+      .mockImplementationOnce(async () => jsonResponse(completion("hi")));
+    const result = await chatCompletionsWithFallback(
+      primary,
+      config,
+      [{ role: "user", content: "q" }],
+      {
+        fetchImpl: fetchImpl as typeof fetch,
+      },
+    );
+    expect(result.content).toBe("hi");
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("chatCompletions auto-fallbacks Baseten->Meta on model_error when META key exists", async () => {
+    const primary: ModelConfig = {
+      baseUrl: "https://inference.baseten.co/v1",
+      apiKey: "bk",
+      model: "meta-models/muse-spark-open-1026",
+      maxTokens: 64,
+    };
+    const prev = process.env.META_API_KEY;
+    process.env.META_API_KEY = "k";
+    try {
+      const fetchImpl = vi
+        .fn()
+        .mockImplementationOnce(async () => new Response("bad", { status: 500 }))
+        .mockImplementationOnce(async () => jsonResponse(completion("hi")));
+      const result = await chatCompletions(primary, [{ role: "user", content: "q" }], {
+        fetchImpl: fetchImpl as typeof fetch,
+      });
+      expect(result.content).toBe("hi");
+      const urls = fetchImpl.mock.calls.map(([url]) => String(url));
+      expect(urls).toEqual([
+        "https://inference.baseten.co/v1/chat/completions",
+        "https://api.meta.ai/v1/chat/completions",
+      ]);
+    } finally {
+      if (prev === undefined) delete process.env.META_API_KEY;
+      else process.env.META_API_KEY = prev;
+    }
   });
 });
