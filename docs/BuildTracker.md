@@ -1229,3 +1229,24 @@ notes.
 - status: done
 - evidence: new tests watched red before the fix (db capture-state + server meta/watermark); full gate green → `tsc` clean, `biome` clean (4 pre-existing infos), `pnpm test` → 73 files / 706 passed (naming incl. no-call skip, redaction, cap; watermark advance with stash-verified red), `pnpm build` ok; live probe on a real-data copy converged (every session summary + derived state, agent titles intact, no stuck-recording); model-off titles correctly stay null for a model run (naming pinned by mocked-fetch tests). ADR 0016.
 - notes: Legacy frozen story summaries are replaced by living changes summaries on next touch. Quiet snapshot-less sessions keep null summary (nothing to summarize); quiet prompt-less sessions keep null title and are never flagged. No UI changes, so no browser pass. Stage and commit nothing.
+
+## 2026-11-02 — Evidence gate: changes claim only tape-evidenced files
+
+- item: shared-tree misattribution fix — `apps/server/src/changes.ts` filters every snapshot-pair diff against the session's own tape (`tapeFileEvidenceFor`: completed/failed mutating file-tool `input.path` for edit/write/patch plus `tool.requested` intent text for Muse opaque records; read/grep/shell excluded), drops unattributed files with a `changes_unattributed:<n>` gap diagnostic and always stamps `changes_evidence_gated`; pre-gate artifacts regenerate via a marker check in both fresh paths and the backfill `stale` pick
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos in untouched `checks-v2.test.ts`), `pnpm test` → 73 files / 710 passed (8 new/updated: seed evidence, unattributed-drop + gap count, empty-on-no-evidence, Muse intent, pre-gate regen; narration seeds fixed the same way), `pnpm build` ok; live verification read-only plus daemon backfill: nettrack session (`ses_e6d1e69d`, work in `~/dev/nettrack(d)`, zero echo evidence) 1 bogus UI change → 0 changes + `changes_unattributed:3`, inbox now empty-state; github-sync session (`ses_e790e22f`) 27 changes/176 files → 7 changes + `changes_unattributed:265`, real files (ask/checks-v2/BuildTracker) retained
+- notes: Session-wide evidence, not per-window; shell-only writes become gaps by design (a naming command must not become authorship). Remaining pre-gate artifacts heal one per backfill tick. No UI changes, so no browser pass. Stage and commit nothing.
+
+## 2026-11-02 — Windowed evidence: per-pair attribution with import-safe clocks
+
+- item: narrowed the evidence gate from session-wide to per-snapshot-pair windows — `isPathEvident` now takes `(fromMs, toMs)` and counts only evidence with source or observed time inside `[fromMs - 120s, toMs + 120s]` (`EVIDENCE_SKEW_MS`); either clock counts so live tools (both clocks near the snapshots) and imports (observed_at at import time, older source times) both keep their claims; untimestamped evidence always counts; `TimedEvidence` carries both clocks through `tapeFileEvidenceFor`
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos in untouched `checks-v2.test.ts`), `pnpm test` → 73 files / 712 passed (+2: old-timestamp evidence dropped as gap, import-style old-source-time kept), `pnpm build` ok; live read-only simulation: github-sync session keeps its 13 real files with 276 pair-file drops (no over-drop vs session-wide), nettrack session stays 0 kept / 3 dropped
+- notes: Same-file concurrent edits inside one window can still blend lines — the documented remainder; shrinking OpenCode's turn-wide windows (per-tool snapshots) is the follow-up, not this slice. Stage and commit nothing.
+
+## 2026-11-02 — Gate marker v2: uniform repair pass for all sessions
+
+- item: bumped `CHANGES_EVIDENCE_GATE` to `changes_evidence_gated_v2` so pre-window (session-wide, v1) artifacts regenerate exactly once under the final per-window logic — same-marker interim artifacts would otherwise never re-run; no logic change beyond the value, tests updated to the v2 literal
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos in untouched `checks-v2.test.ts`), `pnpm test` → 73 files / 712 passed, `pnpm build` ok; live disk state before the bump showed all 27 session artifacts already gated once (v1) with foreign files dropped across the board (e.g. 265/175/160 unattributed) — v2 converges the rest on the daemon's backfill ticks
+- notes: One background regen pass (~one session per 20s tick); reads keep serving the current artifact until each rewrite lands; narration/fill caps bound any model spend on the pass. Stage and commit nothing.

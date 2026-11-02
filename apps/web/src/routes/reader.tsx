@@ -192,14 +192,19 @@ export function ReaderPage() {
   const previous = !atEnd && viewIndex > 0 ? (changes[viewIndex - 1] ?? null) : null;
   const next = !atEnd && viewIndex < changes.length - 1 ? (changes[viewIndex + 1] ?? null) : null;
   const skipped = changes.filter((change) => progress[progressKey(change)]?.state === "skipped");
+
+  // Prefetch the next change's diff while this one is being read, so
+  // opening Code or stepping forward never waits on shadow git.
+  useEffect(() => {
+    if (next === null) return;
+    void queryClient.prefetchQuery({
+      queryKey: ["code", sessionId, next.id],
+      queryFn: () => api.changeCode(sessionId, next.id),
+      staleTime: 60_000,
+    });
+  }, [queryClient, sessionId, next]);
   // Other changes touching the same files, in session order. Pure overlap
   // from the served list — no backend needed.
-  const currentPaths = new Set((current?.files ?? []).map((file) => file.path));
-  const related = changes.flatMap((change, index) =>
-    change.id === current?.id || !change.files.some((file) => currentPaths.has(file.path))
-      ? []
-      : [{ index, title: change.title }],
-  );
 
   const handleDone = () => {
     navigate("/projects");
@@ -293,33 +298,84 @@ export function ReaderPage() {
         description="Walk through what changed, one change at a time."
         breadcrumb={headerCrumb}
       >
-        <div
-          role="status"
-          aria-label="Loading changes"
-          className="mx-auto w-full max-w-[700px] space-y-6"
-        >
+        <div role="status" aria-label="Loading changes" className="mx-auto w-full space-y-6">
           <span className="sr-only">Loading changes…</span>
-          <div aria-hidden>
-            <div className="flex items-center gap-1.5 motion-safe:animate-pulse">
+          <div aria-hidden className="motion-safe:animate-pulse">
+            <div className="flex items-center gap-1.5">
               {["a", "b", "c", "d", "e"].map((key) => (
                 <div key={key} className="h-1.5 flex-1 rounded-full bg-dusk-track" />
               ))}
             </div>
-            <div className="mt-2 h-4 w-24 rounded-dusk-code bg-dusk-pill motion-safe:animate-pulse" />
+            <div className="mt-2 h-4 w-24 rounded-dusk-code bg-dusk-pill" />
           </div>
           <div
             aria-hidden
-            className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-8 motion-safe:animate-pulse"
+            className="grid gap-10 motion-safe:animate-pulse lg:grid-cols-[minmax(0,1fr)_320px]"
           >
-            <div className="h-6 w-2/3 rounded-dusk-code bg-dusk-pill" />
-            <div className="space-y-2">
-              <div className="h-4 w-full rounded-dusk-code bg-dusk-pill" />
-              <div className="h-4 w-5/6 rounded-dusk-code bg-dusk-pill" />
+            <div className="min-w-0 space-y-6">
+              <div>
+                <div className="h-9 w-2/3 rounded-dusk-code bg-dusk-pill" />
+                <div className="mt-3 flex gap-2">
+                  <div className="h-8 w-44 rounded-dusk-code bg-dusk-pill" />
+                  <div className="h-8 w-56 rounded-dusk-code bg-dusk-pill" />
+                </div>
+                <div className="mt-3 space-y-2">
+                  <div className="h-4 w-full rounded-dusk-code bg-dusk-pill" />
+                  <div className="h-4 w-5/6 rounded-dusk-code bg-dusk-pill" />
+                </div>
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2">
+                {["before", "now"].map((key) => (
+                  <div
+                    key={key}
+                    className="rounded-dusk-code border border-dusk-hairline bg-dusk-surface px-4 py-3"
+                  >
+                    <div className="h-3 w-16 rounded-dusk-code bg-dusk-pill" />
+                    <div className="mt-2 space-y-2">
+                      <div className="h-4 w-full rounded-dusk-code bg-dusk-pill" />
+                      <div className="h-4 w-4/5 rounded-dusk-code bg-dusk-pill" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-dusk-hairline">
+                <div className="border-b border-dusk-hairline py-2.5">
+                  <div className="h-3 w-12 rounded-dusk-code bg-dusk-pill" />
+                </div>
+              </div>
+              <div className="space-y-2 border-t border-dusk-hairline pt-4">
+                <div className="flex items-center gap-3">
+                  <div className="h-4 w-10 rounded-dusk-code bg-dusk-pill" />
+                  <div className="h-4 w-24 rounded-dusk-code bg-dusk-pill" />
+                  <div className="h-10 w-44 rounded-dusk-pill bg-dusk-pill" />
+                </div>
+                <div className="h-4 w-56 rounded-dusk-code bg-dusk-pill" />
+              </div>
             </div>
-            <div className="flex gap-3 border-t border-dusk-hairline pt-4">
-              <div className="h-10 w-28 rounded-dusk-pill bg-dusk-pill" />
-              <div className="h-10 w-36 rounded-dusk-pill bg-dusk-pill" />
-            </div>
+            <aside className="space-y-8">
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="h-3 w-20 rounded-dusk-code bg-dusk-pill" />
+                  <div className="h-3 w-6 rounded-dusk-code bg-dusk-pill" />
+                </div>
+                <div className="mt-2 space-y-1">
+                  {["r1", "r2", "r3", "r4", "r5"].map((key) => (
+                    <div key={key} className="h-9 rounded-dusk-code bg-dusk-pill/50" />
+                  ))}
+                </div>
+              </div>
+              <div>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="h-3 w-28 rounded-dusk-code bg-dusk-pill" />
+                  <div className="h-3 w-10 rounded-dusk-code bg-dusk-pill" />
+                </div>
+                <div className="mt-2 space-y-2">
+                  {["g1", "g2", "g3"].map((key) => (
+                    <div key={key} className="h-6 rounded-dusk-code bg-dusk-pill/50" />
+                  ))}
+                </div>
+              </div>
+            </aside>
           </div>
         </div>
       </ScaffoldPage>
@@ -367,7 +423,22 @@ export function ReaderPage() {
       eyebrow="Session review"
       title={headerTitle}
       description="Walk through what changed, one change at a time."
-      breadcrumb={headerCrumb}
+      breadcrumb={{
+        ...headerCrumb,
+        // Current change totals ride the sticky header so scope stays
+        // visible past the rail; the rail owns the per-area breakdown.
+        side:
+          code == null ? null : (
+            <>
+              <span className="text-dusk-pass">
+                +{code.files.reduce((sum, file) => sum + file.added, 0)}
+              </span>{" "}
+              <span className="text-dusk-fail">
+                −{code.files.reduce((sum, file) => sum + file.removed, 0)}
+              </span>
+            </>
+          ),
+      }}
     >
       <div className={`mx-auto w-full space-y-6 ${current !== null ? "" : "max-w-[700px]"}`}>
         {isEmpty ? (
@@ -477,7 +548,6 @@ export function ReaderPage() {
                   onJump={jump}
                   files={current.files}
                   codeFiles={code?.files ?? null}
-                  related={related}
                 />
               </div>
             ) : isLive && !showSummary ? (
