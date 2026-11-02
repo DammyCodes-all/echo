@@ -86,6 +86,21 @@ describe("validateSkeletonChange", () => {
     expect(validateSkeletonChange(badId, INPUT).ok).toBe(false);
   });
 
+  it("accepts moment and verify when present, rejects cap violations", () => {
+    const withBoth = clone();
+    withBoth.moment = "warnings that are easier to spot";
+    withBoth.verify = ["Open the login page and confirm the error reads correctly."];
+    expect(validateSkeletonChange(withBoth, INPUT)).toEqual({ ok: true, errors: [] });
+
+    const longMoment = clone();
+    longMoment.moment = `m${"x".repeat(200)}`;
+    expect(validateSkeletonChange(longMoment, INPUT).ok).toBe(false);
+
+    const manyVerifies = clone();
+    manyVerifies.verify = ["a", "b", "c", "d"];
+    expect(validateSkeletonChange(manyVerifies, INPUT).ok).toBe(false);
+  });
+
   it("rejects files missing from the input diff", () => {
     const missing = clone();
     missing.files = [{ path: "src/nowhere.ts", note: "note" }];

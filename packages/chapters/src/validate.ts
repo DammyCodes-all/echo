@@ -103,6 +103,27 @@ export function validateSkeletonChange(
       errors.push("headsUp must hold at most 3 typed notes (not_asked, watch_out, unfinished)");
     }
 
+    // Moment and verify are model-only and optional: absent means not yet
+    // narrated (skeleton) or no linked prompt (moment). Caps only.
+    if (
+      record.moment !== undefined &&
+      (typeof record.moment !== "string" ||
+        record.moment.length === 0 ||
+        record.moment.length > 200)
+    ) {
+      errors.push("moment must be a non-empty string under 200 chars");
+    }
+    const verify = record.verify as unknown;
+    if (
+      verify !== undefined &&
+      (!Array.isArray(verify) ||
+        verify.length < 1 ||
+        verify.length > 3 ||
+        verify.some((step) => typeof step !== "string" || step.length === 0 || step.length > 200))
+    ) {
+      errors.push("verify must be 1-3 non-empty strings under 200 chars each");
+    }
+
     const digestTokens = typeof record.digest === "string" ? countTokens(record.digest) : -1;
     if (digestTokens < DIGEST_MIN_TOKENS || digestTokens > DIGEST_MAX_TOKENS) {
       errors.push(
