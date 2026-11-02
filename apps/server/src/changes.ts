@@ -60,6 +60,22 @@ import { isSessionQuiet } from "./session-readiness";
 
 export const CHANGES_GENERATOR = "skeleton-v1";
 
+/**
+ * Marker diagnostic proving the tape-evidence gate ran for an artifact.
+ * Artifacts without the current value predate the gate and must regenerate:
+ * their diffs may attribute other sessions' shared-tree writes to this
+ * session. Bumped to v2 when the gate went per-window; v1 (session-wide)
+ * artifacts regenerate once more so every session is repaired under the
+ * final logic.
+ */
+export const CHANGES_EVIDENCE_GATE = "changes_evidence_gated_v2";
+
+// Mutating file tools whose input.path proves the session authored file
+// state. Read/grep/glob/search/question never count: observing a file is
+// not changing it. Shell is excluded on purpose: a command that merely
+// names a file (cat, git status) must not become authorship; shell-driven
+// writes surface as unattributed gaps instead of fabricated changes.
+
 /** Cap on prompt texts per generation: bounds the substring matching in grouping. */
 const MAX_PROMPTS = 500;
 /** Cap on model narration per generation run: bounds spend and latency. */
@@ -236,6 +252,120 @@ function promptTextsFor(db: EchoDb, sessionId: string): string[] {
     if (typeof text === "string" && text !== "") texts.push(text);
   }
   return texts.slice(-MAX_PROMPTS);
+}
+
+interface TimedEvidence {
+  /** Source and daemon millis of the evidence event; null when unparseable. */
+  tsMs: number | null;
+  obsMs: number | null;
+}
+
+/**
+ * Snapshot lag tolerance: a tool lands, then a later poll takes the
+ * post-snapshot. Evidence just outside the pair still belongs to it.
+ * Wide open past this, same-file edits by concurrent sessions blend —
+ * that remainder is reported, not hidden (see the pair filter below).
+ */
+const EVIDENCE_SKEW_MS = 120_000;
+
+interface TapeFileEvidence {
+  /** Mutating tool input paths with event times. */
+  paths: Array<{ path: string } & TimedEvidence>;
+  /**
+   * Stringified tool.requested payloads (agent intent, not results) with
+   * event times. Muse tool_calls args carry {"path": ...} and
+   * workspace:<rel> subjects here; opencode pendings are partial/empty and
+   * match nothing. Completed outputs are excluded: results may list other
+   * sessions' files (git status, grep), which must never become authorship.
+   */
+  intents: Array<{ text: string } & TimedEvidence>;
+}
+
+// File paths this session's own tape proves it touched. Completed/failed
+// mutating file tools contribute their input.path; requested payloads
+// contribute intent text for substring matching (Muse opaque records).
+// A diff file with no evidence in the pair's window is another session's
+// shared-tree write, not this session's change. Either clock counts: live
+// tools carry both source and observed times near the snapshots, while
+// imports stamp observed_at at import time with older source times.
+function tapeFileEvidenceFor(db: EchoDb, sessionId: string): TapeFileEvidence {
+  const paths: Array<{ path: string } & TimedEvidence> = [];
+  const intents: Array<{ text: string } & TimedEvidence> = [];
+  for (const event of readAllEvents(db, sessionId)) {
+    const tsMs = parseMs(event.ts);
+    const obsMs = parseMs(event.observed_at);
+    if (event.kind === "tool.requested") {
+      const payload = event.payload;
+      if (payload === null || typeof payload !== "object") continue;
+      const record = payload as Record<string, unknown>;
+      // Shell/read/search intents name files without changing them.
+      if (typeof record.name === "string") {
+        const name = record.name.toLowerCase();
+        if (name !== "edit" && name !== "write" && name !== "patch" && name !== "apply_patch") {
+          continue;
+        }
+      }
+      try {
+        intents.push({ text: JSON.stringify(payload), tsMs, obsMs });
+      } catch {
+        // Unstringifiable intent contributes no evidence.
+      }
+      continue;
+    }
+    if (event.kind !== "tool.completed" && event.kind !== "tool.failed") continue;
+    const payload = event.payload;
+    if (payload === null || typeof payload !== "object") continue;
+    const record = payload as Record<string, unknown>;
+    if (typeof record.name !== "string") continue;
+    const name = record.name.toLowerCase();
+    if (name !== "edit" && name !== "write" && name !== "patch" && name !== "apply_patch") {
+      continue;
+    }
+    const input = record.input;
+    if (input === null || typeof input !== "object" || Array.isArray(input)) continue;
+    const path = (input as Record<string, unknown>).path;
+    if (typeof path === "string" && path !== "") paths.push({ path, tsMs, obsMs });
+  }
+  return { paths, intents };
+}
+
+/** Parsed millis, null when the timestamp is missing or malformed. */
+function parseMs(value: string): number | null {
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
+/**
+ * True when the session's tape evidences authorship of a diff path inside
+ * the snapshot pair's window. Untimestamped evidence counts (never punish
+ * a clock gap by dropping real work); everything else must land in
+ * [fromMs - skew, toMs + skew].
+ */
+function isPathEvident(
+  rel: string,
+  evidence: TapeFileEvidence,
+  fromMs: number,
+  toMs: number,
+): boolean {
+  const inWindow = (entry: TimedEvidence): boolean => {
+    // Either clock counts: live tools carry source and observed times near
+    // the snapshots, while imports stamp observed_at at import time with
+    // older source times. Untimestamped evidence counts (never punish a
+    // clock gap by dropping real work).
+    if (entry.tsMs === null && entry.obsMs === null) return true;
+    const hit = (atMs: number | null): boolean =>
+      atMs !== null && atMs >= fromMs - EVIDENCE_SKEW_MS && atMs <= toMs + EVIDENCE_SKEW_MS;
+    return hit(entry.tsMs) || hit(entry.obsMs);
+  };
+  for (const candidate of evidence.paths) {
+    if (!inWindow(candidate)) continue;
+    if (candidate.path === rel || candidate.path.endsWith(`/${rel}`)) return true;
+  }
+  for (const intent of evidence.intents) {
+    if (!inWindow(intent)) continue;
+    if (intent.text.includes(rel)) return true;
+  }
+  return false;
 }
 
 // Model-distilled session name from the first prompt plus change titles.
@@ -586,6 +716,10 @@ export function createChangesService(
         buildSessionSummaryFromDigests(previous.changes.map((change) => change.digest));
 
     const prompts = promptTextsFor(db, sessionId);
+    // Files this session's tape proves it touched. Every snapshot-pair
+    // diff is filtered against it below: shared-tree writes from concurrent
+    // sessions are dropped, never claimed.
+    const evidence = tapeFileEvidenceFor(db, sessionId);
     // Earlier digests only, oldest first: carried rows in artifact order,
     // then each fresh digest as it lands. The session summary is built from
     // digests alone, so narration never sees the current group's digest.
@@ -609,12 +743,17 @@ export function createChangesService(
     const ordered: Change[] = [];
     let filled = 0;
     let narratedCount = 0;
+    // Diff files dropped for lack of tape evidence, reported as a gap count.
+    let unattributedFiles = 0;
+    // Pre-gate artifacts lack the marker and must regenerate even when the
+    // snapshots are unchanged: their diffs may claim other sessions' writes.
+    const previousGated = previous?.diagnostics.includes(CHANGES_EVIDENCE_GATE) ?? false;
     // Watermark hit with nothing to fill: snapshots unchanged and every
     // row already has prose (or the model is off). Skip the pair loop
     // entirely — diffing hundreds of pairs just to skip them is the slow
     // path this early exit removes. A pre-split rollup or a drifted
     // summary always regenerates.
-    if (watermarkHit && previous && !needsResplit && !needsSummaryRewrite) {
+    if (watermarkHit && previous && previousGated && !needsResplit && !needsSummaryRewrite) {
       const needsFill =
         modelConfig !== null &&
         previous.changes.some((change) => (change.origin ?? "skeleton") === "skeleton");
@@ -662,9 +801,20 @@ export function createChangesService(
       const files = splitDiffByFile(rawDiff);
       // No diff means no change.
       if (files.length === 0) continue;
+      // Evidence gate: keep only files this session's tape proves it
+      // touched inside this pair's window. The shadow tree is shared per
+      // project, so concurrent sessions' writes land between these
+      // snapshots; claiming them would put one session's explanation under
+      // another session's name.
+      const fromMs = Date.parse(prev.takenAt);
+      const toMs = Date.parse(next.takenAt);
+      const evidenced = files.filter((file) => isPathEvident(file.path, evidence, fromMs, toMs));
+      unattributedFiles += files.length - evidenced.length;
+      // A pair with nothing attributable is all gap, no change.
+      if (evidenced.length === 0) continue;
       const span = { prevOid: prev.commitOid, nextOid: next.commitOid };
       for (const group of groupDiffIntoChanges({
-        files,
+        files: evidenced,
         prompts,
         createdFrom: { kind: "snapshot_pair", ...span },
       })) {
@@ -675,6 +825,13 @@ export function createChangesService(
     if (candidates.length > folded.length) {
       diagnostics.push(`changes_folded:${candidates.length}->${folded.length}`);
     }
+    // Gaps are data: dropped files are counted, never silently absorbed.
+    // The gate marker proves this artifact ran the filter, so the backfill
+    // can tell pre-gate artifacts apart and regenerate them.
+    if (unattributedFiles > 0) {
+      diagnostics.push(`changes_unattributed:${unattributedFiles}`);
+    }
+    diagnostics.push(CHANGES_EVIDENCE_GATE);
     for (const group of folded) {
       const span = group.span;
       // Unstamped groups cannot anchor an id; without a span there is no change.
@@ -879,7 +1036,13 @@ export function createChangesService(
     // rewritten, so reruns are byte-identical and existing rows keep their
     // timestamps. A drifted summary (shape changed under a quiet session)
     // falls through to a prose-preserving rewrite below.
-    if (fresh.length === 0 && filled === 0 && previous && previous.summary === summary) {
+    if (
+      fresh.length === 0 &&
+      filled === 0 &&
+      previous &&
+      previousGated &&
+      previous.summary === summary
+    ) {
       const progressPath = progressArtifactPath(dataDir, session.projectId, sessionId);
       if (!existsSync(progressPath)) persistProgressFile(sessionId, session.projectId);
       // Watermark moved (or predates watermarks) while content didn't: advance
@@ -967,6 +1130,11 @@ export function createChangesService(
         session.id,
       );
       if (!artifact) return { sessionId: session.id, reason: "missing" };
+      // Pre-gate artifacts regenerate even when snapshots are unchanged:
+      // their diffs may claim other sessions' shared-tree writes.
+      if (!artifact.diagnostics.includes(CHANGES_EVIDENCE_GATE)) {
+        return { sessionId: session.id, reason: "stale" };
+      }
       const snaps = listSnapshots(db, session.id);
       const lastOid = snaps.length > 0 ? (snaps[snaps.length - 1]?.commitOid ?? null) : null;
       if (
