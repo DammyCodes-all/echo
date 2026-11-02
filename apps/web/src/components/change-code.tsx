@@ -7,9 +7,11 @@ function baseOf(path: string): string {
   return index < 0 ? path : path.slice(index + 1);
 }
 
-/** Build a minimal unified patch per file so Pierre can highlight + word-diff. */
+/** Build a minimal unified patch per file so Pierre can highlight + word-diff.
+ * The `diff --git` line is required: without it Pierre reads the a/b
+ * paths as a rename and renders the rename UI instead of the change. */
 function patchForFile(path: string, hunks: ChangeCodeFile["hunks"]): string {
-  const header = `--- a/${path}\n+++ b/${path}\n`;
+  const header = `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n`;
   const body = hunks
     .map((hunk) => {
       const head = `@@ -${hunk.prevStart},${hunk.prevLines} +${hunk.nextStart},${hunk.nextLines} @@`;

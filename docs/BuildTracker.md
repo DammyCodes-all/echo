@@ -1362,3 +1362,17 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 260 files (4 pre-existing infos), `pnpm test` → 73 files / 717 passed, `pnpm build` ok; live default resolve with both keys → `https://inference.baseten.co/v1 meta-models/muse-spark-open-1026`; matrix: both→baseten, meta-only→meta, baseten-only→baseten
 - notes: Explicit `baseten` without key still errors (no silent Meta swap). Stage and commit nothing.
+
+## 2026-11-02 — Baseten→Meta runtime retry on model_error
+
+- item: transparent Baseten→Meta retry in `chatCompletions` (`packages/model`): on `ModelError` code `model_error` with a Baseten primary and `META_API_KEY` present, one retry against explicit Meta config; plus explicit `chatCompletionsWithFallback` / `requestJsonWithFallback` + `isBasetenConfig` / `getMetaFallbackConfig` helpers. `requestJson` inherits the retry via `chatCompletions`, so all 9 server call sites are covered with zero server edits
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 260 files (4 pre-existing infos), `pnpm test` → 73 files / 721 passed (`packages/model` 16/16: explicit fallback URL order baseten→meta, no fallback on `invalid_response`, no fallback when primary is Meta, auto-fallback URL order on 500), `pnpm build` ok
+- notes: Fallback fires on transport/HTTP `model_error` only — not on `invalid_response` / `output_budget_exhausted`; aborted signals never retry; explicit `ECHO_MODEL_PROVIDER=baseten` without key still errors at config time. Stage and commit nothing.
+
+## 2026-11-02 — Code dropdown: rail-style header + real change type for Pierre
+
+- item: collapsed Code row restyled in the rail's language (custom `›` chevron with rotate-on-open replacing the native `▶`, label left, `N files` + colored mono `+A −R` right, hover brightening); root fix for invisible diffs — `patchForFile` now emits the `diff --git a/… b/…` line, without which Pierre classified every patch as `rename-changed` and rendered the rename UI (which needs full file contents we don't provide) instead of the change
+- status: done
+- evidence: full gate green on final tree → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 73 files / 721 passed, `pnpm build` ok; node check against the shipped lib: same patch parses as `rename-changed` without the header vs `change` with it (then response shape confirmed against `getSingularPatch` from source); dev server on :5173 serves the fixed transform
+- notes: `reader-rail.tsx +0 −0` "unavailable" in the screenshot is honest server data (no diff chunk for that path in this snapshot pair — the capture gap path), not this bug. Prior slices (offline message, dusk surfaces, per-file toggles) were committed to main by the repo owner mid-session; only this header fix remains uncommitted. Stage and commit nothing.
