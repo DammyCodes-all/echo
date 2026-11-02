@@ -52,6 +52,8 @@ function validDraft() {
       "Review the new lines only.",
     ],
     headsUp: [],
+    moment: "warnings that are easier to spot",
+    verify: ["Open the notes file and confirm the new lines read correctly."],
     files: [{ path: "notes.txt", note: "Change notes.txt: updated." }],
     digest: Array.from({ length: 60 }, (_, i) => `token${i}`).join(" "),
   };
@@ -72,6 +74,8 @@ describe("buildChangeNarrationMessages", () => {
       "3-5 non-empty steps",
       "0-3 items",
       "not_asked | watch_out | unfinished",
+      "moment",
+      "verify: 1-3 non-empty strings",
       "50-100 whitespace-separated tokens",
       "Never invent file names",
       "Write for someone who has never seen this codebase",
@@ -232,6 +236,19 @@ describe("parseChangeDraft", () => {
   it("accepts empty howItWorks and headsUp for trivial groups", () => {
     const parsed = parseChangeDraft({ ...validDraft(), howItWorks: [], headsUp: [] });
     expect(parsed.ok).toBe(true);
+  });
+
+  it("accepts a draft with no moment key", () => {
+    const { moment: _dropped, ...rest } = validDraft();
+    const parsed = parseChangeDraft(rest);
+    expect(parsed.ok).toBe(true);
+  });
+
+  it("rejects moment and verify cap violations", () => {
+    expect(parseChangeDraft({ ...validDraft(), moment: `m${"x".repeat(200)}` }).ok).toBe(false);
+    expect(parseChangeDraft({ ...validDraft(), verify: [] }).ok).toBe(false);
+    expect(parseChangeDraft({ ...validDraft(), verify: ["a", "b", "c", "d"] }).ok).toBe(false);
+    expect(parseChangeDraft({ ...validDraft(), verify: [""] }).ok).toBe(false);
   });
 
   it("rejects non-objects without throwing", () => {

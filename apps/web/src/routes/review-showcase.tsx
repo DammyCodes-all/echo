@@ -55,6 +55,11 @@ const changeFull: Change = {
     },
     { type: "unfinished", text: "Metrics for retry counts are still TODO." },
   ],
+  moment: "warnings that are easier to spot",
+  verify: [
+    "Trigger a failed webhook post and confirm it retries once.",
+    "Open the billing status panel and confirm the retry state shows.",
+  ],
   files: [
     { path: "apps/server/src/billing/retry.ts", note: "Adds the one-shot retry wrapper." },
     { path: "apps/server/src/billing/handler.ts", note: "Calls retry around the post." },
@@ -99,6 +104,7 @@ const changeWatchOnly: Change = {
   now: ["The token covers sync as well as read."],
   howItWorks: ["Add the sync scope to the token request."],
   headsUp: [{ type: "watch_out", text: "A leaked token now reaches further than before." }],
+  verify: ["Revoke a token and confirm sync calls fail closed."],
   files: [{ path: "apps/server/src/auth/scope.ts", note: "Widens the requested scope." }],
   digest:
     "The session token now covers the sync endpoint too apps/server/src/auth/scope.ts broader scope fixes sync failures with a wider blast radius worth a careful look",
@@ -260,18 +266,19 @@ export function ReviewShowcasePage() {
 
         <Section
           title="Change card"
-          hint="Full card, minimal card (no How it works, nothing to flag, diff still loading, actions unwired), and a failed diff."
+          hint="Full card, minimal card (no How it works, nothing to flag, diff still loading), and a failed diff with a Verify list but no moment."
         >
           <div className="max-w-[700px] space-y-12">
             <ChangeCard
               change={changeFull}
-              onAsk={noop}
-              onCheck={noop}
               code={codeLoaded}
-              checkResult={{ answered: 2, correct: 1, total: 3 }}
+              connections={[
+                { id: changeMinimal.id, title: changeMinimal.title, direction: "earlier" },
+              ]}
+              onJumpToChange={noop}
             />
             <ChangeCard change={changeMinimal} code={null} />
-            <ChangeCard change={changeWatchOnly} onAsk={noop} onCheck={noop} codeFailed />
+            <ChangeCard change={changeWatchOnly} codeFailed />
           </div>
         </Section>
 
@@ -279,7 +286,7 @@ export function ReviewShowcasePage() {
           title="Files rail"
           hint="Nested groups with stats, a single file, and the loading state with no stats yet."
         >
-          <div className="max-w-[320px] space-y-8">
+          <div className="max-w-[360px] space-y-8">
             <ReaderRail
               changes={tapeChanges}
               currentIndex={0}
