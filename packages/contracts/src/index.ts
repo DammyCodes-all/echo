@@ -6,6 +6,7 @@ export * from "./code";
 export * from "./config";
 export * from "./evidence";
 export * from "./quiet";
+export * from "./settings";
 export * from "./snapshot";
 export * from "./source";
 export * from "./summary";
