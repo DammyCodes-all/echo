@@ -12,7 +12,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { ChecksV2ArtifactSchema, SessionStorySchema } from "@echo/contracts";
+import { ChangesArtifactSchema, ChecksV2ArtifactSchema } from "@echo/contracts";
 import { openEchoDb } from "@echo/db";
 import { scanBundleFiles } from "./scan";
 
@@ -33,7 +33,8 @@ export interface DemoBuildOptions {
 }
 
 export interface DemoBundleMeta {
-  version: 1;
+  /** 1 = story-era bundle (story.json); 2 = reader-era bundle (changes.json). */
+  version: 2;
   builtAt: string;
   projectId: string;
   projectName: string;
@@ -64,6 +65,8 @@ function assertSafeOutDir(outDir: string): void {
 const FULL_WIPE_TABLES = [
   "reader_checkpoints",
   "engagement_events",
+  "change_refs",
+  "change_progress",
   "review_transition_cache",
   "code_files",
   "code_symbols",
@@ -122,7 +125,7 @@ export function buildDemoBundle(options: DemoBuildOptions): {
 
   report("checking bake-readiness");
   for (const sessionId of sessionIds) {
-    const storyPath = join(dataDir, "projects", projectId, "sessions", sessionId, "story.json");
+    const changesPath = join(dataDir, "projects", projectId, "sessions", sessionId, "changes.json");
     const checksPath = join(
       dataDir,
       "projects",
@@ -133,13 +136,18 @@ export function buildDemoBundle(options: DemoBuildOptions): {
       "checks_v2.json",
     );
     const tapePath = join(dataDir, "projects", projectId, "sessions", sessionId, "tape.jsonl");
-    if (!existsSync(storyPath)) throw new DemoBuildError(`session ${sessionId} has no story.json`);
+    if (!existsSync(changesPath))
+      throw new DemoBuildError(`session ${sessionId} has no changes.json`);
     if (!existsSync(tapePath)) throw new DemoBuildError(`session ${sessionId} has no tape.jsonl`);
     if (!existsSync(checksPath)) {
       throw new DemoBuildError(`session ${sessionId} has no pre-generated checks_v2.json`);
     }
-    const story = SessionStorySchema.safeParse(JSON.parse(readFileSync(storyPath, "utf8")));
-    if (!story.success) throw new DemoBuildError(`session ${sessionId} story.json failed schema`);
+    const changes = ChangesArtifactSchema.safeParse(JSON.parse(readFileSync(changesPath, "utf8")));
+    if (!changes.success)
+      throw new DemoBuildError(`session ${sessionId} changes.json failed schema`);
+    if (changes.data.changes.length === 0) {
+      throw new DemoBuildError(`session ${sessionId} has no reviewed changes to show`);
+    }
     const checks = ChecksV2ArtifactSchema.safeParse(JSON.parse(readFileSync(checksPath, "utf8")));
     if (!checks.success || checks.data.questions.length === 0) {
       throw new DemoBuildError(`session ${sessionId} checks_v2.json has no baked questions`);
@@ -176,6 +184,10 @@ export function buildDemoBundle(options: DemoBuildOptions): {
     const inSessions = placeholders(sessionIds.length);
     baked.exec("BEGIN");
     try {
+      // Full wipes first: several of these tables carry REFERENCES to
+      // sessions/projects, so narrowing parents before wiping children trips
+      // the foreign-key enforcement.
+      for (const table of FULL_WIPE_TABLES) baked.exec(`DELETE FROM ${table}`);
       baked
         .prepare(
           `DELETE FROM snapshot_files WHERE snapshot_id NOT IN (SELECT id FROM snapshots WHERE session_id IN (${inSessions}))`,
@@ -195,7 +207,6 @@ export function buildDemoBundle(options: DemoBuildOptions): {
         .run(...sessionIds);
       baked.prepare(`DELETE FROM sessions WHERE id NOT IN (${inSessions})`).run(...sessionIds);
       baked.prepare("DELETE FROM projects WHERE id != ?").run(projectId);
-      for (const table of FULL_WIPE_TABLES) baked.exec(`DELETE FROM ${table}`);
       // Builder paths never ship: the demo has no source tree, so these are
       // display-only. Scrubbed before the scan runs.
       const safeName = projectName.replace(/[^A-Za-z0-9_-]+/g, "_");
@@ -222,7 +233,7 @@ export function buildDemoBundle(options: DemoBuildOptions): {
     const src = join(dataDir, "projects", projectId, "sessions", sessionId);
     const dest = join(outData, "projects", projectId, "sessions", sessionId);
     mkdirSync(join(dest, "artifacts"), { recursive: true });
-    for (const file of ["tape.jsonl", "story.json"]) {
+    for (const file of ["tape.jsonl", "changes.json"]) {
       cpSync(join(src, file), join(dest, file));
     }
     const artifacts = join(src, "artifacts");
@@ -288,7 +299,7 @@ export function buildDemoBundle(options: DemoBuildOptions): {
 
   report("writing meta");
   const meta: DemoBundleMeta = {
-    version: 1,
+    version: 2,
     builtAt: (options.now?.() ?? new Date()).toISOString(),
     projectId,
     projectName,

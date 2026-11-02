@@ -3,7 +3,7 @@ import type { DemoBundleMeta } from "./build";
 import { runDemoChecks } from "./verify";
 
 const META: DemoBundleMeta = {
-  version: 1,
+  version: 2,
   builtAt: "2026-10-31T00:00:00.000Z",
   projectId: "prj_demo",
   projectName: "demo",
@@ -35,7 +35,19 @@ function mockFetch(routes: Record<string, { status: number; body: unknown }>): (
 
 const HEALTHY = {
   "GET /api/projects": { status: 200, body: [{ id: "prj_demo" }] },
-  "GET /api/sessions/ses_demo/story": { status: 200, body: { cards: [{ id: "h_1" }] } },
+  "GET /api/sessions/ses_demo/changes": {
+    status: 200,
+    body: {
+      changes: [{ id: "c_0123456789abcdef", version: 1 }],
+      progress: [],
+      summary: "One reviewed change.",
+      isLive: false,
+    },
+  },
+  "GET /api/sessions/ses_demo/changes/c_0123456789abcdef/code": {
+    status: 200,
+    body: { changeId: "c_0123456789abcdef", version: 1, files: [] },
+  },
   "POST /api/sessions/ses_demo/checks-v2/generate": {
     status: 200,
     body: {
@@ -56,14 +68,18 @@ const HEALTHY = {
     status: 403,
     body: { error: { code: "readonly_demo" } },
   },
-  "GET /api/sessions/ses_unknown/story": { status: 404, body: {} },
+  "POST /api/sessions/ses_demo/progress": {
+    status: 403,
+    body: { error: { code: "readonly_demo" } },
+  },
+  "GET /api/sessions/ses_unknown/changes": { status: 404, body: {} },
   "GET /": { status: 200, body: "<html></html>" },
 };
 
 describe("demo verify checks", () => {
   it("passes a healthy demo server", async () => {
     const results = await runDemoChecks(mockFetch(HEALTHY), "http://demo", META);
-    expect(results).toHaveLength(9);
+    expect(results).toHaveLength(11);
     expect(results.filter((result) => !result.ok)).toEqual([]);
   });
 
@@ -71,17 +87,23 @@ describe("demo verify checks", () => {
     const results = await runDemoChecks(
       mockFetch({
         ...HEALTHY,
-        "GET /api/sessions/ses_demo/story": { status: 200, body: { cards: [] } },
+        "GET /api/sessions/ses_demo/changes": {
+          status: 200,
+          body: { changes: [], progress: [], summary: "", isLive: false },
+        },
         "POST /api/sessions/ses_demo/checks-v2/generate": { status: 503, body: {} },
         "POST /api/sessions/ses_demo/checks-v2/skip": { status: 200, body: {} },
+        "POST /api/sessions/ses_demo/progress": { status: 200, body: {} },
       }),
       "http://demo",
       META,
     );
     const failed = results.filter((result) => !result.ok).map((result) => result.name);
-    expect(failed).toContain("story renders with cards");
+    expect(failed).toContain("reader renders changes");
+    expect(failed).toContain("change code serves diffs");
     expect(failed).toContain("generate serves baked questions");
     expect(failed).toContain("readonly mutation rejected");
+    expect(failed).toContain("progress write rejected");
   });
 
   it("fails the answer check when the baked set has no mcq", async () => {
