@@ -66,10 +66,17 @@ const SYSTEM_PROMPT = [
   "- howItWorks: 3-5 non-empty steps, or [] when the group is marked trivial.",
   "- headsUp: 0-3 items, each {type, text} with type one of",
   "  not_asked | watch_out | unfinished; [] when nothing needs flagging.",
+  "- moment: one short plain excerpt (under 200 chars, no quotes, no",
+  '  "You asked for" prefix) of the linked moment prompt that caused this',
+  "  change; omit the key entirely when there are no linked prompts.",
+  "- verify: 1-3 non-empty strings (each under 200 chars), concrete things",
+  "  the reader can check themselves, e.g. open a page and confirm a pill",
+  "  appears. Always include at least one.",
   "- files: one {path, note} per input file, every file exactly once,",
   "  path copied exactly, note one plain line.",
   "- digest: 50-100 whitespace-separated tokens.",
-  'Shape: {"title", "summary", "before", "now", "howItWorks", "headsUp", "files", "digest"}.',
+  'Shape: {"title", "summary", "before", "now", "howItWorks", "headsUp", "files", "digest"',
+  '  plus optional "moment" and required "verify"}.',
   "Do not include id, version, snapshotPair, or createdFrom: the server stamps them.",
 ].join("\n");
 
@@ -202,6 +209,13 @@ export interface ChangeDraft {
   now: string[];
   howItWorks: string[];
   headsUp: ChangeDraftHeadsUp[];
+  /**
+   * Plain prompt excerpt, no prefix or quotes; absent when the group has
+   * no linked prompts. The reader adds the "You asked for" label.
+   */
+  moment?: string;
+  /** 1-3 concrete self-checks for the reader. */
+  verify?: string[];
   files: ChangeDraftFile[];
   digest: string;
 }
@@ -269,6 +283,36 @@ export function parseChangeDraft(
     headsUp = items;
   }
 
+  // Moment is prompt-anchored and optional: omit the key when the group
+  // has no linked prompts. Caps only — anchoring itself is not checkable.
+  let moment: string | undefined;
+  if (record.moment !== undefined) {
+    if (
+      typeof record.moment !== "string" ||
+      record.moment.length === 0 ||
+      record.moment.length > 200
+    ) {
+      errors.push("moment must be a non-empty string under 200 chars");
+    } else {
+      moment = record.moment;
+    }
+  }
+
+  let verify: string[] | undefined;
+  if (record.verify !== undefined) {
+    const entries = record.verify;
+    if (
+      !Array.isArray(entries) ||
+      entries.length === 0 ||
+      entries.length > 3 ||
+      entries.some((entry) => typeof entry !== "string" || entry.length === 0 || entry.length > 200)
+    ) {
+      errors.push("verify must be 1-3 non-empty strings under 200 chars each");
+    } else {
+      verify = entries as string[];
+    }
+  }
+
   let files: ChangeDraftFile[] | null = null;
   const rawFiles = record.files;
   if (!Array.isArray(rawFiles) || rawFiles.length === 0) {
@@ -309,6 +353,8 @@ export function parseChangeDraft(
       now,
       howItWorks,
       headsUp,
+      ...(moment !== undefined ? { moment } : {}),
+      ...(verify !== undefined ? { verify } : {}),
       files,
       digest: record.digest as string,
     },

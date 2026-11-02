@@ -207,6 +207,9 @@ export interface SkeletonChange {
   now: string[];
   howItWorks: string[];
   headsUp: HeadsUp[];
+  /** Model-only: the skeleton omits moment/verify, the fill pass adds them. */
+  moment?: string;
+  verify?: string[];
   files: ChangeFile[];
   digest: string;
   createdFrom: CreatedFrom;

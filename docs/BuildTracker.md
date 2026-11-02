@@ -1250,3 +1250,24 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos in untouched `checks-v2.test.ts`), `pnpm test` → 73 files / 712 passed, `pnpm build` ok; live disk state before the bump showed all 27 session artifacts already gated once (v1) with foreign files dropped across the board (e.g. 265/175/160 unattributed) — v2 converges the rest on the daemon's backfill ticks
 - notes: One background regen pass (~one session per 20s tick); reads keep serving the current artifact until each rewrite lands; narration/fill caps bound any model spend on the pass. Stage and commit nothing.
+
+## 2026-11-02 — Reader: explore actions move to rail, footer + screen use
+
+- item: moved "Ask or check this change" out of `ChangeCard` into `ReaderRail` as a top "Explore this change" section (stacked full-width buttons, Check differentiated with accent-wash border vs Ask neutral pill, pass state as green `✓ N of N passed` chip instead of muted text, one-line Ask-vs-check explainer); card drops `onAsk`/`onCheck`/`checkBusy`/`checkResult` props and types move to the rail; reader footer restructured (Back becomes bordered ghost pill with ←, Got it gains →, progress line reads "Change X of N · Next up: …", Skip quietly stays the quiet tertiary); grid widens to `minmax(0,1fr)_360px` with `gap-8` so the rail fills more of the wide screen; `review-showcase` rewired (explore props demoed on first rail, card hint updated)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean on 4 touched files (260 files, 4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok; dev server served `/` + `/review-showcase` 200 with all 4 edited modules transforming cleanly, then shut down (user's own 09:56 dev/daemon processes untouched; port verified free)
+- notes: Ask/Check sit above the scrollable Changes list so they stay visible on long changes (sticky rail); on narrow screens the rail stacks below the nav — accepted, desktop-first reading tool. No overlap with the concurrent session's uncommitted card/reader/showcase edits (connections, Verify, moment); nothing staged or committed.
+
+## 2026-11-02 — Reader rail: drop Check button, quiet Ask row
+
+- item: removed the per-change "Check me on this" button entirely (`ReaderRail` `onCheck`/`checkBusy` props, `handleCheckMe` in `reader.tsx`, showcase wiring) — checks already happen through the "Got it" gate plus the end-of-session offer, so the button was redundant; the rail keeps a compact Ask row (quiet hairline-bordered button with →, `✓ n/n` chip inline when fully answered, no explainer paragraph) instead of the heavy full-width purple slab
+- status: done
+- evidence: full gate green twice (background run superseded by a fresh foreground run after the restyle) → `tsc` clean, `biome` clean (4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok
+- notes: `checkBusy` state stays for the caught-up "Check my understanding" button; partial-answer line dropped with the section (gate modal owns in-progress state). Stage and commit nothing.
+
+## 2026-11-02 — Reader: Ask row out of the rail, dead wiring cut
+
+- item: removed the Ask row from `ReaderRail` (back to nav + files only, rail file net-zero vs HEAD) and cut the orphaned Ask thread in `reader.tsx` — `askChange`/`askOpen` state, `handleAsk`, `handleCitationClick`, `AskThreadPanel` render, `AskEvidence`/`AskChangeRef` imports — plus the showcase's rail `onAsk`/`checkResult`; `checkResult` stays for the "Got it" gate's already-answered pass-through
+- status: done
+- evidence: full gate green → `tsc` clean (re-run after), `biome` clean (4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok
+- notes: Ask has no entry point now — `ask-thread-panel.tsx` and `/api/ask` remain in place but uncalled from the reader; restoring or deleting the feature is a product call, not this cleanup. Verified live diff: this slice coexists with the concurrent session's uncommitted card/rail/reader work (connections, Verify, progress-tape, change-code) with no overlap. Stage and commit nothing.
