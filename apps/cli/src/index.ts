@@ -1,12 +1,16 @@
 import { resolve } from "node:path";
-import { importMuseSession } from "@echo/capture-muse";
+import {
+  importMuseSession,
+  installMuseHooks,
+  resolveEchoCliBin,
+  resolveMuseSettingsPath,
+} from "@echo/capture-muse";
 import { loadEchoConfig, resolveEchoPaths, saveEchoConfig } from "@echo/config";
 import { buildDemoBundle, resolveServerBin, verifyDemoBundle } from "@echo/demo";
 import { Command } from "commander";
 import { resolveDefaultWebDir, runDemoServe } from "./demo";
 import { runDoctor } from "./doctor";
 import { runHookCommand } from "./hook";
-import { installMuseHooks, resolveEchoCliBin, resolveMuseSettingsPath } from "./hooks-install";
 import { runRecordSession } from "./record";
 
 const program = new Command();
