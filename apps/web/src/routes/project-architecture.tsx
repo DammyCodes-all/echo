@@ -48,7 +48,6 @@ export function ProjectArchitecturePage() {
   const [progress, setProgress] = useState<{ stage: string; progress: number } | null>(null);
   const [generateError, setGenerateError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<string[]>([]);
-  const [undoError, setUndoError] = useState<string | null>(null);
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [pulseIds, setPulseIds] = useState<string[]>([]);
   const [pinned, setPinned] = useState<PinnedNode | null>(null);
@@ -101,19 +100,6 @@ export function ProjectArchitecturePage() {
     },
   });
 
-  const undo = useMutation({
-    mutationFn: () => api.undoArchitecture(projectId),
-    onMutate: () => setUndoError(null),
-    onSuccess: () => {
-      setPulseIds([]);
-      setWarnings([]);
-      void queryClient.invalidateQueries({ queryKey: ["architecture", projectId] });
-    },
-    onError: (error) => {
-      setUndoError(error instanceof Error ? error.message : "Undo failed.");
-    },
-  });
-
   const onPatched = (patch: ArchitecturePatch) => {
     setPulseIds(patchNodeIds(patch));
     window.setTimeout(() => setPulseIds([]), 3000);
@@ -124,36 +110,13 @@ export function ProjectArchitecturePage() {
   return (
     <div className="space-y-8">
       <section className="space-y-3">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h2 className="text-xl font-semibold tracking-tight">System at a glance</h2>
-            <p className="max-w-2xl text-sm leading-6 text-dusk-muted">
-              Functional map of the whole project, generated from the code and docs — not a file
-              tree. Hover a part for detail, click to pin it for the chat.
-            </p>
-          </div>
-          {demoMode ? null : (
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={() => undo.mutate()}
-                disabled={undo.isPending || !architecture || architecture.version <= 1}
-                className="rounded-dusk-pill bg-dusk-secondary px-4 py-2 text-sm font-semibold text-dusk-accent-soft transition-opacity disabled:opacity-50"
-              >
-                {undo.isPending ? "Undoing…" : "Undo"}
-              </button>
-              <button
-                type="button"
-                onClick={() => generate.mutate()}
-                disabled={generate.isPending || generating || arch.isPending}
-                className="rounded-dusk-pill bg-dusk-accent px-4 py-2 text-sm font-semibold text-dusk-base transition-opacity disabled:opacity-50"
-              >
-                {architecture ? "Regenerate" : "Generate architecture"}
-              </button>
-            </div>
-          )}
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight">System at a glance</h2>
+          <p className="max-w-2xl text-sm leading-6 text-dusk-muted">
+            Functional map of the whole project, generated from the code and docs — not a file tree.
+            Hover a part for detail, click to pin it for the chat.
+          </p>
         </div>
-        {undoError ? <p className="text-sm text-dusk-fail">{undoError}</p> : null}
 
         {arch.isPending ? (
           <div
