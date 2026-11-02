@@ -268,6 +268,21 @@ interface TimedEvidence {
  */
 const EVIDENCE_SKEW_MS = 120_000;
 
+/**
+ * Wall-clock budget for the pair-diff loop below; mirrors the review index.
+ * A monster session degrades to a partial fold with a diagnostic instead of
+ * freezing the daemon's event loop for minutes on blocking git output.
+ */
+const CHANGES_DIFF_BUDGET_MS = 20_000;
+
+/**
+ * Minimum gap between fill-only narration passes on unchanged snapshots.
+ * Fill caps narration per run, so uncapped re-picks would re-diff the whole
+ * session every backfill tick until its skeletons clear. In-memory: a
+ * restart allows one extra fill pass per session.
+ */
+const FILL_COOLDOWN_MS = 10 * 60 * 1000;
+
 interface TapeFileEvidence {
   /** Mutating tool input paths with event times. */
   paths: Array<{ path: string } & TimedEvidence>;
@@ -501,6 +516,8 @@ export function createChangesService(
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const redactJsonImpl = options.redactJsonImpl ?? redactJson;
+  /** Last fill-pass start per session; spaces narration-only re-runs. */
+  const lastFillAt = new Map<string, number>();
 
   function modelOff(): boolean {
     return env.ECHO_MODEL === "off";
@@ -757,7 +774,13 @@ export function createChangesService(
       const needsFill =
         modelConfig !== null &&
         previous.changes.some((change) => (change.origin ?? "skeleton") === "skeleton");
-      if (!needsFill) {
+      // Fill caps narration per run, so without a cooldown the same session
+      // would re-diff every pair on every 20s tick until its skeletons clear
+      // — a permanent burn on big sessions. The cooldown spaces fill passes;
+      // a restart allows one extra pass.
+      const fillCooling =
+        needsFill && clock().getTime() - (lastFillAt.get(sessionId) ?? 0) < FILL_COOLDOWN_MS;
+      if (!needsFill || fillCooling) {
         const progressPath = progressArtifactPath(dataDir, session.projectId, sessionId);
         if (!existsSync(progressPath)) persistProgressFile(sessionId, session.projectId);
         pruneChangeRefs(
@@ -779,18 +802,27 @@ export function createChangesService(
         });
         return { outcome: "fresh", artifact: previous };
       }
+      // Fill proceeds: snapshots are unchanged, so this run only narrates.
+      lastFillAt.set(sessionId, clock().getTime());
     }
     // Phase 1: group every pair. Phase 2 folds the session to budget.
     // Skeletons build only for the folded set, so ids stay stable and one
-    // run never writes changes the fold would immediately hide.
+    // run never writes changes the fold would immediately hide. The loop is
+    // budget-bound: a monster session degrades to a partial fold with a
+    // diagnostic instead of blocking the loop for minutes.
     const candidates: ChangeGroup[] = [];
+    const pairDeadline = Date.now() + CHANGES_DIFF_BUDGET_MS;
     for (let index = 1; index < snapshots.length; index += 1) {
+      if (Date.now() > pairDeadline) {
+        diagnostics.push("changes_budget_exceeded");
+        break;
+      }
       const prev = snapshots[index - 1];
       const next = snapshots[index];
       if (!prev || !next || prev.commitOid === next.commitOid) continue;
       let rawDiff: string;
       try {
-        rawDiff = diffShadowTrees(shadowDir, prev.commitOid, next.commitOid);
+        rawDiff = await diffShadowTrees(shadowDir, prev.commitOid, next.commitOid);
       } catch {
         // One unreadable pair degrades to a diagnostic; other pairs still group.
         diagnostics.push(
@@ -1130,6 +1162,13 @@ export function createChangesService(
         session.id,
       );
       if (!artifact) return { sessionId: session.id, reason: "missing" };
+      // A recording session's watermark drifts on every tick, so picking it
+      // would re-diff all pairs every 20s until it goes quiet. Skip live
+      // sessions with an artifact; the reader serves the live slot meanwhile.
+      // Silent sessions (null observed_at counts as quiet) still get picked.
+      if (!isSessionQuiet(getSessionLastObservedAt(db, session.id), clock().getTime())) {
+        continue;
+      }
       // Pre-gate artifacts regenerate even when snapshots are unchanged:
       // their diffs may claim other sessions' shared-tree writes.
       if (!artifact.diagnostics.includes(CHANGES_EVIDENCE_GATE)) {
@@ -1221,7 +1260,7 @@ export function createChangesService(
    * pair and filtered to its own file list. Computed per request from
    * shadow git (local, milliseconds) and never persisted.
    */
-  function getChangeCode(sessionId: string, changeId: string): ChangesOutcome {
+  async function getChangeCode(sessionId: string, changeId: string): Promise<ChangesOutcome> {
     const session = getSession(db, sessionId);
     if (!session) {
       return {
@@ -1254,7 +1293,7 @@ export function createChangesService(
     const shadowDir = join(dataDir, "projects", session.projectId, "shadow.git");
     let rawDiff: string;
     try {
-      rawDiff = diffShadowTrees(
+      rawDiff = await diffShadowTrees(
         shadowDir,
         change.snapshotPair.prevOid,
         change.snapshotPair.nextOid,
