@@ -108,6 +108,46 @@ function livePromptEvent(
   };
 }
 
+function toolEditEvent(
+  sessionId: string,
+  projectId: string,
+  eventId: string,
+  observedAt: string,
+  path: string,
+  ts: string = observedAt,
+): TapeEvent {
+  const base = livePromptEvent(sessionId, projectId, eventId, observedAt);
+  return {
+    ...base,
+    kind: "tool.completed",
+    ts,
+    payload: {
+      name: "edit",
+      status: "completed",
+      input: { path, oldString: "a\n", newString: "a\nb\nc\nd\n" },
+    },
+  };
+}
+
+function toolIntentEvent(
+  sessionId: string,
+  projectId: string,
+  eventId: string,
+  observedAt: string,
+): TapeEvent {
+  // Muse-style opaque intent: no input.path, but the relative path appears
+  // in the requested tool-call args, which counts as evidence.
+  const base = livePromptEvent(sessionId, projectId, eventId, observedAt);
+  return {
+    ...base,
+    kind: "tool.requested",
+    payload: {
+      event: { kind: "assistant_tool_calls_committed" },
+      tool_calls: [{ args: JSON.stringify({ path: "notes.txt", find: "a", replace: "b" }) }],
+    },
+  };
+}
+
 async function takeSnapshot(input: {
   dataDir: string;
   root: string;
@@ -195,6 +235,17 @@ async function seedTwoSnapshots(): Promise<{
     tapePath: join(dataDir, "tape.jsonl"),
     captureQuality: "partial",
   });
+  // Evidence gate: the tape must prove the session touched notes.txt,
+  // or the pair diff would be dropped as another session's write.
+  appendEvents(db, sessionId, [
+    toolEditEvent(
+      sessionId,
+      projectId,
+      "evt_evidence",
+      TAKEN_AT.toISOString(),
+      join(root, "notes.txt"),
+    ),
+  ]);
   insertRow(db, sessionId, baseline, "evt_base");
   insertRow(db, sessionId, final, "evt_final");
   return { db, dataDir, root, projectId, sessionId };
@@ -518,6 +569,21 @@ describe("changes service", () => {
       tapePath: join(dataDir, "tape.jsonl"),
       captureQuality: "partial",
     });
+    // Evidence gate: every touched file needs a tape edit, or the pair
+    // diffs would be dropped as unattributed.
+    appendEvents(
+      db,
+      sessionId,
+      Array.from({ length: 22 }, (_, i) =>
+        toolEditEvent(
+          sessionId,
+          projectId,
+          `evt_evidence_${i}`,
+          TAKEN_AT.toISOString(),
+          join(root, `f${i}.txt`),
+        ),
+      ),
+    );
     const take = async (trigger: "baseline" | "tool.post" | "final", eventId: string) => {
       const snapshot = await takeSnapshot({
         dataDir,
@@ -826,6 +892,225 @@ describe("changes service", () => {
       // or model-off daemons would pick it every tick without effect.
       expect(service.findSessionNeedingChanges(false)).toBeNull();
       expect(service.findSessionNeedingChanges(true)).toEqual({ sessionId, reason: "meta" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("drops diff files the tape never evidenced and counts the gap", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-changes-data-"));
+    const root = mkdtempSync(join(tmpdir(), "echo-changes-root-"));
+    const projectId = "prj_changes";
+    const sessionId = "ses_changes";
+    writeFileSync(join(root, "notes.txt"), "a\n");
+    writeFileSync(join(root, "other.txt"), "x\n");
+    const baseline = await takeSnapshot({
+      dataDir,
+      root,
+      sessionId,
+      projectId,
+      trigger: "baseline",
+      eventId: "evt_base",
+    });
+    writeFileSync(join(root, "notes.txt"), "a\nb\nc\nd\n");
+    writeFileSync(join(root, "other.txt"), "x\ny\nz\nw\n");
+    const final = await takeSnapshot({
+      dataDir,
+      root,
+      sessionId,
+      projectId,
+      trigger: "final",
+      eventId: "evt_final",
+    });
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    upsertProject(db, { id: projectId, root, name: "changes" });
+    upsertSession(db, {
+      id: sessionId,
+      projectId,
+      agent: "opencode",
+      model: null,
+      directory: root,
+      title: "changes",
+      startedAt: TAKEN_AT.toISOString(),
+      tapePath: join(dataDir, "tape.jsonl"),
+      captureQuality: "partial",
+    });
+    // Only notes.txt was ever touched: other.txt is another session's
+    // shared-tree write and must not be claimed.
+    appendEvents(db, sessionId, [
+      toolEditEvent(
+        sessionId,
+        projectId,
+        "evt_evidence",
+        TAKEN_AT.toISOString(),
+        join(root, "notes.txt"),
+      ),
+    ]);
+    insertRow(db, sessionId, baseline, "evt_base");
+    insertRow(db, sessionId, final, "evt_final");
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      const files = (first.artifact?.changes ?? []).flatMap((change) =>
+        change.files.map((file) => file.path),
+      );
+      expect(files).toContain("notes.txt");
+      expect(files).not.toContain("other.txt");
+      expect(first.artifact?.diagnostics).toContain("changes_unattributed:1");
+      expect(first.artifact?.diagnostics).toContain("changes_evidence_gated_v2");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("leaves empty changes when the tape evidences nothing", async () => {
+    const { db, dataDir, sessionId } = await seedTwoSnapshots();
+    try {
+      // SeedTwoSnapshots evidences notes.txt; remove all tool events so the
+      // pair diffs look like another session's writes.
+      db.prepare("DELETE FROM events WHERE kind LIKE 'tool.%'").run();
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      expect(first.artifact?.changes).toEqual([]);
+      expect(first.artifact?.summary).toContain("no reviewed changes");
+      expect(first.artifact?.diagnostics).toContain("changes_evidence_gated_v2");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("counts Muse-style requested intent as evidence", async () => {
+    const { db, dataDir, sessionId, projectId } = await seedTwoSnapshots();
+    try {
+      // Same removal as above, but a requested intent naming notes.txt
+      // restores the claim without any completed file-tool event.
+      db.prepare("DELETE FROM events WHERE kind LIKE 'tool.%'").run();
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      appendEvents(db, sessionId, [
+        toolIntentEvent(sessionId, projectId, "evt_intent", TAKEN_AT.toISOString()),
+      ]);
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      const files = (first.artifact?.changes ?? []).flatMap((change) =>
+        change.files.map((file) => file.path),
+      );
+      expect(files).toContain("notes.txt");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("drops evidence outside the pair window", async () => {
+    const dataDir = mkdtempSync(join(tmpdir(), "echo-changes-data-"));
+    const root = mkdtempSync(join(tmpdir(), "echo-changes-root-"));
+    const projectId = "prj_changes";
+    const sessionId = "ses_changes";
+    writeFileSync(join(root, "notes.txt"), "a\n");
+    const baseline = await takeSnapshot({
+      dataDir,
+      root,
+      sessionId,
+      projectId,
+      trigger: "baseline",
+      eventId: "evt_base",
+    });
+    writeFileSync(join(root, "notes.txt"), "a\nb\nc\nd\n");
+    const final = await takeSnapshot({
+      dataDir,
+      root,
+      sessionId,
+      projectId,
+      trigger: "final",
+      eventId: "evt_final",
+    });
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    upsertProject(db, { id: projectId, root, name: "changes" });
+    upsertSession(db, {
+      id: sessionId,
+      projectId,
+      agent: "opencode",
+      model: null,
+      directory: root,
+      title: "changes",
+      startedAt: TAKEN_AT.toISOString(),
+      tapePath: join(dataDir, "tape.jsonl"),
+      captureQuality: "partial",
+    });
+    // Same file, same path — but the session touched it years before this
+    // pair, so the diff belongs to whoever wrote it in-window.
+    appendEvents(db, sessionId, [
+      toolEditEvent(
+        sessionId,
+        projectId,
+        "evt_old",
+        "2020-01-01T00:00:00.000Z",
+        join(root, "notes.txt"),
+        "2020-01-01T00:00:00.000Z",
+      ),
+    ]);
+    insertRow(db, sessionId, baseline, "evt_base");
+    insertRow(db, sessionId, final, "evt_final");
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      expect(first.artifact?.changes).toEqual([]);
+      expect(first.artifact?.diagnostics).toContain("changes_unattributed:1");
+      expect(first.artifact?.diagnostics).toContain("changes_evidence_gated_v2");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("keeps import-style evidence with an old source time", async () => {
+    const { db, dataDir, sessionId, projectId, root } = await seedTwoSnapshots();
+    try {
+      // Imports stamp observed_at at import time with older source times;
+      // either clock counting keeps the claim.
+      db.prepare("DELETE FROM events WHERE kind LIKE 'tool.%'").run();
+      appendEvents(db, sessionId, [
+        toolEditEvent(
+          sessionId,
+          projectId,
+          "evt_imported",
+          TAKEN_AT.toISOString(),
+          join(root, "notes.txt"),
+          "2020-01-01T00:00:00.000Z",
+        ),
+      ]);
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      const files = (first.artifact?.changes ?? []).flatMap((change) =>
+        change.files.map((file) => file.path),
+      );
+      expect(files).toContain("notes.txt");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("regenerates pre-gate artifacts missing the gate marker", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      // Simulate a pre-gate artifact: same content, marker stripped.
+      const path = join(dataDir, "projects", projectId, "sessions", sessionId, "changes.json");
+      const stored = JSON.parse(readFileSync(path, "utf8")) as {
+        diagnostics: string[];
+      };
+      expect(stored.diagnostics).toContain("changes_evidence_gated_v2");
+      stored.diagnostics = stored.diagnostics.filter((d) => d !== "changes_evidence_gated_v2");
+      writeFileSync(path, JSON.stringify(stored));
+      expect(service.findSessionNeedingChanges(false)).toEqual({ sessionId, reason: "stale" });
+      const second = await service.maybeGenerateChanges(sessionId);
+      expect(second.outcome).toBe("generated");
+      expect(second.artifact?.diagnostics).toContain("changes_evidence_gated_v2");
+      expect(service.findSessionNeedingChanges(false)).toBeNull();
     } finally {
       db.close();
     }

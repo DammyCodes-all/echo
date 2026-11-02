@@ -79,6 +79,19 @@ export const ChangeSchema = z.object({
   now: z.array(z.string().min(1)).min(1).max(2),
   howItWorks: z.array(z.string().min(1)).max(5),
   headsUp: z.array(HeadsUpItemSchema).max(3),
+  /**
+   * One short line anchored to the transcript prompt that caused this
+   * change. Model-only: the skeleton omits it (it never sees prompt text),
+   * the fill pass adds it when linked prompts exist. Absent means unknown,
+   * never "no reason". The reader renders it as `You asked for: {moment}`.
+   */
+  moment: z.string().min(1).max(200).optional(),
+  /**
+   * One to three concrete things the reader can check themselves.
+   * Model-only; absent means not yet narrated. Rendered as a `Verify`
+   * list between How it works and Code.
+   */
+  verify: z.array(z.string().min(1).max(200)).min(1).max(3).optional(),
   files: z.array(ChangeFileSchema).min(1),
   digest: z
     .string()

@@ -2,8 +2,15 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CHANGE_MODEL_GENERATOR } from "@echo/chapters";
-import { ChangeSchema } from "@echo/contracts";
-import { type EchoDb, insertSnapshot, openEchoDb, upsertProject, upsertSession } from "@echo/db";
+import { ChangeSchema, type TapeEvent } from "@echo/contracts";
+import {
+  appendEvents,
+  type EchoDb,
+  insertSnapshot,
+  openEchoDb,
+  upsertProject,
+  upsertSession,
+} from "@echo/db";
 import type { SnapshotResult } from "@echo/snapshots";
 import { snapshotWorkingTree } from "@echo/snapshots";
 import { describe, expect, it } from "vitest";
@@ -117,6 +124,54 @@ function insertRow(db: EchoDb, sessionId: string, snapshot: SnapshotResult, even
   });
 }
 
+// Evidence gate: the tape must prove the session touched notes.txt, or the
+// pair diff would be dropped as another session's shared-tree write.
+function toolEditEvent(
+  sessionId: string,
+  projectId: string,
+  eventId: string,
+  path: string,
+): TapeEvent {
+  return {
+    v: 1,
+    tape_seq: 0,
+    event_id: eventId,
+    record_key: `test:${eventId}`,
+    session_id: sessionId,
+    project_id: projectId,
+    kind: "tool.completed",
+    ts: TAKEN_AT.toISOString(),
+    observed_at: TAKEN_AT.toISOString(),
+    source: {
+      agent: "opencode",
+      adapter: "test",
+      adapter_version: "0.1.0",
+      build: null,
+      schema: null,
+      record_type: null,
+      payload_type: null,
+      sequence: null,
+      durability: null,
+      origin: "import",
+    },
+    links: {
+      turn_id: null,
+      tool_call_id: null,
+      batch_id: null,
+      parent_session_id: null,
+      subagent_id: null,
+      snapshot: null,
+    },
+    payload: {
+      name: "edit",
+      status: "completed",
+      input: { path, oldString: "a\n", newString: "a\nb\nc\nd\n" },
+    },
+    redaction: { version: "r1", findings: 0 },
+    diagnostics: [],
+  };
+}
+
 async function seedTwoSnapshots(): Promise<{
   db: EchoDb;
   dataDir: string;
@@ -158,6 +213,9 @@ async function seedTwoSnapshots(): Promise<{
     tapePath: join(dataDir, "tape.jsonl"),
     captureQuality: "partial",
   });
+  appendEvents(db, sessionId, [
+    toolEditEvent(sessionId, projectId, "evt_evidence", join(root, "notes.txt")),
+  ]);
   insertRow(db, sessionId, baseline, "evt_base");
   insertRow(db, sessionId, final, "evt_final");
   return { db, dataDir, projectId, sessionId };

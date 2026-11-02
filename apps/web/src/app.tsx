@@ -8,6 +8,7 @@ import { ProjectLearnPage } from "./routes/project-learn";
 import { ProjectOverviewPage } from "./routes/project-overview";
 import { ProjectsPage } from "./routes/projects";
 import { ReaderPage } from "./routes/reader";
+import { ReviewShowcasePage } from "./routes/review-showcase";
 
 function SessionToReaderRedirect() {
   const { sessionId } = useParams();
@@ -34,6 +35,10 @@ export const router = createBrowserRouter([
       { path: "sessions/:sessionId", element: <SessionToReaderRedirect /> },
       { path: "sessions/:sessionId/read", element: <ReaderPage /> },
       { path: "demo", element: <DemoPage /> },
+      // Dev-only showcase of every review-UI state; absent from prod builds.
+      ...(import.meta.env.DEV
+        ? [{ path: "review-showcase", element: <ReviewShowcasePage /> }]
+        : []),
       { path: "*", element: <NotFoundPage /> },
     ],
   },
