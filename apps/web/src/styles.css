@@ -125,6 +125,31 @@ body {
   }
 }
 
+/* Gate modal entrance: the surface materializes (rise + settle) instead of
+ * just appearing. Color-only feedback elsewhere needs no motion guard;
+ * this transform does, so it is disabled under reduced motion. */
+.gate-modal-in {
+  animation: gate-modal-in 0.18s var(--ease-out) both;
+  transform-origin: 50% 50%;
+}
+
+@keyframes gate-modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gate-modal-in {
+    animation: none;
+  }
+}
+
 /* Node hover popover: tooltip-style enter (fade + zoom + rise), same motion
  * language as the settings popover. Runs on the inner box: floating-ui owns
  * the outer box's transform for positioning, so animating there would jump. */

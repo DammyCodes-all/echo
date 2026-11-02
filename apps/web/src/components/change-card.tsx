@@ -22,11 +22,22 @@ const HEADS_UP_STYLE: Record<HeadsUpType, { dot: string; label: string }> = {
   },
 };
 
-function CollapsedRow({ title, children }: { title: string; children: React.ReactNode }) {
+function CollapsedRow({
+  title,
+  summary,
+  children,
+}: {
+  title: string;
+  summary?: string;
+  children: React.ReactNode;
+}) {
   return (
     <details className="py-3">
       <summary className="cursor-pointer text-xs uppercase tracking-widest text-dusk-muted">
         {title}
+        {summary !== undefined ? (
+          <span className="ml-2 normal-case tracking-normal">{summary}</span>
+        ) : null}
       </summary>
       <div className="mt-2">{children}</div>
     </details>
@@ -148,9 +159,19 @@ export function ChangeCard({
       ) : null}
 
       <div className="border-t border-dusk-hairline pt-1">
-        <CollapsedRow title="Code">
+        <CollapsedRow
+          title="Code"
+          summary={
+            code !== null
+              ? `${code.files.length} ${code.files.length === 1 ? "file" : "files"} · +${code.files.reduce((sum, file) => sum + file.added, 0)} −${code.files.reduce((sum, file) => sum + file.removed, 0)}`
+              : undefined
+          }
+        >
           {code !== null ? (
-            <ChangeCode code={code} />
+            <ChangeCode
+              code={code}
+              notes={Object.fromEntries(change.files.map((file) => [file.path, file.note]))}
+            />
           ) : codeFailed ? (
             <p className="text-sm text-dusk-muted">
               The diff couldn&apos;t be loaded — the snapshots may be gone.
