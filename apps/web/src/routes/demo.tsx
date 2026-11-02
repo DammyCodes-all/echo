@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { Link } from "react-router";
+import { Link, useNavigate } from "react-router";
 import { api } from "../api";
+import { AskThreadPanel } from "../components/ask-thread-panel";
 import { demoLinks } from "../components/demo-banner";
 import { ScaffoldPage } from "../components/scaffold-page";
 import { SessionCard } from "../components/session-card";
@@ -31,6 +32,8 @@ function CopyQuestion({ text }: { text: string }) {
 
 export function DemoPage() {
   const { isDemo } = useDemoMode();
+  const navigate = useNavigate();
+  const [askOpen, setAskOpen] = useState(false);
   const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: () => api.projects() });
   const project = projectsQuery.data?.[0] ?? null;
   const sessionsQuery = useQuery({
@@ -79,7 +82,7 @@ export function DemoPage() {
       title="Try Echo on a real session"
       description={
         isDemo
-          ? "One recorded agent session, baked in. Read the story, take the check, ask why — answers grade live but nothing is stored."
+          ? "One recorded agent session, baked in. Read the review, take the check, ask why — answers grade live but nothing is stored."
           : "Everything below reads live data. Bake a bundle with echo-cli demo build to preview the hosted demo."
       }
     >
@@ -99,12 +102,31 @@ export function DemoPage() {
             >
               Open the review
             </Link>{" "}
-            — the story, the evidence, the questionable bits.
+            — the changes, the evidence, the questionable bits.
           </li>
-          <li>Take the check at the end of the story. It grades what you retained.</li>
-          <li>Ask why in the thread. It answers from the tape or refuses.</li>
+          <li>Take the check at the end of the review. It grades what you retained.</li>
+          <li>
+            <button
+              type="button"
+              onClick={() => setAskOpen(true)}
+              className="font-semibold text-dusk-accent-soft underline underline-offset-4"
+            >
+              Ask why
+            </button>{" "}
+            in the thread. It answers from the tape or refuses.
+          </li>
         </ol>
       </section>
+
+      {askOpen ? (
+        <AskThreadPanel
+          sessionId={firstSession.id}
+          card={null}
+          onClearCard={() => undefined}
+          onCitationClick={() => navigate(`/sessions/${firstSession.id}/read`)}
+          onClose={() => setAskOpen(false)}
+        />
+      ) : null}
 
       {examples.length > 0 ? (
         <section aria-label="Try asking" className="space-y-3">
