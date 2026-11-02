@@ -891,6 +891,90 @@ describe("createChecksV2Service", () => {
     }
   });
 
+  it("rejects code-recall drafts and recovers on retry", async () => {
+    const sessionId = "ses_v2_norecall";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [makeChange("c_aaaaaaaaaaaaaaaa", "src/a.ts")];
+      writeChanges(db, dataDir, sessionId, changes);
+      const recallDraft = {
+        questions: [
+          {
+            cardId: "c_aaaaaaaaaaaaaaaa",
+            format: "mcq",
+            kind: "consequence",
+            question: "What does the file src/a.ts contain after this change?",
+            options: [
+              { id: "o1", text: "The updated logic" },
+              { id: "o2", text: "The old logic" },
+            ],
+            correctOptionId: "o1",
+            distractorSources: [],
+            explanation: "Change in src/a.ts.",
+            evidencePaths: ["src/a.ts"],
+          },
+        ],
+      };
+      const { fetchImpl, calls } = stubFetchQueue([
+        recallDraft,
+        mcqDraftForChange(changes[0] as Change),
+      ]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const single = await service.checkMe(sessionId, "c_aaaaaaaaaaaaaaaa");
+      expect(single.status).toBe(200);
+      const state = ChecksV2ResponseSchema.parse(single.body);
+      expect(state.questions).toHaveLength(1);
+      // The recall draft was refused; the retry with the error spelled out
+      // produced the behavior question instead.
+      expect(state.questions[0]?.question).toBe("What changed here?");
+      expect(calls()).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects a correct answer that is just a file path", async () => {
+    const sessionId = "ses_v2_nokeypath";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [makeChange("c_aaaaaaaaaaaaaaaa", "src/a.ts")];
+      writeChanges(db, dataDir, sessionId, changes);
+      const pathKeyDraft = {
+        questions: [
+          {
+            cardId: "c_aaaaaaaaaaaaaaaa",
+            format: "mcq",
+            kind: "consequence",
+            question: "What changed here?",
+            options: [
+              { id: "o1", text: "`src/a.ts`" },
+              { id: "o2", text: "Nothing changed" },
+            ],
+            correctOptionId: "o1",
+            distractorSources: [],
+            explanation: "Change in src/a.ts.",
+            evidencePaths: ["src/a.ts"],
+          },
+        ],
+      };
+      const { fetchImpl } = stubFetchQueue([pathKeyDraft, mcqDraftForChange(changes[0] as Change)]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const single = await service.checkMe(sessionId, "c_aaaaaaaaaaaaaaaa");
+      expect(single.status).toBe(200);
+      expect(ChecksV2ResponseSchema.parse(single.body).questions[0]?.question).toBe(
+        "What changed here?",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   it("orders caught-up max-3 skipped-first excluding viewed-only", async () => {
     const sessionId = "ses_v2_c_order";
     const { db, dataDir } = seedDb(sessionId);

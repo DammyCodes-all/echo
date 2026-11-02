@@ -715,7 +715,7 @@ describe("changes service", () => {
       expect(first.outcome).toBe("generated");
       const change = first.artifact?.changes[0];
       if (!change) throw new Error("seed produced no changes");
-      const outcome = service.getChangeCode(sessionId, change.id);
+      const outcome = await service.getChangeCode(sessionId, change.id);
       expect(outcome.status).toBe(200);
       const body = ChangeCodeResponseSchema.parse(outcome.body);
       expect(body.changeId).toBe(change.id);
@@ -746,11 +746,11 @@ describe("changes service", () => {
       expect(first.outcome).toBe("generated");
       const change = first.artifact?.changes[0];
       if (!change) throw new Error("seed produced no changes");
-      expect(service.getChangeCode("ses_missing", change.id).status).toBe(404);
-      const bad = service.getChangeCode(sessionId, "not-an-id");
+      expect((await service.getChangeCode("ses_missing", change.id)).status).toBe(404);
+      const bad = await service.getChangeCode(sessionId, "not-an-id");
       expect(bad.status).toBe(400);
       expect(JSON.stringify(bad.body)).toContain("invalid_request");
-      const missing = service.getChangeCode(sessionId, "c_0000000000000000");
+      const missing = await service.getChangeCode(sessionId, "c_0000000000000000");
       expect(missing.status).toBe(404);
       expect(JSON.stringify(missing.body)).toContain("not_found");
     } finally {
@@ -1111,6 +1111,76 @@ describe("changes service", () => {
       expect(second.outcome).toBe("generated");
       expect(second.artifact?.diagnostics).toContain("changes_evidence_gated_v2");
       expect(service.findSessionNeedingChanges(false)).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  it("skips live sessions with an artifact until their tape goes quiet", async () => {
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots();
+    try {
+      const T = new Date("2026-11-02T12:00:00.000Z").getTime();
+      const service = createChangesService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, clock: () => new Date(T) },
+      );
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      // Title missing so a quiet tape would flag this session for naming;
+      // a tape that moved 10s ago must still win over that reason.
+      db.prepare("UPDATE sessions SET title = NULL WHERE id = ?").run(sessionId);
+      appendEvents(db, sessionId, [
+        livePromptEvent(sessionId, projectId, "evt_live", new Date(T - 10_000).toISOString()),
+      ]);
+      expect(service.findSessionNeedingChanges(true)).toBeNull();
+      // Same tape, quiet 2 minutes later: the naming gap flags it again.
+      const quiet = createChangesService(
+        { db, dataDir, log: silentLog },
+        { env: OFF_ENV, clock: () => new Date(T + 120_000) },
+      );
+      expect(quiet.findSessionNeedingChanges(true)).toEqual({ sessionId, reason: "meta" });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("cools down fill passes on unchanged snapshots", async () => {
+    const { db, dataDir, sessionId } = await seedTwoSnapshots();
+    try {
+      // Model off first: every row stays a skeleton, so fill has work.
+      const off = createChangesService({ db, dataDir, log: silentLog }, { env: OFF_ENV });
+      const first = await off.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      expect(
+        (first.artifact?.changes ?? []).every((c) => (c.origin ?? "skeleton") === "skeleton"),
+      ).toBe(true);
+      // Model on with a failing stub: narration keeps failing, so skeletons
+      // remain and every tick would re-diff without the cooldown.
+      let now = new Date("2026-11-02T12:00:00.000Z").getTime();
+      const { fetchImpl, calls } = stubFetchSequence([{ nope: true }]);
+      const service = createChangesService(
+        { db, dataDir, log: silentLog },
+        {
+          env: { ...MODEL_ENV, ECHO_MODEL_PROVIDER: "meta" },
+          fetchImpl,
+          clock: () => new Date(now),
+        },
+      );
+      const second = await service.maybeGenerateChanges(sessionId);
+      // Fill attempted (narration calls happened) but every draft failed, so
+      // rows stay skeletons and the outcome is fresh, not generated.
+      expect(second.outcome).toBe("fresh");
+      const afterFill = calls();
+      expect(afterFill).toBeGreaterThan(0);
+      // Same snapshots, same minute: the cooldown skips the pair loop, so no
+      // more diffs and no more model calls.
+      const third = await service.maybeGenerateChanges(sessionId);
+      expect(third.outcome).toBe("fresh");
+      expect(calls()).toBe(afterFill);
+      // Past the cooldown with snapshots still unchanged: fill retries.
+      now += 11 * 60 * 1000;
+      await service.maybeGenerateChanges(sessionId);
+      expect(calls()).toBeGreaterThan(afterFill);
     } finally {
       db.close();
     }
