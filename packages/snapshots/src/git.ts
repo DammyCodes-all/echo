@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { execFile } from "node:child_process";
 import fs, { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { type RepositoryIdentity, repositoryIdentityFor } from "@echo/core";
@@ -289,46 +289,30 @@ const DIFF_ENV = {
 };
 
 /**
- * Whole-tree unified diff between two shadow commits. Same invocation as
- * diffShadowCommits but without a path filter, so one call covers every
- * file; renames stay disabled so a moved file reads as delete+add, matching
- * per-path diff semantics for the old and new paths.
+ * Whole-tree unified diff between two shadow commits. Same async shape as
+ * the old blocking call: one `git diff` covers every file; renames stay
+ * disabled so a moved file reads as delete+add, matching per-path diff
+ * semantics for the old and new paths. Async so hundreds of pairs never
+ * freeze the daemon's event loop — each await is a chance to serve traffic.
  */
 export function diffShadowTrees(
   shadowDir: string,
   oldOid: string,
   newOid: string,
   context = 3,
-): string {
+): Promise<string> {
   if (!/^[0-9a-f]{40}$/.test(oldOid) || !/^[0-9a-f]{40}$/.test(newOid)) {
-    throw new Error("shadow diff needs two full commit oids");
+    return Promise.reject(new Error("shadow diff needs two full commit oids"));
   }
-  const result = spawnSync(
-    "git",
-    [
-      "--git-dir",
-      shadowDir,
-      "diff",
-      "--no-color",
-      "--no-ext-diff",
-      "--no-renames",
-      `--unified=${context}`,
-      oldOid,
-      newOid,
-    ],
-    {
-      encoding: "utf8",
-      timeout: 10_000,
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env, ...DIFF_ENV },
-    },
-  );
-  if (result.error) throw result.error;
-  // Git exits 1 when the two commits differ; only other statuses are errors.
-  if (result.status !== 0 && result.status !== 1) {
-    throw new Error(`shadow diff failed: ${String(result.stderr).slice(0, 500)}`);
-  }
-  return result.stdout ?? "";
+  return runGitDiff(shadowDir, [
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    "--no-renames",
+    `--unified=${context}`,
+    oldOid,
+    newOid,
+  ]);
 }
 
 /**
@@ -342,36 +326,48 @@ export function diffShadowCommits(
   newOid: string,
   path: string,
   context = 3,
-): string {
+): Promise<string> {
   if (!/^[0-9a-f]{40}$/.test(oldOid) || !/^[0-9a-f]{40}$/.test(newOid)) {
-    throw new Error("shadow diff needs two full commit oids");
+    return Promise.reject(new Error("shadow diff needs two full commit oids"));
   }
-  if (path.length === 0 || path.length > 1024) throw new Error(`invalid snapshot path: ${path}`);
-  const result = spawnSync(
-    "git",
-    [
-      "--git-dir",
-      shadowDir,
-      "diff",
-      "--no-color",
-      "--no-ext-diff",
-      `--unified=${context}`,
-      oldOid,
-      newOid,
-      "--",
-      path,
-    ],
-    {
-      encoding: "utf8",
-      timeout: 10_000,
-      maxBuffer: 10 * 1024 * 1024,
-      env: { ...process.env, ...DIFF_ENV },
-    },
-  );
-  if (result.error) throw result.error;
-  // Git exits 1 when the two commits differ; only other statuses are errors.
-  if (result.status !== 0 && result.status !== 1) {
-    throw new Error(`shadow diff failed: ${String(result.stderr).slice(0, 500)}`);
-  }
-  return result.stdout ?? "";
+  if (path.length === 0 || path.length > 1024)
+    return Promise.reject(new Error(`invalid snapshot path: ${path}`));
+  return runGitDiff(shadowDir, [
+    "diff",
+    "--no-color",
+    "--no-ext-diff",
+    `--unified=${context}`,
+    oldOid,
+    newOid,
+    "--",
+    path,
+  ]);
+}
+
+function runGitDiff(shadowDir: string, args: string[]): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile(
+      "git",
+      ["--git-dir", shadowDir, ...args],
+      {
+        encoding: "utf8",
+        timeout: 10_000,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, ...DIFF_ENV },
+      },
+      (error, stdout) => {
+        if (error) {
+          const code: unknown = (error as { code?: unknown }).code;
+          // Git exits 1 when the two commits differ; only other statuses are errors.
+          if (code === 1) {
+            resolve(typeof stdout === "string" ? stdout : "");
+            return;
+          }
+          reject(error);
+          return;
+        }
+        resolve(typeof stdout === "string" ? stdout : "");
+      },
+    );
+  });
 }

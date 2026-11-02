@@ -10,6 +10,14 @@ export type { ChildLog, FinalizeInput, FinalizeResult } from "./finalize";
 export { collectReferencedChildIds, finalizeMuseSession } from "./finalize";
 export type { HookTranslateInput, HookTranslateResult, MuseHookName } from "./hooks";
 export { MUSE_HOOK_EVENTS, resolveHookProject, translateMuseHook } from "./hooks";
+export type { HookEntry, InstallMuseHooksInput, InstallMuseHooksResult } from "./hooks-install";
+export {
+  ECHO_HOOK_MARKER,
+  installMuseHooks,
+  museHookEntry,
+  resolveEchoCliBin,
+  resolveMuseSettingsPath,
+} from "./hooks-install";
 export type { MuseImportRequest, MuseImportResult } from "./import";
 export { extractWorkspaceRoot, importMuseSession } from "./import";
 export type { MuseMapContext, MuseMapResult, TapeEventInput } from "./map";
