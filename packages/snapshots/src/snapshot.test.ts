@@ -144,7 +144,7 @@ describe("snapshotWorkingTree", () => {
     });
     expect(commit.commit.parent).toEqual([first.commitOid]);
     expect(commit.commit.message).toContain("echo ses_1 final evt_snap_2");
-    const diff = diffShadowCommits(shadowDir, first.commitOid, second.commitOid, "a.txt");
+    const diff = await diffShadowCommits(shadowDir, first.commitOid, second.commitOid, "a.txt");
     expect(diff).toContain("--- a/a.txt");
     expect(diff).toContain("+++ b/a.txt");
     expect(diff).toContain("-one");

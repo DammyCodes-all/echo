@@ -53,8 +53,8 @@ describe("diffShadowTrees", () => {
         eventId: "evt_final",
       });
 
-      expect(diffShadowTrees(shadowDir, first.commitOid, second.commitOid)).toBe(
-        diffShadowCommits(shadowDir, first.commitOid, second.commitOid, "a.txt"),
+      expect(await diffShadowTrees(shadowDir, first.commitOid, second.commitOid)).toBe(
+        await diffShadowCommits(shadowDir, first.commitOid, second.commitOid, "a.txt"),
       );
     } finally {
       rmSync(root, { recursive: true, force: true });
@@ -84,7 +84,7 @@ describe("diffShadowTrees", () => {
         eventId: "evt_final",
       });
 
-      const diff = diffShadowTrees(shadowDir, first.commitOid, second.commitOid);
+      const diff = await diffShadowTrees(shadowDir, first.commitOid, second.commitOid);
       expect(diff).toContain("diff --git a/a.txt b/a.txt");
       expect(diff).toContain("diff --git a/b.txt b/b.txt");
       expect(diff).toContain("-one");
@@ -118,7 +118,7 @@ describe("diffShadowTrees", () => {
         eventId: "evt_final",
       });
 
-      const diff = diffShadowTrees(shadowDir, first.commitOid, second.commitOid);
+      const diff = await diffShadowTrees(shadowDir, first.commitOid, second.commitOid);
       expect(diff).not.toContain("rename from");
       expect(diff).not.toContain("rename to");
       expect(diff).toContain("--- a/old.txt");
@@ -131,7 +131,7 @@ describe("diffShadowTrees", () => {
 
   it("rejects partial oids", async () => {
     const { shadowDir } = shadowCase();
-    expect(() => diffShadowTrees(shadowDir, "abc", "0".repeat(40))).toThrow(
+    await expect(diffShadowTrees(shadowDir, "abc", "0".repeat(40))).rejects.toThrow(
       "shadow diff needs two full commit oids",
     );
   });
