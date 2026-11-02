@@ -327,7 +327,7 @@ export async function buildSessionReview(
       continue;
     }
     try {
-      const diff = diffShadowTrees(shadowDir, parent.commitOid, child.commitOid);
+      const diff = await diffShadowTrees(shadowDir, parent.commitOid, child.commitOid);
       const grouped = distributeHunks(parseUnifiedDiffs(diff));
       transitionHunksByPath.push(grouped);
       storeCachedTransition(db, sessionId, parent.commitOid, child.commitOid, grouped);
@@ -343,7 +343,7 @@ export async function buildSessionReview(
   let finalDiffFailed = false;
   if (!budgetExceeded && baseline.commitOid !== final.commitOid) {
     try {
-      const diff = diffShadowTrees(shadowDir, baseline.commitOid, final.commitOid);
+      const diff = await diffShadowTrees(shadowDir, baseline.commitOid, final.commitOid);
       finalHunksByPath = distributeHunks(parseUnifiedDiffs(diff));
     } catch (error) {
       void error;
@@ -426,7 +426,7 @@ export async function buildSessionReview(
         continue;
       }
       try {
-        const diff = diffShadowCommits(shadowDir, parent.commitOid, child.commitOid, path);
+        const diff = await diffShadowCommits(shadowDir, parent.commitOid, child.commitOid, path);
         const parsed = parseUnifiedDiffs(diff);
         hunksByTransition.push(parsed[0]?.hunks ?? []);
       } catch (error) {
@@ -451,7 +451,7 @@ export async function buildSessionReview(
       markPathUncertain(versions);
     } else {
       try {
-        const diff = diffShadowCommits(shadowDir, baseline.commitOid, final.commitOid, path);
+        const diff = await diffShadowCommits(shadowDir, baseline.commitOid, final.commitOid, path);
         const parsed = parseUnifiedDiffs(diff);
         for (const hunk of parsed[0]?.hunks ?? []) {
           hunks.push(hunkFromParsed(path, hunk));

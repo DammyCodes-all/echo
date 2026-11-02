@@ -147,6 +147,49 @@ function textViolation(text: string, known: KnownSets): string | null {
   return null;
 }
 
+/**
+ * Code-recall questions test memorization, not ownership: what a file
+ * contains, which symbol or line, or quoted code as the answer. The prompt
+ * forbids them; this validator catches the shape anyway so the single retry
+ * spells the failure out and the model rephrases to behavior. Single
+ * backticks and **bold** pass through — only fenced blocks and recall
+ * phrasing are rejected, never legitimate consequence questions.
+ */
+const RECALL_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
+  { pattern: /```/, reason: "code block in question" },
+  {
+    pattern: /\bwhat does (the )?(file|code|function|snippet|diff|patch)\b/i,
+    reason: "quizzes file/code contents",
+  },
+  {
+    pattern: /\bwhich (file|line|function|symbol|method)\b/i,
+    reason: "answer is a file/line recall",
+  },
+  { pattern: /\b(lines? \d+|line numbers?)\b/i, reason: "quizzes line numbers" },
+  {
+    pattern: /\bwhat is the (exact|full|complete) (content|text|code|diff)\b/i,
+    reason: "quizzes exact code text",
+  },
+  { pattern: /\bwhat is .* (called|named)\b/i, reason: "quizzes symbol names" },
+];
+
+function recallViolation(question: string): string | null {
+  for (const { pattern, reason } of RECALL_PATTERNS) {
+    if (pattern.test(question)) return reason;
+  }
+  return null;
+}
+
+/** The key must test understanding, not recall: never a bare path, a line number, or quoted code. */
+function keyRecallViolation(optionText: string): string | null {
+  if (/```/.test(optionText)) return "code block in correct option";
+  const plain = optionText.replace(/[*`]/g, "").trim();
+  if (plain.length === 0) return null;
+  if (/^[\w./-]+\.\w+$/.test(plain)) return "correct answer is a bare file path";
+  if (/\bline \d+\b/i.test(plain)) return "correct answer is a line number";
+  return null;
+}
+
 function knownSetsFor(cards: ChangeCard[], patches: Map<string, string>): KnownSets {
   const files = new Set<string>();
   const numbers = new Set<string>();
@@ -229,6 +272,8 @@ const CHECK_SYSTEM_PROMPT = [
   "Write ownership checks from the session's story cards. Exactly one question per target, grounded ONLY in that target's card block.",
   "Every file path, number or name must appear verbatim in the target card block. Never invent alternatives from outside knowledge.",
   "MCQ distractors must be plausible tape-grounded alternatives (for example the reverted approach from the detour notes); record each distractor's source as a fact or attempt id in distractorSources.",
+  "Never quiz raw code or files: no questions about file contents, code text, symbol names, or line numbers, and the correct answer is never a filename, a line number, or quoted code. Test what the change DOES (behavior, consequence, decision) using story-level language; file paths may appear as context only. No fenced code blocks anywhere in question or options.",
+  "Lightweight markdown is welcome in question, option, rubric and explanation text: **bold** for the key term being tested and `code` for file paths, symbols and commands. Plain words otherwise — no headings, lists or links.",
   'Reply with JSON only: {"questions": [{"cardId": string, "format": "mcq"|"free_text", "kind": "consequence"|"decision"|"tradeoff"|"blast_radius"|"teach_back", "question": string, "options": [{"id": string, "text": string}] (mcq only, min 2), "correctOptionId": string (mcq only, one of the option ids), "distractorSources": [string] (mcq only), "rubric": [string] (free_text only, min 1), "explanation": string, "evidencePaths": [string]}]}.',
 ].join("\n");
 
@@ -639,6 +684,10 @@ export function createChecksV2Service(
     if (!card) {
       return { question: null, errors: [`unknown target card ${draft.cardId}`] };
     }
+    const recall = recallViolation(draft.question);
+    if (recall) {
+      return { question: null, errors: [`card ${draft.cardId} quizzes code recall (${recall})`] };
+    }
     for (const [label, text] of [
       ["question", draft.question],
       ["explanation", draft.explanation],
@@ -665,12 +714,25 @@ export function createChecksV2Service(
         };
       }
       for (const option of options) {
+        if (/```/.test(option.text)) {
+          return {
+            question: null,
+            errors: [`card ${draft.cardId} option has a code block`],
+          };
+        }
         const violation = textViolation(option.text, known);
         if (violation) {
           return {
             question: null,
             errors: [`card ${draft.cardId} option failed grounding (${violation})`],
           };
+        }
+      }
+      const keyOption = options.find((option) => option.id === draft.correctOptionId);
+      if (keyOption) {
+        const keyRecall = keyRecallViolation(keyOption.text);
+        if (keyRecall) {
+          return { question: null, errors: [`card ${draft.cardId} ${keyRecall}`] };
         }
       }
       return {
@@ -695,6 +757,12 @@ export function createChecksV2Service(
       return { question: null, errors: [`card ${draft.cardId}: free_text needs a rubric`] };
     }
     for (const point of rubric) {
+      if (/```/.test(point)) {
+        return {
+          question: null,
+          errors: [`card ${draft.cardId} rubric has a code block`],
+        };
+      }
       const violation = textViolation(point, known);
       if (violation) {
         return {
