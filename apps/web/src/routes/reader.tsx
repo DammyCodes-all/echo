@@ -1,10 +1,4 @@
-import type {
-  AskEvidence,
-  Change,
-  ChangeId,
-  ChecksV2Response,
-  ProgressState,
-} from "@echo/contracts";
+import type { Change, ChangeId, ChecksV2Response, ProgressState } from "@echo/contracts";
 import { firstNotUnderstood } from "@echo/contracts";
 import { GitCompareArrowsIcon } from "@hugeicons/core-free-icons";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -12,9 +6,8 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api, ChangesNotReadyError } from "../api";
 import { summarizeChangeChecks } from "../checks-summary";
-import { type AskChangeRef, AskThreadPanel } from "../components/ask-thread-panel";
 import { CaughtUp } from "../components/caught-up";
-import { ChangeCard } from "../components/change-card";
+import { ChangeCard, type ChangeConnection } from "../components/change-card";
 import { CheckGateModal } from "../components/check-gate-modal";
 import { CheckRunner } from "../components/check-runner";
 import { ProgressTape } from "../components/progress-tape";
@@ -24,6 +17,8 @@ import { ScaffoldPage } from "../components/scaffold-page";
 const PRIMARY =
   "rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40";
 const QUIET = "text-sm text-dusk-muted underline underline-offset-4 disabled:opacity-40";
+const GHOST =
+  "rounded-dusk-pill border border-dusk-hairline-strong px-4 py-2 text-sm text-dusk-muted transition-colors hover:border-dusk-muted hover:text-dusk-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40";
 
 /** Progress map, keyed on (id, version) so regen never resets it. Server-owned. */
 type ReaderProgress = Record<string, { state: ProgressState; updatedAt: string }>;
@@ -118,10 +113,6 @@ export function ReaderPage() {
 
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
   const [showSummary, setShowSummary] = useState(false);
-
-  // Ask panel anchor: the change the question is about (panel side ready).
-  const [askChange, setAskChange] = useState<AskChangeRef>(null);
-  const [askOpen, setAskOpen] = useState(false);
 
   // Checks v2 runner state, shared by the per-change and caught-up offers.
   const [checksState, setChecksState] = useState<ChecksV2Response | null>(null);
@@ -223,56 +214,36 @@ export function ReaderPage() {
       staleTime: 60_000,
     });
   }, [queryClient, sessionId, next]);
-  // Other changes touching the same files, in session order. Pure overlap
+  // Same-file neighbors in session order, nearest each way. Pure overlap
   // from the served list — no backend needed.
+  const currentPaths = current === null ? null : new Set(current.files.map((file) => file.path));
+  const nearestShared = (from: number, step: 1 | -1): Change | null => {
+    if (currentPaths === null) return null;
+    for (let index = from; index >= 0 && index < changes.length; index += step) {
+      const candidate = changes[index];
+      if (candidate === undefined) continue;
+      if (candidate.files.some((file) => currentPaths.has(file.path))) return candidate;
+    }
+    return null;
+  };
+  const earlierConnection = current === null ? null : nearestShared(viewIndex - 1, -1);
+  const changeConnections: ChangeConnection[] =
+    earlierConnection === null
+      ? []
+      : [
+          {
+            id: earlierConnection.id,
+            title: earlierConnection.title,
+            direction: "earlier" as const,
+          },
+        ];
+  const handleJumpToChange = (id: string) => {
+    const index = changes.findIndex((candidate) => candidate.id === id);
+    if (index !== -1) jump(index);
+  };
 
   const handleDone = () => {
     navigate("/projects");
-  };
-
-  const handleAsk = (ref: { id: string; title: string }) => {
-    setAskChange(ref);
-    setAskOpen(true);
-  };
-
-  const handleCitationClick = (citation: AskEvidence, messageCardId?: string | null) => {
-    // Change-anchored threads persist cardId null, so prefer the message's
-    // card when it names a change, then the change touching the cited file,
-    // then the panel anchor.
-    const direct =
-      messageCardId !== null &&
-      messageCardId !== undefined &&
-      changes.some((change) => change.id === messageCardId)
-        ? messageCardId
-        : null;
-    const byFile =
-      citation.filePath !== null && citation.filePath !== undefined
-        ? (changes.find((change) => change.files.some((file) => file.path === citation.filePath))
-            ?.id ?? null)
-        : null;
-    const targetId = direct ?? byFile ?? askChange?.id ?? null;
-    if (targetId === null) return;
-    requestAnimationFrame(() => {
-      document
-        .getElementById(`change-${targetId}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "center" });
-    });
-  };
-
-  const handleCheckMe = async (change: Change) => {
-    if (checkBusy) return;
-    setCheckBusy(true);
-    setCheckError(null);
-    try {
-      const next = await api.checkMe(sessionId, change.id);
-      setChecksState(next);
-      setCheckFocusId(next.questions.find((question) => question.cardId === change.id)?.id ?? null);
-      setCheckOpen(true);
-    } catch (unknown) {
-      setCheckError(checkMessage(unknown));
-    } finally {
-      setCheckBusy(false);
-    }
   };
 
   const handleStartCheck = async () => {
@@ -366,12 +337,14 @@ export function ReaderPage() {
         <div role="status" aria-label="Loading changes" className="mx-auto w-full space-y-6">
           <span className="sr-only">Loading changes…</span>
           <div aria-hidden className="motion-safe:animate-pulse">
-            <div className="flex items-center gap-1.5">
-              {["a", "b", "c", "d", "e"].map((key) => (
-                <div key={key} className="h-1.5 flex-1 rounded-full bg-dusk-track" />
-              ))}
+            <div className="flex items-center gap-3">
+              <div className="flex flex-1 items-center gap-1.5">
+                {["a", "b", "c", "d", "e"].map((key) => (
+                  <div key={key} className="h-1.5 flex-1 rounded-full bg-dusk-track" />
+                ))}
+              </div>
+              <div className="h-4 w-24 shrink-0 rounded-dusk-code bg-dusk-pill" />
             </div>
-            <div className="mt-2 h-4 w-24 rounded-dusk-code bg-dusk-pill" />
           </div>
           <div
             aria-hidden
@@ -380,6 +353,7 @@ export function ReaderPage() {
             <div className="min-w-0 space-y-6">
               <div>
                 <div className="h-9 w-2/3 rounded-dusk-code bg-dusk-pill" />
+                <div className="mt-1.5 h-4 w-1/2 rounded-dusk-code bg-dusk-pill" />
                 <div className="mt-3 flex gap-2">
                   <div className="h-8 w-44 rounded-dusk-code bg-dusk-pill" />
                   <div className="h-8 w-56 rounded-dusk-code bg-dusk-pill" />
@@ -402,6 +376,11 @@ export function ReaderPage() {
                     </div>
                   </div>
                 ))}
+              </div>
+              <div className="space-y-2">
+                <div className="h-3 w-14 rounded-dusk-code bg-dusk-pill" />
+                <div className="h-4 w-3/4 rounded-dusk-code bg-dusk-pill" />
+                <div className="h-4 w-2/3 rounded-dusk-code bg-dusk-pill" />
               </div>
               <div className="border-t border-dusk-hairline">
                 <div className="border-b border-dusk-hairline py-2.5">
@@ -526,7 +505,7 @@ export function ReaderPage() {
             />
 
             {current !== null ? (
-              <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_360px]">
                 <div className="min-w-0 space-y-6">
                   {/* The recap is the previous title only: digests are */}
                   {/* written for the model, not for people. */}
@@ -538,12 +517,10 @@ export function ReaderPage() {
 
                   <ChangeCard
                     change={current}
-                    onAsk={handleAsk}
-                    onCheck={(change) => void handleCheckMe(change)}
-                    checkBusy={checkBusy}
                     code={code}
                     codeFailed={codeQuery.isError}
-                    checkResult={checkResult}
+                    connections={changeConnections}
+                    onJumpToChange={handleJumpToChange}
                   />
 
                   {checkError !== null && !atEnd ? (
@@ -564,35 +541,38 @@ export function ReaderPage() {
                   ) : null}
 
                   <div className="space-y-2 border-t border-dusk-hairline pt-4">
-                    <div className="flex flex-wrap items-center gap-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
                       <button
                         type="button"
                         onClick={() => jump(viewIndex - 1)}
                         disabled={viewIndex === 0}
-                        className={QUIET}
+                        className={GHOST}
                       >
-                        Back
+                        ← Back
                       </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          mark(current, "skipped");
-                          jump(viewIndex + 1);
-                        }}
-                        className={QUIET}
-                      >
-                        Skip quietly
-                      </button>
-                      <button
-                        type="button"
-                        onClick={handleGotIt}
-                        disabled={gate !== null}
-                        className={PRIMARY}
-                      >
-                        Got it, next change
-                      </button>
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            mark(current, "skipped");
+                            jump(viewIndex + 1);
+                          }}
+                          className={QUIET}
+                        >
+                          Skip quietly
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleGotIt}
+                          disabled={gate !== null}
+                          className={PRIMARY}
+                        >
+                          Got it, next change →
+                        </button>
+                      </div>
                     </div>
                     <p className="text-sm text-dusk-muted">
+                      Change {viewIndex + 1} of {changes.length} ·{" "}
                       {next !== null ? `Next up: ${next.title}` : "Last one — the wrap-up is next."}
                     </p>
                   </div>
@@ -678,16 +658,6 @@ export function ReaderPage() {
           </>
         )}
       </div>
-      {askOpen ? (
-        <AskThreadPanel
-          sessionId={sessionId}
-          card={null}
-          change={askChange}
-          onClearCard={() => setAskChange(null)}
-          onCitationClick={handleCitationClick}
-          onClose={() => setAskOpen(false)}
-        />
-      ) : null}
       {gate !== null ? (
         <CheckGateModal
           changeTitle={gate.title}

@@ -37,6 +37,13 @@ export type ChangeCardAskRef = { id: string; title: string };
 
 export type ChangeCardCheckResult = { answered: number; correct: number; total: number };
 
+export type ChangeConnection = {
+  id: string;
+  title: string;
+  /** Earlier built the groundwork; later revisited the same files. */
+  direction: "earlier" | "later";
+};
+
 type ChangeCardProps = {
   change: Change;
   /** Reader wiring: opens the Ask panel anchored to this change. */
@@ -50,6 +57,10 @@ type ChangeCardProps = {
   codeFailed?: boolean;
   /** Answered/correct counts for this change's checks; null when none exist. */
   checkResult?: ChangeCardCheckResult | null;
+  /** Same-file neighbors in session order; empty when standalone. */
+  connections?: ChangeConnection[];
+  /** Reader wiring: jump to a connected change. */
+  onJumpToChange?: (id: string) => void;
 };
 
 export function ChangeCard({
@@ -60,11 +71,33 @@ export function ChangeCard({
   code = null,
   codeFailed = false,
   checkResult = null,
+  connections = [],
+  onJumpToChange,
 }: ChangeCardProps) {
   return (
     <article id={`change-${change.id}`} className="space-y-6">
       <div>
         <h2 className="text-3xl font-semibold text-dusk-ink">{change.title}</h2>
+        {change.moment ? (
+          <p className="mt-1.5 text-sm text-dusk-muted">You asked for: {change.moment}</p>
+        ) : null}
+        {connections.length > 0 ? (
+          <p className="mt-1 text-sm text-dusk-muted">
+            {connections.map((connection, index) => (
+              <span key={connection.id}>
+                {index > 0 ? " · " : null}
+                {connection.direction === "earlier" ? "Builds on " : "Changed again in "}
+                <button
+                  type="button"
+                  onClick={() => onJumpToChange?.(connection.id)}
+                  className="underline underline-offset-4 hover:text-dusk-ink"
+                >
+                  {connection.title}
+                </button>
+              </span>
+            ))}
+          </p>
+        ) : null}
         {change.headsUp.length > 0 ? (
           <ul className="mt-3 flex flex-wrap gap-2">
             {change.headsUp.map((item) => (
@@ -112,6 +145,17 @@ export function ChangeCard({
           <p className="text-xs uppercase tracking-widest text-dusk-muted">How it works</p>
           <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-6 text-dusk-ink">
             {change.howItWorks.map((step) => (
+              <li key={step}>{step}</li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
+
+      {(change.verify?.length ?? 0) > 0 ? (
+        <div>
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">Verify</p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm leading-6 text-dusk-ink">
+            {(change.verify ?? []).map((step) => (
               <li key={step}>{step}</li>
             ))}
           </ol>

@@ -33,11 +33,9 @@ export function ProgressTape({
   isLive,
   onJump,
 }: ProgressTapeProps) {
-  const understood = changes.filter((change) => getState(change) === "understood").length;
-  const skipped = changes.filter((change) => getState(change) === "skipped").length;
   return (
-    <div>
-      <div className="flex items-center gap-1.5">
+    <div className="flex items-center gap-3">
+      <div className="flex min-w-0 flex-1 items-center gap-1.5">
         {changes.map((change, index) => (
           <button
             key={`${change.id}@v${change.version}`}
@@ -52,13 +50,14 @@ export function ProgressTape({
         {isLive ? (
           <span
             title="Session still going — new changes land here"
-            className="h-1.5 w-4 rounded-full bg-dusk-muted/50"
+            className="h-1.5 w-4 shrink-0 rounded-full bg-dusk-muted/50"
           />
         ) : null}
       </div>
-      <p className="mt-2 font-mono text-xs text-dusk-muted">
-        {understood} of {changes.length} got it{skipped > 0 ? ` · ${skipped} skipped` : ""}
-        {isLive ? " · live" : ""}
+      <p className="shrink-0 font-mono text-xs tabular-nums text-dusk-muted">
+        {currentIndex < changes.length
+          ? `Change ${currentIndex + 1} of ${changes.length}`
+          : `${changes.length} of ${changes.length} reviewed`}
       </p>
     </div>
   );
