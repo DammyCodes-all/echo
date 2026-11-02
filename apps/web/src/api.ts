@@ -14,8 +14,12 @@ import type {
   ChecksV2Response,
   EngagementEvent,
   EngagementState,
+  FolderResolveResponse,
+  HooksInstallResponse,
   Progress,
   ProgressState,
+  ProjectDisableResponse,
+  ProjectEnableResponse,
   ProjectFilesResponse,
   ProjectLearnResponse,
   ProjectSummary,
@@ -24,6 +28,7 @@ import type {
   SessionReview,
   SessionStory,
   SessionSummary,
+  SettingsGetResponse,
 } from "@echo/contracts";
 
 /** Backstop so a stuck server can never stick the UI; above the server's own deadline. */
@@ -256,6 +261,16 @@ export const api = {
       `/api/projects/${encodeURIComponent(projectId)}/architecture/undo`,
       {},
     ),
+  settings: () => getJson<SettingsGetResponse>("/api/settings"),
+  installHooks: () => postJson<HooksInstallResponse>("/api/settings/hooks/install", {}),
+  resolveFolder: (name: string) =>
+    getJson<FolderResolveResponse>(
+      `/api/settings/projects/resolve?name=${encodeURIComponent(name)}`,
+    ),
+  enableProject: (path: string) =>
+    postJson<ProjectEnableResponse>("/api/settings/projects", { path }),
+  disableProject: (path: string) =>
+    postJson<ProjectDisableResponse>("/api/settings/projects/remove", { path }),
 };
 
 export function formatTime(iso: string): string {
