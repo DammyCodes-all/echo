@@ -2,7 +2,7 @@ import type { ChangeCodeFile, ChangeCodeResponse } from "@echo/contracts";
 import { ArrowRight01Icon, Copy01Icon, Tick01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { PatchDiff } from "@pierre/diffs/react";
-import { useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 function baseOf(path: string): string {
   const index = path.lastIndexOf("/");
@@ -44,8 +44,119 @@ const DUSK_DIFF_SURFACES = `:host {
   --diffs-bg-buffer: #1c1c30;
 }`;
 
+/** Shimmer shown while Pierre parses/highlights after expand: the toggle
+ *  mounts the diff on open, so without this the panel sits blank for a beat.
+ *  Widths cycle deterministically — no random, no layout hook needed. */
+const SKELETON_WIDTHS = [92, 76, 85, 63, 90, 70, 83, 55];
+
+function DiffSkeleton({ rows = 6 }: { rows?: number }) {
+  return (
+    <div aria-hidden className="space-y-1.5 px-3 py-3 motion-safe:animate-pulse">
+      {Array.from({ length: rows }, (_, index) => (
+        <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: lines are static and never reorder
+          key={`diff-skeleton-${index}`}
+          className="flex items-center gap-2"
+        >
+          <div className="h-3.5 w-10 shrink-0 rounded-dusk-code bg-dusk-pill/50" />
+          <div
+            className="h-3.5 rounded-dusk-code bg-dusk-pill/50"
+            style={{ width: `${SKELETON_WIDTHS[index % SKELETON_WIDTHS.length]}%` }}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function CodeFile({ file, note }: { file: ChangeCodeFile; note: string | null }) {
   const [copied, setCopied] = useState(false);
+  // Pierre measures on mount: while the row is closed the content is
+  // display:none, so a hidden mount measures zero height and stays blank.
+  // The row owns its open state (no native toggle, no :open selector) so
+  // the chevron, the mount, and the disclosure can never disagree.
+  const [isOpen, setIsOpen] = useState(false);
+  const [revealed, setRevealed] = useState(false);
+  // Pierre's children land in light DOM, so watch for real content: the
+  // skeleton only appears if the wait is actually long. Fast diffs paint
+  // before the timer fires and never flash a shimmer.
+  const [showSkeleton, setShowSkeleton] = useState(false);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!isOpen) return;
+    setShowSkeleton(false);
+    const panel = panelRef.current;
+    const hasContent = () => (panel?.textContent?.trim().length ?? 0) > 0;
+    if (hasContent()) return;
+    let done = false;
+    const observer = new MutationObserver(() => {
+      if (hasContent()) {
+        done = true;
+        observer.disconnect();
+        // No-op when the timer never fired; hides the shimmer otherwise.
+        setShowSkeleton(false);
+      }
+    });
+    if (panel !== null) {
+      observer.observe(panel, { childList: true, subtree: true, characterData: true });
+    }
+    const timer = window.setTimeout(() => {
+      if (!done) setShowSkeleton(true);
+    }, 150);
+    return () => {
+      done = true;
+      observer.disconnect();
+      window.clearTimeout(timer);
+    };
+  }, [isOpen]);
+  const toggle = () => {
+    setIsOpen((was) => !was);
+  };
+  // Mount the heavy diff after the open paints: the click commits only the
+  // chevron + panel, then parsing/highlighting lands in the next frames
+  // behind the skeleton instead of freezing the toggle itself.
+  useEffect(() => {
+    if (!isOpen || revealed) return;
+    let second = 0;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => setRevealed(true));
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      cancelAnimationFrame(second);
+    };
+  }, [isOpen, revealed]);
+  const copy = () => {
+    void navigator.clipboard?.writeText(file.path).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1200);
+    });
+  };
+  const stats = (
+    <p className="font-mono text-xs tabular-nums">
+      <span className="text-dusk-pass">+{file.added}</span>{" "}
+      <span className="text-dusk-fail">−{file.removed}</span>
+    </p>
+  );
+  const copyButton = (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        copy();
+      }}
+      title="Copy file path"
+      aria-label={`Copy path ${file.path}`}
+      className="inline-flex items-center rounded p-1 text-dusk-muted hover:text-dusk-ink"
+    >
+      <HugeiconsIcon icon={copied ? Tick01Icon : Copy01Icon} size={14} strokeWidth={1.8} />
+      <span className="sr-only">{copied ? "Copied" : "Copy file path"}</span>
+    </button>
+  );
+  const patch = useMemo(
+    () => (revealed ? patchForFile(file.path, file.hunks) : null),
+    [revealed, file.path, file.hunks],
+  );
   if (file.hunks.length === 0) {
     return (
       <div className="overflow-hidden rounded-dusk-code border border-dusk-hairline">
@@ -53,13 +164,12 @@ function CodeFile({ file, note }: { file: ChangeCodeFile; note: string | null })
           <FileHeader
             file={file}
             note={note}
-            copied={copied}
-            onCopy={() => {
-              void navigator.clipboard?.writeText(file.path).then(() => {
-                setCopied(true);
-                window.setTimeout(() => setCopied(false), 1200);
-              });
-            }}
+            trailing={
+              <div className="flex shrink-0 items-center gap-2">
+                {stats}
+                {copyButton}
+              </div>
+            }
           />
         </div>
         <p className="px-3 py-2 text-sm text-dusk-muted">
@@ -70,96 +180,78 @@ function CodeFile({ file, note }: { file: ChangeCodeFile; note: string | null })
       </div>
     );
   }
-  const patch = patchForFile(file.path, file.hunks);
   return (
-    <details className="group overflow-hidden rounded-dusk-code border border-dusk-hairline">
-      <summary className="cursor-pointer list-none [&::-webkit-details-marker]:hidden">
-        <div className="flex items-center gap-2 bg-dusk-surface px-3 py-2">
+    <div className="overflow-hidden rounded-dusk-code border border-dusk-hairline">
+      <div className="flex items-center gap-2 bg-dusk-surface px-3 py-2">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-expanded={isOpen}
+          aria-label={`${isOpen ? "Hide" : "Show"} diff for ${file.path}`}
+          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
+        >
           <span
             aria-hidden
-            className="inline-flex shrink-0 text-dusk-muted transition-transform group-open:rotate-90"
+            className={`flex shrink-0 items-center text-dusk-muted transition-transform ${isOpen ? "rotate-90" : ""}`}
           >
-            <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} />
+            <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
           </span>
-          <div className="min-w-0 flex-1">
-            <FileHeader
-              file={file}
-              note={note}
-              copied={copied}
-              onCopy={(event) => {
-                event.preventDefault();
-                void navigator.clipboard?.writeText(file.path).then(() => {
-                  setCopied(true);
-                  window.setTimeout(() => setCopied(false), 1200);
-                });
+          <FileHeader
+            file={file}
+            note={note}
+            trailing={<div className="flex shrink-0 items-center gap-2">{stats}</div>}
+          />
+        </button>
+        {copyButton}
+      </div>
+      {isOpen ? (
+        <div ref={panelRef} className="border-t border-dusk-hairline">
+          {showSkeleton ? <DiffSkeleton /> : null}
+          {patch !== null ? (
+            <PatchDiff
+              patch={patch}
+              disableWorkerPool
+              options={{
+                diffStyle: "unified",
+                lineDiffType: "word",
+                hunkSeparators: "simple",
+                diffIndicators: "none",
+                disableFileHeader: true,
+                themeType: "dark",
+                overflow: "scroll",
+                unsafeCSS: DUSK_DIFF_SURFACES,
               }}
             />
-          </div>
+          ) : null}
+          {file.truncated ? (
+            <p className="px-3 py-2 text-xs text-dusk-muted">
+              Showing the first lines only — the counts above cover the whole file.
+            </p>
+          ) : null}
         </div>
-      </summary>
-      <div className="border-t border-dusk-hairline">
-        <PatchDiff
-          patch={patch}
-          disableWorkerPool
-          options={{
-            diffStyle: "unified",
-            lineDiffType: "word",
-            hunkSeparators: "simple",
-            diffIndicators: "none",
-            disableFileHeader: true,
-            themeType: "dark",
-            overflow: "scroll",
-            unsafeCSS: DUSK_DIFF_SURFACES,
-          }}
-        />
-        {file.truncated ? (
-          <p className="px-3 py-2 text-xs text-dusk-muted">
-            Showing the first lines only — the counts above cover the whole file.
-          </p>
-        ) : null}
-      </div>
-    </details>
+      ) : null}
+    </div>
   );
 }
 
 function FileHeader({
   file,
   note,
-  copied,
-  onCopy,
+  trailing,
 }: {
   file: ChangeCodeFile;
   note: string | null;
-  copied: boolean;
-  onCopy: (event: React.MouseEvent) => void;
+  trailing: React.ReactNode;
 }) {
   return (
-    <div className="flex items-baseline justify-between gap-3">
+    <div className="flex min-w-0 flex-1 items-baseline justify-between gap-3">
       <div className="min-w-0 flex-1">
         <p title={file.path} className="truncate font-mono text-xs text-dusk-ink">
           {baseOf(file.path)}
         </p>
         {note !== null ? <p className="mt-0.5 truncate text-xs text-dusk-muted">{note}</p> : null}
       </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <p className="font-mono text-xs tabular-nums">
-          <span className="text-dusk-pass">+{file.added}</span>{" "}
-          <span className="text-dusk-fail">−{file.removed}</span>
-        </p>
-        <button
-          type="button"
-          onClick={onCopy}
-          title="Copy file path"
-          aria-label={copied ? `Copied ${file.path}` : `Copy path ${file.path}`}
-          className="inline-flex rounded p-1 text-dusk-muted transition-colors hover:text-dusk-ink"
-        >
-          <HugeiconsIcon
-            icon={copied ? Tick01Icon : Copy01Icon}
-            size={13}
-            strokeWidth={2}
-          />
-        </button>
-      </div>
+      {trailing}
     </div>
   );
 }

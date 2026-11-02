@@ -1,6 +1,7 @@
 import type { Change, ChangeCodeResponse, HeadsUpType } from "@echo/contracts";
 import { ArrowRight01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useState } from "react";
 import { ChangeCode } from "./change-code";
 
 const HEADS_UP_LABEL: Record<HeadsUpType, string> = {
@@ -33,17 +34,28 @@ function CollapsedRow({
   summary?: React.ReactNode;
   children: React.ReactNode;
 }) {
+  // The row owns its open state (no native toggle, no :open selector) so
+  // the chevron and the disclosure can never disagree.
+  const [isOpen, setIsOpen] = useState(false);
   return (
-    <details className="group py-3">
-      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs uppercase tracking-widest text-dusk-muted transition-colors hover:text-dusk-ink [&::-webkit-details-marker]:hidden">
-        <span aria-hidden className="inline-flex shrink-0 transition-transform group-open:rotate-90">
-          <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={2} />
+    <div className="py-3">
+      <button
+        type="button"
+        onClick={() => setIsOpen((was) => !was)}
+        aria-expanded={isOpen}
+        className="flex w-full cursor-pointer items-center gap-2 text-xs uppercase tracking-widest text-dusk-muted transition-colors hover:text-dusk-ink"
+      >
+        <span
+          aria-hidden
+          className={`flex shrink-0 items-center transition-transform ${isOpen ? "rotate-90" : ""}`}
+        >
+          <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.8} />
         </span>
-        <span className="flex-1">{title}</span>
+        <span className="flex-1 text-left">{title}</span>
         {summary}
-      </summary>
-      <div className="mt-2">{children}</div>
-    </details>
+      </button>
+      {isOpen ? <div className="mt-2">{children}</div> : null}
+    </div>
   );
 }
 
