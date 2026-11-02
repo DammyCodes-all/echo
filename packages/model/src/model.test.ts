@@ -43,6 +43,28 @@ describe("model client", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 
+  it("selects the Baseten open-weights path when requested", () => {
+    const cfg = modelConfigFromEnv({
+      ECHO_MODEL_PROVIDER: "baseten",
+      BASETEN_API_KEY: "bk",
+    });
+    expect(cfg.baseUrl).toBe("https://inference.baseten.co/v1");
+    expect(cfg.model).toBe("meta-models/muse-spark-open-1026");
+    expect(() => modelConfigFromEnv({ ECHO_MODEL_PROVIDER: "baseten" })).toThrowError(
+      /BASETEN_API_KEY/,
+    );
+  });
+
+  it("defaults to Baseten when its key is present, else falls back to Meta", () => {
+    expect(modelConfigFromEnv({ BASETEN_API_KEY: "bk" }).model).toBe(
+      "meta-models/muse-spark-open-1026",
+    );
+    expect(modelConfigFromEnv({ BASETEN_API_KEY: "bk", META_API_KEY: "k" }).baseUrl).toBe(
+      "https://inference.baseten.co/v1",
+    );
+    expect(modelConfigFromEnv({ META_API_KEY: "k" }).model).toBe("muse-spark-1.3-contributor");
+  });
+
   it("parses content, finish reason and usage", async () => {
     const fetchImpl = vi.fn(async () => jsonResponse(completion("hello")));
     const result = await chatCompletions(config, [{ role: "user", content: "hi" }], {

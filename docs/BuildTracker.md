@@ -1285,3 +1285,80 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` clean, `pnpm test` → 73 files / 715 passed, `pnpm build` ok
 - notes: `CollapsedRow` is card-local (single use for Code), no showcase dependency. Stage and commit nothing.
+
+## 2026-11-02 — Check gate modal: bare runner, single story
+
+- item: `CheckRunner` gains `bare` mode for embedding in `CheckGateModal` (no nested card, no second UNDERSTANDING CHECK eyebrow, no runner-level skip buttons, quiet "Check complete." terminal instead of "See your picture"); modal narrows 640→560px, header split into "One quick check before continuing" + truncated "On this change:" sub-line, loading state is a "Writing your check…" status line instead of dead shimmer bars, footer button reads "Preparing check…" while loading
+- status: done
+- evidence: full gate green (after fixing a duplicated function-signature line from the comment edit) → `tsc` clean, `biome` clean, `pnpm test` → 73 files / 715 passed, `pnpm build` ok; dev server on :5173 serves the new runner module (verified `bare` in the transform)
+- notes: Standalone runner (inline per-change, caught-up, showcase) unchanged. Stage and commit nothing.
+
+## 2026-11-02 — Check gate modal: cut title, rework selection, quiet footer
+
+- item: header drops the generic "One quick check before continuing" line (eyebrow + truncated "On this change:" is the whole header); MCQ options move from purple slabs with native radios to hairline-bordered rows with custom radio dots (selected: accent border + wash); confidence buttons share the same border-selected language with `aria-pressed` and press-down scale; footer hides the right button until it acts — no more dead disabled "Answer to continue" competing with the runner's "Submit answer"; "Preparing check…" covers loading
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok; dev server serves the new modal + runner transforms
+- notes: Runner flow unchanged (confidence → Submit → reveal → Next); footer "Continue to next change" appears only at `gateDone`/error/empty. Stage and commit nothing.
+
+## 2026-11-02 — Gate modal entrance motion (apple-design)
+
+- item: dialog panel gets a `gate-modal-in` entrance (fade + 8px rise + 0.98 settle, 180ms ease-out, same language as arch popovers), disabled under `prefers-reduced-motion`; selection feedback stays color-only so it needs no motion guard
+- status: done
+- evidence: covered by the same final gate run above (`tsc`, `biome`, 715 tests, build all green on the final tree)
+- notes: No animation library introduced; CSS keyframes in `styles.css` beside the existing popover motion. Stage and commit nothing.
+
+## 2026-11-02 — Gate reveal: strip chips and dead picture button
+
+- item: in `bare` (gate-modal) reveal, dropped the `chk2-ev-…` evidence chips (internal IDs, no action) and the "See your picture" button (mislabeled — it just continued via the footer); bare reveal is now verdict + summary + "Next" only when questions remain, with the footer owning the way out
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok
+- notes: Standalone runner (inline, caught-up, showcase) keeps chips + picture button; removing those everywhere is a follow-up call. Stage and commit nothing.
+
+## 2026-11-02 — Gate loading: layout-mirroring skeleton
+
+- item: loading state is a skeleton that mirrors the loaded runner (question text bars + confidence label bar + three pill shapes) with pulse animation and a "Writing your check…" line, replacing both the dead generic bars and the bare status line — content swaps in without reflow
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` clean (4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok
+- notes: `motion-safe:animate-pulse` renders static bars under reduced motion; `role=status` announces the line. Stage and commit nothing.
+
+## 2026-11-02 — Code dropdown: Pierre diffs, readable rows, scoped header
+
+- item: `ChangeCode` rebuilt on `@pierre/diffs` (`PatchDiff`, unified, word-level inline highlight, `pierre-dark` theme, file header disabled in favor of our own): per-file sections show basename + story why-line + `+A −R` + copy-path button, first file open, rest collapsed; raw `@@` headers and dual line-number gutters gone; collapsed `Code` row now reads `Code · N files · +A −R` so most reads never need to open it; empty-hunk files keep the plain unavailable message
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos in untouched files), `pnpm test` → 73 files / 715 passed, `pnpm build` ok (web dist bundles `pierre-dark` + shiki chunks); dev server on :5173 served the new `change-code.tsx` transform (PatchDiff/patchForFile/disableFileHeader present); `review-showcase` fixture exercises all three states (loaded hunks → PatchDiff, null → loading, failed → error, plus a zero-hunk file); dev process stopped afterwards
+- notes: Patch built client-side from served hunks — no backend change, no new dep (`@pierre/diffs` was already in `apps/web`). Truncation note kept honest. Stage and commit nothing.
+
+## 2026-11-02 — Code dropdown: per-file toggle, all collapsed
+
+- item: every file's Pierre diff now sits behind its own toggle (chevron `›` + header row, same pattern as the rail) and all files start collapsed — one click per file reveals its git diff; zero-hunk branch keeps the plain message with matching header padding
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 73 files / 716 passed, `pnpm build` ok; dev server on :5173 serves the new transform (chevron present, `defaultOpen` gone)
+- notes: Nothing above the Code row touched (summary / Before-Now / Verify intact). Stage and commit nothing.
+
+## 2026-11-02 — Baseten open-weights provider switch + live comparison
+
+- item: `ECHO_MODEL_PROVIDER=baseten` path in `packages/model` (`BASETEN_API_KEY/BASE_URL/MODEL_ID`, default `https://inference.baseten.co/v1` + `meta-models/muse-spark-open-1026`), `.env.example` docs, local `.env.local` flipped to baseten; all server call sites (`ask/changes/checks-v2/tech-stack/architecture` via `modelConfigFromEnv`) follow without code changes
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 260 files (4 pre-existing infos), `pnpm test` → 73 files / 716 passed, `pnpm build` ok; live `requestJson` via client on Baseten → `{"answer":"ok"}` 200; provider compare same 3 tasks both providers: META-trivial 6853ms (17in/392out/378reasoning), META-ask 15296ms (86/718/695), META-checks 6294ms (107/639/529) vs BASETEN-trivial 2945ms (154/289/274), BASETEN-ask 2788ms (219/452/411), BASETEN-checks 4383ms (244/546/442); Baseten ~2-3x faster, JSON adhered on all 3; watch: Baseten citations `["[1]","[2]"]` vs Meta `["1","2"]` on synthetic prompt, prompt-token counting differs (154 vs 17 same input)
+- notes: `-1026` is the working id for this account (`muse-spark-open` 403s); reasoning_effort low accepted; `none` 200s on Baseten but client still rejects it for Meta parity. Code default stays `meta`; local runtime is baseten. Full story/checks quality on real tape not yet run. Stage and commit nothing.
+
+## 2026-11-02 — Reader: name the offline error, offer retry
+
+- item: the changes-error branch now detects a rejected fetch (`Failed to fetch` / network errors: daemon restarting after a file save, or not running) and says so plainly — "Couldn't reach the local Echo server — it may be restarting after a file change. Wait a moment, then retry." — with the session title (not "Changes not ready") and a Retry button; other errors unchanged
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 73 files / 717 passed, `pnpm build` ok; dev transform serves the `offline` branch
+- notes: Root cause of the randomness is the daemon restarting under file-watch while two sessions save constantly; TanStack default retries cover blips, this covers sustained downtime. The daemon itself was down at verification time (nothing on :4783) — start it with `pnpm dev` before reading. Stage and commit nothing.
+
+## 2026-11-02 — Pierre diffs on dusk surfaces
+
+- item: `PatchDiff` gets `unsafeCSS` overriding Pierre's neutral surface vars (`--diffs-bg`, `-context`, `-context-gutter`, `-separator`, `-buffer`) to `#1c1c30` (dusk-surface, matching the file header); addition/deletion washes keep Pierre's signal colors; var names + unsafe-layer precedence confirmed against the shipped `style.js`/`cssWrappers.js`
+- status: done
+- evidence: covered by the same gate run above (typecheck/lint/717/build green); dev transform serves `DUSK_DIFF_SURFACES` + `unsafeCSS`
+- notes: No visual screenshot available in this environment — confirm in the showcase route after hard refresh. If Pierre renames vars in a later upgrade, the slab returns and this override needs re-pinning. Stage and commit nothing.
+
+## 2026-11-02 — Baseten default with Meta fallback
+
+- item: `modelConfigFromEnv` defaults to Baseten when `BASETEN_API_KEY` present else Meta; explicit `ECHO_MODEL_PROVIDER` still wins (strict, no silent fallback); `.env.example` unset-doc; removed explicit provider from local `.env.local` so default path is live
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 260 files (4 pre-existing infos), `pnpm test` → 73 files / 717 passed, `pnpm build` ok; live default resolve with both keys → `https://inference.baseten.co/v1 meta-models/muse-spark-open-1026`; matrix: both→baseten, meta-only→meta, baseten-only→baseten
+- notes: Explicit `baseten` without key still errors (no silent Meta swap). Stage and commit nothing.
