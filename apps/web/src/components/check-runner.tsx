@@ -6,6 +6,7 @@ import type {
 } from "@echo/contracts";
 import { useState } from "react";
 import { api } from "../api";
+import { RichText } from "./rich-text";
 
 const CONFIDENCE_OPTIONS: Array<{ value: AnswerConfidence; label: string }> = [
   { value: "guessing", label: "Guessing" },
@@ -176,7 +177,9 @@ export function CheckRunner({
         </p>
         {reveal !== null ? (
           <div className="space-y-2">
-            <p className="text-sm text-dusk-ink">{reveal.summary}</p>
+            <p className="text-sm text-dusk-ink">
+              <RichText text={reveal.summary} />
+            </p>
             {!bare && reveal.evidence.length > 0 ? (
               <div className="flex flex-wrap gap-1">
                 {reveal.evidence.map((item) => (
@@ -265,7 +268,9 @@ export function CheckRunner({
           </button>
         </div>
       )}
-      <p className="text-dusk-body text-dusk-ink">{current.question}</p>
+      <p className="text-dusk-body text-dusk-ink">
+        <RichText text={current.question} />
+      </p>
 
       <div>
         <p className="text-xs text-dusk-muted">First: how confident are you?</p>
@@ -322,7 +327,9 @@ export function CheckRunner({
                   >
                     {selected ? <span className="h-2 w-2 rounded-full bg-dusk-accent" /> : null}
                   </span>
-                  <span>{option.text}</span>
+                  <span>
+                    <RichText text={option.text} />
+                  </span>
                 </label>
               );
             })}

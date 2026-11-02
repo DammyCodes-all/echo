@@ -1376,3 +1376,73 @@ notes.
 - status: done
 - evidence: full gate green on final tree → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 73 files / 721 passed, `pnpm build` ok; node check against the shipped lib: same patch parses as `rename-changed` without the header vs `change` with it (then response shape confirmed against `getSingularPatch` from source); dev server on :5173 serves the fixed transform
 - notes: `reader-rail.tsx +0 −0` "unavailable" in the screenshot is honest server data (no diff chunk for that path in this snapshot pair — the capture gap path), not this bug. Prior slices (offline message, dusk surfaces, per-file toggles) were committed to main by the repo owner mid-session; only this header fix remains uncommitted. Stage and commit nothing.
+
+## 2026-11-02 — Code rows: HugeIcons chevrons + copy icon
+
+- item: text `›` chevrons in the Code header row and per-file rows become `ArrowRight01Icon` (same rotate-on-open), `copy`/`copied` text button becomes `Copy01Icon`/`Tick01Icon` with sr-only labels — same `HugeiconsIcon size={14} strokeWidth={1.8}` pattern as the rest of the app
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 73 files / 721 passed, `pnpm build` ok; dev transform on :5173 serves the icon code (shared tree — sibling's vite hot-reloaded it; my own vite attempt exited on strictPort, nothing of mine left running)
+- notes: Daemon EADDRINUSE diagnosed alongside: stale 1h-old `tsx watch` server still held :4783 when the fresh one started — killed the stale holder (pids 45603/40657), port verified free; restart `dev:server` to bind fresh. Stage and commit nothing.
+
+## 2026-11-02 — Code diffs blank while collapsed: mount on first open
+
+- item: root cause of invisible diffs — every file started collapsed (per request) so Pierre mounted into `display:none`, measured zero height, and stayed blank on open; `PatchDiff` now mounts on first `onToggle` open and stays mounted after (also avoids spinning up 9 highlighters for a 9-file change)
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 73 files / 721 passed, `pnpm build` ok; SSR prerender of the same options in node produces full highlighted HTML (50KB, dusk vars + word-diff marks present), so parse/options are exonerated — the failure was measure-while-hidden only
+- notes: Daemon was down at verification time, so this needs a live refresh check: open a file — diff should paint on first open. Stage and commit nothing.
+
+## 2026-11-02 — Code toggles: React-owned open state, no native disclosure
+
+- item: per-file rows and the Code header row no longer use `<details>`/native toggle or the `group-open:` CSS selector — each owns `isOpen` in React, chevron rotates from the same boolean that mounts the content (`aria-expanded` on real buttons, copy button a stopPropagation sibling so no nested buttons); chevron, mount, and disclosure can never disagree again
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 73 files / 721 passed, `pnpm build` ok
+- notes: Mount-on-first-open kept (Pierre still must not mount hidden). Stage and commit nothing.
+
+## 2026-11-02 — Code row icons: true vertical centering
+
+- item: chevron and copy icons sat on the text baseline (inline svg + descender gap) so they rendered 1–2px off the label's vertical center; icon wrappers are now flex containers (`flex shrink-0 items-center` on both chevrons, `inline-flex items-center` on the copy button) — same pattern as `session-card.tsx`
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 73 files / 721 passed, `pnpm build` ok
+- notes: Stage and commit nothing.
+
+## 2026-11-02 — Settings page: one-click hooks install + add/remove repos
+
+- item: dedicated `/settings` page (linked from the settings menu) with two working sections — (1) Claude capture hooks: live status (installed / partial x-of-19 / missing, settings path) + Install button (idempotent, reports backup + event count); (2) captured repositories: enabled-path list with per-row remove + absolute-path add form. Server: `GET /api/settings`, `POST /api/settings/hooks/install`, `POST /api/settings/projects`, `POST /api/settings/projects/remove` (zod-validated at the boundary, 403 in demo mode, ingest picks up allowlist changes without restart). Hooks installer moved `apps/cli` → `@echo/capture-muse` so the server composes a package, not an app; contracts own the settings schemas
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 75 files / 731 passed (8 new: 6 server settings + 2 contracts), `pnpm build` ok; dev-server transform of `settings.tsx` serves both section markers and `/settings` returns 200 (my vite stopped after, port verified free)
+- notes: Daemon was down at verification, so the page's live install/enable calls need a running-daemon check: open /settings with the daemon up, confirm status reads and Install reports. Owner/concurrent-session edits to `changes.ts`, `review-index.ts`, `git.ts` and related tests were left untouched. Stage and commit nothing.
+
+## 2026-11-02 — Unblock event loop: async git diffs + backfill repick fixes
+
+- item: root cause of the hung understanding check — `diffShadowTrees`/`diffShadowCommits` used blocking `spawnSync`, so every whole-tree diff froze the daemon (CPU profile: 33k samples, ~85% in spawn machinery; 3×50s health timeouts, zero bytes). Now async `execFile` with identical args/exit-code semantics; all 6 call sites awaited (`review-index` 4, `changes` pair loop + per-request code diff; `getChangeCode` is async, route + tests await). Plus the re-pick loop that kept the CPU saturated: 20s pair-loop budget in `maybeGenerateChanges` (diagnostic `changes_budget_exceeded`), 10-min in-memory cooldown on fill-only passes, backfill skips live sessions with an artifact until the tape goes quiet
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing infos), `pnpm test` → 75 files / 731 passed, `pnpm build` ok; monster review offline 15.8s with byte-identical output (0 hunks/250 attempts/`capture_gap_on_tape` as before); new tests: live sessions skipped while recording then flagged when quiet, fill cooldown suppresses re-diff + model calls then retries after 11min
+- notes: Remaining `spawnSync` only in cold paths (muse export/version probes, sandbox capability probes — boot/startup, never the tick loop). Daemon + :5173 vite are down at handoff (only stray :5199 vite left) — owner runs `pnpm dev`, then confirm health answers and retry the understanding check. Stage and commit nothing.
+
+## 2026-11-02 — Settings menu: native folder picker + in-menu hooks install (no page)
+
+- item: pivoted off the dedicated /settings page (removed route + file + menu link + server browse endpoint) per review — both actions now live in the settings dropdown: (1) "Install capture hooks" row with live status (installed / partial x-of-19 / missing) and inline result; (2) "Add a folder…" row driving `showDirectoryPicker()` — the browser only reveals the folder name, so the daemon locates it under home (bounded walk: depth 4, skips dotfiles + node_modules, capped + truncated flag) and enables on exact-single match, lists matches for disambiguation, or says plainly when nothing is found; picker dismissal stays silent, unsupported browsers and demo mode get honest inline notes. Server: `GET /api/settings/projects/resolve` (zod query validation, 403 in demo); web switches the menu to one `GET /api/settings` fetch
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 75 files / 734 passed (resolve + enable/disable + install + contracts covered), `pnpm build` ok; dev transform of `settings-sheet.tsx` serves all three new markers (`showDirectoryPicker`, both row labels). :5173 is currently held by another session's bare `vite` (not mine — no `--port 5173` process of mine exists), so I left it running
+- notes: Needs a live Chromium check with the daemon up: picker → single match enables; a duplicated folder name shows the choose-one list; Firefox/Safari shows the fallback note. Stage and commit nothing.
+
+## 2026-11-02 — Check markdown: RichText for questions/options/reveals + prompt invite
+
+- item: new `RichText` (`apps/web/src/components/rich-text.tsx`, `**bold**` + `` `code` `` to React nodes, never raw HTML; single `*`/`_` untouched so paths and arithmetic can't become emphasis) wired into `CheckRunner` question, MCQ option and reveal summary; one `CHECK_SYSTEM_PROMPT` line inviting `**bold**` for key terms and `` `code` `` for paths/symbols in question/option/rubric/explanation text. Grounding validation unaffected (`FILE_TOKEN`/`INT_TOKEN` match through `**`/backticks)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing infos), `pnpm test` → 75 files / 734 passed (checks-v2 21/21 with the new prompt line), `pnpm build` ok; no test pins the prompt shape
+- notes: Existing baked checks have no markdown yet (plain prose — verified against a live checks_v2.json), so highlighting appears on newly drafted checks only. Stage and commit nothing.
+
+## 2026-11-02 — Settings menu cleanup: icons everywhere + inline repo remove
+
+- item: every menu row now leads with a HugeIcons glyph (Folder01 repos, Plug01 hooks, FolderAdd add-folder, Copy01 enable command, InformationCircle support) and all text arrow glyphs (`→`/`←`) are ArrowRight01/ArrowLeft01 icons; `Tick01Icon` confirms installed hooks inline. "Captured repositories" expands in place (rotating chevron, `aria-expanded`) listing every enabled path with a per-repo remove button (stop-capture via the disable endpoint, inline confirm, menu re-fetches), plus an "Open all projects" footer keeping the old navigation. Nothing else removed: the enable-command row stays as the fallback for non-Chromium browsers and non-home paths, support info stays for bug reports
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 75 files / 734 passed, `pnpm build` ok; dev transform of `settings-sheet.tsx` serves all new markers (icons, `handleRemoveRepo`, `reposOpen`)
+- notes: Needs the live Chromium check with the daemon up: expand repos, remove one, confirm the inline note + refetch. Stage and commit nothing.
+
+## 2026-11-02 — No code-recall questions: prompt rule + validator enforcement
+
+- item: `CHECK_SYSTEM_PROMPT` line banning file-content/code-text/symbol/line-number questions and filename/line-number/quoted-code correct answers; deterministic `recallViolation` (question text: fenced blocks, "what does the file/code…", "which file/line…", line numbers, exact-text, called/named phrasing) + `keyRecallViolation` (key that is a bare path/line number/backticked code) + fenced-block checks on options/rubric in `validateDraft`. Single `*`/`_` still render plain and `FILE_TOKEN`/`INT_TOKEN` grounding matches through `**`/backticks, so the markdown feature is unaffected
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing infos), `pnpm test` → 75 files / 736 passed (2 new: recall draft refused then recovered via the retry note, bare-path key refused then recovered), `pnpm build` ok
+- notes: Applies to newly drafted checks; existing baked artifacts unchanged. Stage and commit nothing.
