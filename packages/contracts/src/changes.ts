@@ -150,6 +150,25 @@ export function firstNotUnderstood(
 export const CHANGES_FILE_NAME = "changes.json" as const;
 export const PROGRESS_FILE_NAME = "progress.json" as const;
 
+// Persisted changes.json shape. The server reads it leniently (mixed old/new
+// rows survive); the demo builder validates it strictly — a bake must prove
+// the artifact it ships, never partially.
+export const ChangesArtifactSchema = z.object({
+  sessionId: z.string().min(1),
+  generatedAt: z.string().min(1),
+  generator: z.string().min(1),
+  summary: z.string().min(1),
+  diagnostics: z.array(z.string()),
+  changes: z.array(ChangeSchema),
+  snapshotWatermark: z
+    .object({
+      snapshotCount: z.number().int().nonnegative(),
+      lastOid: z.string().nullable(),
+    })
+    .optional(),
+});
+export type ChangesArtifact = z.infer<typeof ChangesArtifactSchema>;
+
 // On-demand unified diff for one change, computed from shadow git between
 // the change's own snapshot pair. Never persisted: the snapshot pair is
 // the cache key, and regen-stable ids make responses repeatable. A file
