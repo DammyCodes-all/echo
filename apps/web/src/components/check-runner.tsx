@@ -36,6 +36,13 @@ type CheckRunnerProps = {
   /** Absent when skipping is unavailable (the read-only demo rejects it). */
   onSkip?: () => void;
   onDone: () => void;
+  /**
+   * True when embedded in the gate modal, which owns the card, the label,
+   * and the skip/continue footer. The runner then renders only the
+   * question flow: no nested card, no eyebrow, no skip buttons, and no
+   * terminal action (the modal footer drives).
+   */
+  bare?: boolean;
 };
 
 function firstUnanswered(
@@ -62,6 +69,7 @@ export function CheckRunner({
   onUpdate,
   onSkip,
   onDone,
+  bare = false,
 }: CheckRunnerProps) {
   const [currentId, setCurrentId] = useState<string | null>(
     () => firstUnanswered(state, focusQuestionId)?.id ?? null,
@@ -77,6 +85,7 @@ export function CheckRunner({
 
   const answered = new Set(state.attempts.map((attempt) => attempt.questionId));
   const unanswered = state.questions.filter((question) => !answered.has(question.id));
+  const frame = bare ? "space-y-4" : "space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-5";
   const current =
     state.questions.find((question) => question.id === currentId && !answered.has(question.id)) ??
     unanswered.find((question) => question.id === focusQuestionId) ??
@@ -159,7 +168,7 @@ export function CheckRunner({
     const attempt = state.attempts.find((attempted) => attempted.questionId === revealedId) ?? null;
     const reveal = reveals[revealedId] ?? null;
     return (
-      <div className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5">
+      <div className={frame}>
         <p
           className={`text-sm font-medium ${attempt?.correct ? "text-dusk-accent-soft" : "text-dusk-fail"}`}
         >
@@ -168,7 +177,7 @@ export function CheckRunner({
         {reveal !== null ? (
           <div className="space-y-2">
             <p className="text-sm text-dusk-ink">{reveal.summary}</p>
-            {reveal.evidence.length > 0 ? (
+            {!bare && reveal.evidence.length > 0 ? (
               <div className="flex flex-wrap gap-1">
                 {reveal.evidence.map((item) => (
                   <span
@@ -185,10 +194,16 @@ export function CheckRunner({
         ) : null}
         {error !== null ? <p className="text-sm text-dusk-fail">{error}</p> : null}
         <div className="flex flex-wrap gap-2">
-          <button type="button" onClick={() => setRevealedId(null)} className={PRIMARY}>
-            {unanswered.length > 0 ? "Next" : "See your picture"}
-          </button>
-          {onSkip ? (
+          {unanswered.length > 0 ? (
+            <button type="button" onClick={() => setRevealedId(null)} className={PRIMARY}>
+              Next
+            </button>
+          ) : !bare ? (
+            <button type="button" onClick={() => setRevealedId(null)} className={PRIMARY}>
+              See your picture
+            </button>
+          ) : null}
+          {onSkip && !bare ? (
             <button
               type="button"
               onClick={() => void handleSkip()}
@@ -203,10 +218,18 @@ export function CheckRunner({
     );
   }
 
-  // Nothing left to answer: the picture is ready.
+  // Nothing left to answer: the picture is ready. Embedded in the gate,
+  // the modal footer drives the way out, so stay quiet here.
   if (current === null) {
+    if (bare) {
+      return (
+        <div className={frame}>
+          <p className="text-sm text-dusk-ink">Check complete.</p>
+        </div>
+      );
+    }
     return (
-      <div className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5">
+      <div className={frame}>
         <p className="text-sm text-dusk-ink">Check complete — your picture is ready.</p>
         <button type="button" onClick={onDone} className={PRIMARY}>
           See your picture
@@ -222,20 +245,26 @@ export function CheckRunner({
     (current.format === "mcq" ? selectedOptionId !== null : answerText.trim().length > 0);
 
   return (
-    <div className="space-y-4 rounded-dusk-card bg-dusk-surface px-6 py-5">
-      <div className="flex items-start justify-between gap-3">
-        <p className="text-xs uppercase tracking-widest text-dusk-muted">
-          Understanding check{remaining > 1 ? ` · ${remaining} left` : ""}
-        </p>
-        <button
-          type="button"
-          onClick={() => void handleSkip()}
-          disabled={skipping}
-          className="shrink-0 text-sm text-dusk-muted underline underline-offset-4 disabled:opacity-40"
-        >
-          Skip — no pressure
-        </button>
-      </div>
+    <div className={frame}>
+      {bare ? (
+        remaining > 1 ? (
+          <p className="text-xs tabular-nums text-dusk-muted">{remaining} questions to go</p>
+        ) : null
+      ) : (
+        <div className="flex items-start justify-between gap-3">
+          <p className="text-xs uppercase tracking-widest text-dusk-muted">
+            Understanding check{remaining > 1 ? ` · ${remaining} left` : ""}
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleSkip()}
+            disabled={skipping}
+            className="shrink-0 text-sm text-dusk-muted underline underline-offset-4 disabled:opacity-40"
+          >
+            Skip — no pressure
+          </button>
+        </div>
+      )}
       <p className="text-dusk-body text-dusk-ink">{current.question}</p>
 
       <div>
@@ -250,10 +279,11 @@ export function CheckRunner({
                 setError(null);
               }}
               disabled={pending}
-              className={`rounded-dusk-code px-3 py-2 text-sm disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent ${
+              aria-pressed={confidence === option.value}
+              className={`rounded-dusk-code border px-3 py-2 text-sm transition disabled:opacity-40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent active:scale-[0.97] ${
                 confidence === option.value
-                  ? "bg-dusk-accent-wash text-dusk-ink"
-                  : "bg-dusk-pill text-dusk-ink"
+                  ? "border-dusk-accent bg-dusk-accent-wash font-medium text-dusk-ink"
+                  : "border-dusk-hairline-strong text-dusk-muted hover:border-dusk-muted hover:text-dusk-ink"
               }`}
             >
               {option.label}
@@ -265,26 +295,37 @@ export function CheckRunner({
       {confidence !== null ? (
         current.format === "mcq" ? (
           <div className="space-y-2" role="radiogroup" aria-label="Answer options">
-            {current.options.map((option) => (
-              <label
-                key={option.id}
-                className={`flex cursor-pointer items-start gap-2 rounded-dusk-code px-3 py-2 text-sm ${
-                  selectedOptionId === option.id
-                    ? "bg-dusk-accent-wash text-dusk-ink"
-                    : "bg-dusk-pill text-dusk-ink"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name={`check-${current.id}`}
-                  checked={selectedOptionId === option.id}
-                  onChange={() => setSelectedOptionId(option.id)}
-                  disabled={pending}
-                  className="mt-1"
-                />
-                <span>{option.text}</span>
-              </label>
-            ))}
+            {current.options.map((option) => {
+              const selected = selectedOptionId === option.id;
+              return (
+                <label
+                  key={option.id}
+                  className={`flex cursor-pointer items-center gap-3 rounded-dusk-code border px-3 py-2.5 text-sm transition-colors focus-within:outline-2 focus-within:outline-offset-2 focus-within:outline-dusk-accent ${
+                    selected
+                      ? "border-dusk-accent bg-dusk-accent-wash text-dusk-ink"
+                      : "border-dusk-hairline-strong text-dusk-muted hover:border-dusk-muted hover:text-dusk-ink"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    name={`check-${current.id}`}
+                    checked={selected}
+                    onChange={() => setSelectedOptionId(option.id)}
+                    disabled={pending}
+                    className="sr-only"
+                  />
+                  <span
+                    aria-hidden
+                    className={`flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-colors ${
+                      selected ? "border-dusk-accent" : "border-dusk-faint"
+                    }`}
+                  >
+                    {selected ? <span className="h-2 w-2 rounded-full bg-dusk-accent" /> : null}
+                  </span>
+                  <span>{option.text}</span>
+                </label>
+              );
+            })}
           </div>
         ) : (
           <div className="space-y-3">

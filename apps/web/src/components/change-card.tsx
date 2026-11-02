@@ -28,16 +28,17 @@ function CollapsedRow({
   children,
 }: {
   title: string;
-  summary?: string;
+  summary?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
-    <details className="py-3">
-      <summary className="cursor-pointer text-xs uppercase tracking-widest text-dusk-muted">
-        {title}
-        {summary !== undefined ? (
-          <span className="ml-2 normal-case tracking-normal">{summary}</span>
-        ) : null}
+    <details className="group py-3">
+      <summary className="flex cursor-pointer list-none items-center gap-2 text-xs uppercase tracking-widest text-dusk-muted transition-colors hover:text-dusk-ink [&::-webkit-details-marker]:hidden">
+        <span aria-hidden className="shrink-0 transition-transform group-open:rotate-90">
+          ›
+        </span>
+        <span className="flex-1">{title}</span>
+        {summary}
       </summary>
       <div className="mt-2">{children}</div>
     </details>
@@ -162,9 +163,21 @@ export function ChangeCard({
         <CollapsedRow
           title="Code"
           summary={
-            code !== null
-              ? `${code.files.length} ${code.files.length === 1 ? "file" : "files"} · +${code.files.reduce((sum, file) => sum + file.added, 0)} −${code.files.reduce((sum, file) => sum + file.removed, 0)}`
-              : undefined
+            code !== null ? (
+              <span className="flex shrink-0 items-center gap-2 normal-case tracking-normal">
+                <span className="tabular-nums">
+                  {code.files.length} {code.files.length === 1 ? "file" : "files"}
+                </span>
+                <span className="font-mono tabular-nums">
+                  <span className="text-dusk-pass">
+                    +{code.files.reduce((sum, file) => sum + file.added, 0)}
+                  </span>{" "}
+                  <span className="text-dusk-fail">
+                    −{code.files.reduce((sum, file) => sum + file.removed, 0)}
+                  </span>
+                </span>
+              </span>
+            ) : undefined
           }
         >
           {code !== null ? (

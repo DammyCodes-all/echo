@@ -429,10 +429,19 @@ export function ReaderPage() {
   if (changesQuery.isError || changesQuery.data === undefined) {
     const waiting = changesQuery.error instanceof ChangesNotReadyError;
     const notFound = isNotFound(changesQuery.error);
+    const errorMessage = changesQuery.error instanceof Error ? changesQuery.error.message : null;
+    // A rejected fetch means the daemon was unreachable (restarting after
+    // a file change, or not running) — a connection problem, not an
+    // unready session. Name it as such and offer a retry.
+    const offline =
+      !waiting &&
+      !notFound &&
+      errorMessage !== null &&
+      /failed to fetch|networkerror|load failed|network request failed/i.test(errorMessage);
     return (
       <ScaffoldPage
         eyebrow="Session review"
-        title={waiting || notFound ? headerTitle : "Changes not ready"}
+        title={waiting || notFound || offline ? headerTitle : "Changes not ready"}
         description="Walk through what changed, one change at a time."
         breadcrumb={headerCrumb}
       >
@@ -442,11 +451,11 @@ export function ReaderPage() {
               ? "This session hasn't gone quiet yet — changes appear here once the tape goes silent. Check back soon."
               : notFound
                 ? "Changes not ready yet — the session may still be recording."
-                : changesQuery.error instanceof Error
-                  ? changesQuery.error.message
-                  : "Could not load the changes."}
+                : offline
+                  ? "Couldn't reach the local Echo server — it may be restarting after a file change. Wait a moment, then retry."
+                  : (errorMessage ?? "Could not load the changes.")}
           </p>
-          {waiting || notFound ? (
+          {waiting || notFound || offline ? (
             <button
               type="button"
               onClick={() => {
@@ -679,6 +688,7 @@ export function ReaderPage() {
               focusQuestionId={checkFocusId}
               onUpdate={setChecksState}
               onDone={resolveGate}
+              bare
             />
           ) : null}
         </CheckGateModal>
