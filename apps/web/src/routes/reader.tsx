@@ -15,6 +15,7 @@ import { summarizeChangeChecks } from "../checks-summary";
 import { type AskChangeRef, AskThreadPanel } from "../components/ask-thread-panel";
 import { CaughtUp } from "../components/caught-up";
 import { ChangeCard } from "../components/change-card";
+import { CheckGateModal } from "../components/check-gate-modal";
 import { CheckRunner } from "../components/check-runner";
 import { ProgressTape } from "../components/progress-tape";
 import { ReaderRail } from "../components/reader-rail";
@@ -128,6 +129,12 @@ export function ReaderPage() {
   const [checkOpen, setCheckOpen] = useState(false);
   const [checkBusy, setCheckBusy] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
+  // Transition gate: "Got it" parks here and opens a blocking check modal
+  // instead of advancing. Skip in the modal still marks understood.
+  const [gate, setGate] = useState<{ changeId: string; title: string; target: number } | null>(
+    null,
+  );
+  const [gateLoading, setGateLoading] = useState(false);
 
   // Null until the reader picks a slot: resume at the first not-understood
   // change once data lands, then hold the position across refetches.
@@ -192,6 +199,19 @@ export function ReaderPage() {
   const previous = !atEnd && viewIndex > 0 ? (changes[viewIndex - 1] ?? null) : null;
   const next = !atEnd && viewIndex < changes.length - 1 ? (changes[viewIndex + 1] ?? null) : null;
   const skipped = changes.filter((change) => progress[progressKey(change)]?.state === "skipped");
+
+  // Gate modal bookkeeping: only this change's questions block Continue.
+  // Other questions may ride along in the runner, but they never gate.
+  const gateAnsweredIds =
+    checksState === null
+      ? new Set<string>()
+      : new Set(checksState.attempts.map((attempt) => attempt.questionId));
+  const gateQuestions =
+    gate === null || checksState === null
+      ? []
+      : checksState.questions.filter((question) => question.cardId === gate.changeId);
+  const gateDone =
+    gateQuestions.length > 0 && gateQuestions.every((question) => gateAnsweredIds.has(question.id));
 
   // Prefetch the next change's diff while this one is being read, so
   // opening Code or stepping forward never waits on shadow git.
@@ -288,6 +308,51 @@ export function ReaderPage() {
 
   const handleRunnerDone = () => {
     setCheckOpen(false);
+  };
+
+  // "Got it" parks on a gate instead of advancing: fetch this change's
+  // check and block behind the modal. Fail open — a check that cannot
+  // load never traps the reader. Already-answered changes pass through.
+  const handleGotIt = () => {
+    if (current === null || gate !== null) return;
+    if (
+      checkResult !== null &&
+      checkResult.total > 0 &&
+      checkResult.answered >= checkResult.total
+    ) {
+      mark(current, "understood");
+      jump(viewIndex + 1);
+      return;
+    }
+    const snapshot = { changeId: current.id, title: current.title, target: viewIndex + 1 };
+    setGate(snapshot);
+    setGateLoading(true);
+    setCheckError(null);
+    void api
+      .checkMe(sessionId, current.id)
+      .then((nextState) => {
+        setChecksState(nextState);
+        setCheckFocusId(
+          nextState.questions.find((question) => question.cardId === current.id)?.id ?? null,
+        );
+      })
+      .catch((unknown) => {
+        setCheckError(checkMessage(unknown));
+      })
+      .finally(() => {
+        setGateLoading(false);
+      });
+  };
+
+  // Both Continue and Skip mark understood: the reader already said got it,
+  // the modal only decides whether a check answer is recorded first.
+  const resolveGate = () => {
+    if (gate === null) return;
+    const change = changes.find((candidate) => candidate.id === gate.changeId) ?? null;
+    const target = gate.target;
+    setGate(null);
+    if (change !== null) mark(change, "understood");
+    jump(target);
   };
 
   if (changesQuery.isPending) {
@@ -520,10 +585,8 @@ export function ReaderPage() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => {
-                          mark(current, "understood");
-                          jump(viewIndex + 1);
-                        }}
+                        onClick={handleGotIt}
+                        disabled={gate !== null}
                         className={PRIMARY}
                       >
                         Got it, next change
@@ -624,6 +687,31 @@ export function ReaderPage() {
           onCitationClick={handleCitationClick}
           onClose={() => setAskOpen(false)}
         />
+      ) : null}
+      {gate !== null ? (
+        <CheckGateModal
+          changeTitle={gate.title}
+          loading={gateLoading}
+          error={checkError}
+          hasQuestions={gateQuestions.length > 0}
+          gateDone={gateDone}
+          onSkip={resolveGate}
+          onContinue={resolveGate}
+        >
+          {gateLoading ? null : gateQuestions.length === 0 && checkError === null ? (
+            <p className="text-sm text-dusk-muted">
+              Nothing to check on this change — continue when ready.
+            </p>
+          ) : checksState !== null ? (
+            <CheckRunner
+              sessionId={sessionId}
+              state={checksState}
+              focusQuestionId={checkFocusId}
+              onUpdate={setChecksState}
+              onDone={resolveGate}
+            />
+          ) : null}
+        </CheckGateModal>
       ) : null}
     </ScaffoldPage>
   );
