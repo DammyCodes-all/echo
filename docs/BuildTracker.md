@@ -1446,3 +1446,38 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing infos), `pnpm test` → 75 files / 736 passed (2 new: recall draft refused then recovered via the retry note, bare-path key refused then recovered), `pnpm build` ok
 - notes: Applies to newly drafted checks; existing baked artifacts unchanged. Stage and commit nothing.
+
+## 2026-11-02 — Graph cards + hover cards in jul.chat dark-card language (no outlines)
+
+- item: typed `GraphCard` (`apps/web/src/components/architecture/graph-card.tsx`: centered title + truncated description line + proposed pill + hub badge) and `GraphHoverCard` (`graph-hover-card.tsx`: jul.chat `rounded-3xl` centered card with neighbor lists, evidence lines, Not now / Explore buttons with lucide `X`/`Pin`, pinned disables Explore); `ArchNode` in `architecture-diagram.tsx` renders `GraphCard` inside the existing tinted frame and the floating popover renders `GraphHoverCard`; outlines removed entirely (pinned/highlighted read as a +0.1 tint wash, no `outline` left in the architecture components)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 268 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm build` ok; headless-Chrome screenshots of the real components (tsx `renderToStaticMarkup` + dev-server styles): golden + long-label/proposed/hub edge for nodes (truncation holds, no outline), golden + empty-neighbor/pinned edge for hover (— placeholders, Pinned disabled); dev server reaped afterwards
+- notes: Option B from the plan — no `react-jsx-parser`, no shadcn init, no new deps (`lucide-react` already present). UI is vitest-exempt, no new tests. `highlightedIds`/`pinnedId` still flow into node data (tint only) and the hover `pinned` state; `NeighborList` removed with the old popover. User follow-up honored: outlines deleted after the first pass.
+
+## 2026-11-02 — Graph cards borderless (outline follow-up)
+
+- item: existing-status nodes now render with `border: none` — the 1px hairline read as a blue ring on the tint wash, which the screenshot flagged; only proposed nodes keep a frame (dashed peach = status, not decoration). Also dropped the native `title` tooltips on the card label/description (the black tooltip box in the screenshot); full text lives in the hover card
+- status: done
+- evidence: `tsc` clean, `biome` 268 files (4 pre-existing infos), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm build` ok; headless-Chrome screenshot of the real `GraphCard`: wash with rounded corners, no ring
+- notes: Verified React Flow's own stylesheet sets `outline: none` on nodes, so the app border was the sole source. Nothing staged or committed.
+
+## 2026-11-02 — Diagram chat header redesign
+
+- item: `apps/web/src/components/architecture/architecture-chat.tsx` top block — Waypoints tile in accent-wash + title/status pill (Thinking / Patch ready / Ready) + single muted subtitle; removed the `border-b` title bar and the static "Try …" hint paragraph, replaced with two clickable starter chips ("What does ingest do?", "Add a retry queue between ingest and storage") that fill the composer; Dusk tokens only, sentence case, no new deps
+- status: done
+- evidence: `tsc` clean, `biome` 268 files (4 pre-existing infos), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm --filter @echo/web build` ok (full `pnpm build` timed out under parallel-tree contention; web bundle verified separately)
+- notes: UI is vitest-exempt, no new tests. A concurrent uncommitted slice is editing the same file (think-toggle removal, placeholder copy); this entry's diff sits on top of that working tree — re-applied the Waypoints import + Ready pill after the concurrent write dropped them. Nothing staged or committed.
+
+## 2026-11-02 — Diagram chat header cleanup + compact composer
+
+- item: removed the idle `Ready` pill and the Waypoints header icon from `architecture-chat.tsx` (`Thinking` / `Patch ready` states kept; unused import dropped); compacted the `ThinkingPromptInput` composer (single-row default: autosize floor 64→40px, rows 2→1, `h-10`/`min-h-10`, form `p-4`→`p-3`, button row `mt-3`→`mt-2`)
+- status: done
+- evidence: `tsc` clean, `biome` clean (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm build` ok (vite web build included)
+- notes: UI verified via build only, no browser pass. Nothing staged or committed.
+
+## 2026-11-02 — Remove Undo/Regenerate header buttons (architecture page)
+
+- item: removed the Undo/Regenerate button group from the `System at a glance` header (`apps/web/src/routes/project-architecture.tsx`: header is now title + subtitle only) plus the now-unused undo mutation, `undoError` state and error line; empty-state first `Generate architecture` button kept so a map-less project can still create its first map, with generation progress/error/warnings UI untouched; server `undo`/`generate` endpoints and `apps/web/src/api.ts` unchanged
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`; 1 format reflow on the edited file), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm build` ok; browser pass on isolated stack (fresh `VACUUM INTO` snapshot, daemon :4791 `ECHO_MODEL=off`, vite :5211, CDP-driven system Chrome, all reaped): echo map page settles with diagram markup, zero Undo/Regenerate buttons, no load error; map-less project shows empty state with first-generate kept and no Undo; 10/10 DOM assertions pass, sole console error on both pages is sandbox-blocked Google Fonts (`ERR_INTERNET_DISCONNECTED`, environmental); screenshots `/tmp/arch-buttons-pass/{with-map,no-map}.png`; POST undo on the snapshot still returns a new version (backend intact)
+- notes: UI is vitest-exempt, no new tests. Two harness lessons: (1) `--dump-dom`/`--virtual-time-budget` hang forever on this page — the open SSE stream freezes virtual-time expiry and `--timeout` is ignored by headless=new — CDP navigate + settle-poll + evaluate is the working shape (`/tmp/cdp-arch.mjs` + `/tmp/arch-buttons-pass2.sh` kept for re-runs). (2) `pkill -f` with a self-matching pattern SIGTERMs your own shell (tracker warned); verify-by-port + kill explicit PIDs instead. Concurrent session is mid-rewrite of the same page's chat/diagram components — my diff touches only the header block + undo code in `project-architecture.tsx`; HMR churn from their writes was absorbed by settle polling. Nothing staged or committed.
