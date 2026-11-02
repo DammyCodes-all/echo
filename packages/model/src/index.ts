@@ -52,6 +52,32 @@ function assertReasoningEffort(value: string): asserts value is ReasoningEffort 
 }
 
 export function modelConfigFromEnv(env: NodeJS.ProcessEnv): ModelConfig {
+  const explicit = (env.ECHO_MODEL_PROVIDER ?? "").toLowerCase();
+  const provider =
+    explicit === "baseten" || explicit === "meta"
+      ? explicit
+      : (env.BASETEN_API_KEY ?? "").length > 0
+        ? "baseten"
+        : "meta";
+  if (provider === "baseten") {
+    const apiKey = env.BASETEN_API_KEY ?? "";
+    if (apiKey.length === 0) {
+      if (explicit === "" && (env.META_API_KEY ?? "").length > 0) {
+        return modelConfigFromEnv({ ...env, ECHO_MODEL_PROVIDER: "meta" });
+      }
+      throw new ModelError("missing_api_key", "BASETEN_API_KEY is not set");
+    }
+    const maxTokens = Number.parseInt(env.BASETEN_MAX_TOKENS ?? env.META_MAX_TOKENS ?? "", 10);
+    const reasoningEffort = env.BASETEN_REASONING_EFFORT ?? env.META_REASONING_EFFORT ?? "";
+    if (reasoningEffort !== "") assertReasoningEffort(reasoningEffort);
+    return {
+      baseUrl: env.BASETEN_BASE_URL ?? "https://inference.baseten.co/v1",
+      apiKey,
+      model: env.BASETEN_MODEL_ID ?? "meta-models/muse-spark-open-1026",
+      maxTokens: Number.isFinite(maxTokens) && maxTokens > 0 ? maxTokens : 2048,
+      ...(reasoningEffort === "" ? {} : { reasoningEffort }),
+    };
+  }
   const apiKey = env.META_API_KEY ?? "";
   if (apiKey.length === 0) {
     throw new ModelError("missing_api_key", "META_API_KEY is not set");

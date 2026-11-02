@@ -19,7 +19,8 @@ type CheckGateModalProps = {
  * Blocking transition gate: one quick check before the next change.
  * Skip is always available so a failed or unwanted check never traps
  * the reader; Continue unlocks once this change's questions are
- * answered (or when there is nothing to answer).
+ * answered (or when there is nothing to answer). The runner renders
+ * bare inside: this modal owns the card, the label, and the footer.
  */
 export function CheckGateModal({
   changeTitle,
@@ -49,24 +50,30 @@ export function CheckGateModal({
         role="dialog"
         aria-modal="true"
         aria-label={`Understanding check before leaving ${changeTitle}`}
-        className="relative max-h-[85vh] w-full max-w-[640px] space-y-4 overflow-y-auto rounded-dusk-card bg-dusk-surface px-6 py-5"
+        className="gate-modal-in relative max-h-[85vh] w-full max-w-[560px] space-y-4 overflow-y-auto rounded-dusk-card bg-dusk-surface px-6 py-5"
       >
         <div>
           <p className="text-xs uppercase tracking-widest text-dusk-muted">Understanding check</p>
-          <p className="mt-1 text-dusk-body text-dusk-ink">
-            One quick check before the next change —{" "}
-            <span className="font-medium">{changeTitle}</span>
+          <p className="mt-1 truncate text-sm text-dusk-muted" title={changeTitle}>
+            On this change: {changeTitle}
           </p>
         </div>
 
         {loading ? (
-          <div
-            role="status"
-            aria-label="Loading check"
-            className="space-y-2 motion-safe:animate-pulse"
-          >
-            <div className="h-4 w-2/3 rounded-dusk-code bg-dusk-pill" />
-            <div className="h-4 w-1/2 rounded-dusk-code bg-dusk-pill" />
+          <div role="status" className="space-y-4">
+            <div aria-hidden className="space-y-2 motion-safe:animate-pulse">
+              <div className="h-4 w-11/12 rounded-dusk-code bg-dusk-pill" />
+              <div className="h-4 w-2/3 rounded-dusk-code bg-dusk-pill" />
+            </div>
+            <div aria-hidden className="space-y-2 motion-safe:animate-pulse">
+              <div className="h-3 w-40 rounded-dusk-code bg-dusk-pill" />
+              <div className="flex gap-2">
+                <div className="h-9 w-24 rounded-dusk-code bg-dusk-pill" />
+                <div className="h-9 w-24 rounded-dusk-code bg-dusk-pill" />
+                <div className="h-9 w-20 rounded-dusk-code bg-dusk-pill" />
+              </div>
+            </div>
+            <p className="text-sm text-dusk-muted">Writing your check…</p>
           </div>
         ) : (
           children
@@ -82,11 +89,15 @@ export function CheckGateModal({
           <button type="button" onClick={onSkip} className={QUIET}>
             Skip check
           </button>
-          <button type="button" onClick={onContinue} disabled={!canContinue} className={PRIMARY}>
-            {hasQuestions && !gateDone && error === null
-              ? "Answer to continue"
-              : "Continue to next change"}
-          </button>
+          {canContinue || loading ? (
+            <button type="button" onClick={onContinue} disabled={!canContinue} className={PRIMARY}>
+              {loading
+                ? "Preparing check…"
+                : hasQuestions && !gateDone && error === null
+                  ? "Answer to continue"
+                  : "Continue to next change"}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>
