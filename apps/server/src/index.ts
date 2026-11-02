@@ -7,6 +7,9 @@ import {
   AskRequestSchema,
   CheckMeRequestSchema,
   CheckV2AnswerRequestSchema,
+  FolderResolveQuerySchema,
+  ProjectDisableRequestSchema,
+  ProjectEnableRequestSchema,
 } from "@echo/contracts";
 import {
   getProject,
@@ -46,6 +49,13 @@ import { createMuseIngest } from "./muse-ingest";
 import { createMuseWatcher } from "./muse-watch";
 import { createProjectTechStackService } from "./project-tech-stack";
 import { buildSessionReview } from "./review-index";
+import {
+  disableSettingsProject,
+  enableSettingsProject,
+  getSettings,
+  installSettingsHooks,
+  resolveSettingsFolder,
+} from "./settings";
 import { readSnapshotFile } from "./snapshot-view";
 
 const VERSION = "0.1.0";
@@ -190,6 +200,67 @@ app.get("/api/health", async () => ({
 }));
 
 app.get("/api/projects", async () => listProjects(db));
+
+app.get("/api/settings", async () => getSettings(process.env).body);
+
+app.get("/api/settings/projects/resolve", async (request, reply) => {
+  if (DEMO) {
+    return reply.code(403).send({
+      error: { code: "forbidden", message: "settings changes are disabled in demo mode" },
+    });
+  }
+  const parsed = FolderResolveQuerySchema.safeParse(request.query);
+  if (!parsed.success) {
+    return reply.code(400).send({
+      error: { code: "invalid_request", message: "a folder name is required" },
+    });
+  }
+  const outcome = resolveSettingsFolder(parsed.data.name);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.post("/api/settings/hooks/install", async (_request, reply) => {
+  // Demo visitors share one daemon: settings writes stay disabled there.
+  if (DEMO) {
+    return reply.code(403).send({
+      error: { code: "forbidden", message: "settings changes are disabled in demo mode" },
+    });
+  }
+  const outcome = installSettingsHooks(process.env);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.post("/api/settings/projects", async (request, reply) => {
+  if (DEMO) {
+    return reply.code(403).send({
+      error: { code: "forbidden", message: "settings changes are disabled in demo mode" },
+    });
+  }
+  const parsed = ProjectEnableRequestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({
+      error: { code: "invalid_request", message: "a folder path is required" },
+    });
+  }
+  const outcome = await enableSettingsProject(db, parsed.data.path, process.env, app.log);
+  return reply.code(outcome.status).send(outcome.body);
+});
+
+app.post("/api/settings/projects/remove", async (request, reply) => {
+  if (DEMO) {
+    return reply.code(403).send({
+      error: { code: "forbidden", message: "settings changes are disabled in demo mode" },
+    });
+  }
+  const parsed = ProjectDisableRequestSchema.safeParse(request.body);
+  if (!parsed.success) {
+    return reply.code(400).send({
+      error: { code: "invalid_request", message: "a folder path is required" },
+    });
+  }
+  const outcome = disableSettingsProject(parsed.data.path, process.env);
+  return reply.code(outcome.status).send(outcome.body);
+});
 
 app.get<{ Params: { id: string } }>("/api/projects/:id", async (request, reply) => {
   const project = getProject(db, request.params.id);
@@ -633,7 +704,7 @@ app.get<{ Params: { id: string } }>("/api/sessions/:id/changes", async (request,
 app.get<{ Params: { id: string; changeId: string } }>(
   "/api/sessions/:id/changes/:changeId/code",
   async (request, reply) => {
-    const outcome = changes.getChangeCode(request.params.id, request.params.changeId);
+    const outcome = await changes.getChangeCode(request.params.id, request.params.changeId);
     return reply.code(outcome.status).send(outcome.body);
   },
 );
