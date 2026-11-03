@@ -1,17 +1,68 @@
 # Echo
 
+One minute after opening a coding-agent session, say what shipped, where it differs from what you asked, and what could bite you.
 
-Echo is a local-first recorder and review loop for coding-agent sessions. It records a normal interactive Muse Code session, replays the captured actions and file states, answers questions only from evidence on the tape, and checks understanding by running code instead of trusting a feeling of understanding.
+Built for the Meta Global AI Developer Hackathon 2026 (Oct 27 to Nov 4), Indie Developer track, Build for Your World. History starts Oct 27 (`4ce366b`). Everything in the demo path is new work from the event.
 
-Built during the Meta Global AI Developer Hackathon 2026 (Oct 27 to Nov 4). Muse Code is Meta's agent; Echo is the recorder and review layer.
+## The problem
 
-## Status
+Developers now approve agent-written diffs they haven't fully read. Some numbers behind that:
 
-Story-first loop is built (spec §10 items 1–9): projects + sessions with automatic ingestion, triage inbox, five-section story with behaviour cards, deterministic trust layer (fact-check + computed verification/risk), evidence-grounded Ask Why with refusal, calibration checks v2 (picture, no scores), engagement tracking, redaction gate before all Echo-owned storage and model calls.
+- METR (2025, 16 experienced devs, 246 issues): with AI help, devs took 19% longer and believed they were 20% faster.
+- Stack Overflow 2025 (33,662 responses): 46% distrust AI accuracy; 66% call the output "almost right, but not quite."
+- Perry et al. (ACM CCS 2023): assisted writers produced insecure code more often on 4 of 5 tasks, and believed it was secure.
 
-Project tabs add Overview (purpose + tech stack + sessions), Learn (calibration picture, weakest areas, next-up queue), and Architecture (agent-touched file overlay over the central code index).
+None of that measures Echo. The submission says so. But it points at the actual gap. Generation stopped being the bottleneck. Trust is what slows teams down now. A diff shows what changed. Nothing shows what shipped versus what you asked, in plain terms, in a minute. And nothing checks whether you understood the risky parts.
 
-Pending delivery items: baked demo tape(s), hosted read-only demo, three-minute video, submission.
+## Watch it
+
+Three minutes, all on screen:
+
+- Demo video: TODO (link lands with the cut)
+- Hosted read-only demo: TODO (link lands with the deploy; see `docs/DEPLOY.md`)
+- Submission entry: TODO
+
+The video opens the inbox, reads the newest session's story (short version, ask-vs-result, behaviour cards), opens one card (before and now, an inline evidence slice, what checked it), runs the calibration check and gets one wrong while Certain, then asks something the tape can't answer and gets refused. No scores, no gates. A picture of calibration, then back to the inbox.
+
+## How it works
+
+Echo records a normal interactive Muse Code session and turns the finished tape into a one-minute story plus a calibration check on the risky changes.
+
+```mermaid
+flowchart LR
+  Muse["Muse Code<br/>(Meta's agent)"] -->|native session JSONL| Reader["Echo reader"]
+  Muse -->|lifecycle hooks| Hooks["Echo hook helper"]
+  Repo["working tree"] --> Snap["shadow-Git snapshots"]
+  Reader --> Redact["redaction gate"]
+  Hooks --> Redact
+  Snap --> Redact
+  Redact --> Tape["canonical tape JSONL"]
+  Tape --> Story["Muse Spark:<br/>story + Ask Why + checks"]
+  Story --> Trust["deterministic trust layer:<br/>fact-check, computed<br/>verification + risk"]
+```
+
+Muse Code (native session logs, lifecycle hooks) and Muse Spark (drafting, grounded answers, check generation) are Meta's. Everything else is mine, built in this repo: the recorder, the tape format, shadow-Git capture, the deterministic trust layer (claim validation with one regeneration then a gap line, computed observed-only verification, blast radius times mental-model risk), evidence-grounded Ask Why with refusal, calibration checks v2, engagement tracking, the redaction gate.
+
+"Just a log viewer" is the obvious dismissal. Four things answer it. The refusal: "not on the tape." The Detours: reverted and failed attempts a final diff can't show. Verification that is computed, never asserted by the model. Checks aimed at the risky cards you never opened.
+
+## Run it
+
+Needs Node 24 and pnpm 12.
+
+```sh
+pnpm install
+pnpm dev
+```
+
+That starts the daemon on 127.0.0.1:4783 and Vite on :5173.
+
+Keys come from `META_API_KEY` and `BASETEN_API_KEY` (see `.env.example`). Never commit real keys; `.env.local` is gitignored. With the model off, story generation falls back to a deterministic skeleton, so the loop is explorable without spending credits.
+
+I'm the first user, so the first sessions recorded are mine. The demo uses my own repos plus a synthetic secret.
+
+## Honest limits
+
+- No Windows support, no installer, no team views, no retakes, no export or sharing in v1.
 
 ## Layout
 
@@ -35,26 +86,11 @@ packages/
   redaction/               detectors, placeholders, preview, policy
   retrieval/               evidence bundle builder, FTS ranking, token budget
   model/                   provider interface, Meta/Baseten clients, structured output, cache
-  checks/                  hunk scoring, generation, verification gate, grading, calibration
+  checks/                  selection, generation, rubric grading, picture mapping (no scores)
   sandbox/                 runner interface, container/bwrap/WASM backends
   notifier/                desktop notification, browser open
   fixtures/                fixture builders used by tests and evals
 ```
-
-## Development
-
-Requires Node 24 and pnpm 12.
-
-```sh
-pnpm install
-pnpm dev          # daemon on 127.0.0.1:4783 and Vite on :5173
-pnpm typecheck
-pnpm lint
-pnpm test
-pnpm build
-```
-
-The web dev server proxies `/api` to the daemon. Model keys are read from `META_API_KEY` and `BASETEN_API_KEY`; see `.env.example`.
 
 ## Design decisions
 
@@ -63,5 +99,8 @@ Ground truth lives in the repo:
 - [`docs/echo-spec.md`](./docs/echo-spec.md) — product spec. Where spec and architecture disagree on product intent, the spec wins.
 - [`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md) — technical mechanism. Each section maps to the packages above; §23 is the build order.
 - [`docs/adr`](./docs/adr) — accepted architecture decisions.
-- [`docs/spikes`](./docs/spikes) — real-session notes and observed Muse schemas, written as the spikes in §27 run.
+- [`docs/spikes`](./docs/spikes) — real-session notes and observed Muse schemas.
 
+## License
+
+MIT — see [LICENSE](./LICENSE).
