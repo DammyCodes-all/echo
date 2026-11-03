@@ -16,7 +16,6 @@ export const queryKeys = {
   code: (sessionId: string, changeId: string) => ["code", sessionId, changeId],
   checks: (sessionId: string) => ["checks", sessionId],
   askThread: (sessionId: string) => ["ask-thread", sessionId],
-  learn: (projectId: string) => ["learn", projectId],
   architecture: (projectId: string) => ["architecture", projectId],
   techStack: (projectId: string) => ["tech-stack", projectId],
 } as const;
