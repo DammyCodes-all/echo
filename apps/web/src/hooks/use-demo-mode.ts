@@ -1,10 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
+import { queryKeys } from "../query";
 
 /** True when the server runs the baked read-only demo profile. */
 export function useDemoMode(): { isDemo: boolean; isLoading: boolean } {
   const query = useQuery({
-    queryKey: ["health"],
+    queryKey: queryKeys.health,
     queryFn: () => api.health(),
     // The mode never flips under a running server; fetch once per visit.
     staleTime: 30 * 60_000,
