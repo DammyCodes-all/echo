@@ -139,7 +139,7 @@ export function ThinkingPromptInput({
       if (disposed) return;
       const before = input.getBoundingClientRect().height;
       input.style.height = "auto";
-      const height = Math.max(40, Math.min(input.scrollHeight, 120));
+      const height = Math.max(32, Math.min(input.scrollHeight, 96));
       input.style.height = `${height}px`;
       if (!reduced && Math.abs(before - height) > 1 && typeof input.animate === "function") {
         animation = input.animate([{ height: `${before}px` }, { height: `${height}px` }], {
@@ -389,7 +389,7 @@ export function ThinkingPromptInput({
       )}
       <form
         data-composer
-        className="relative mt-auto shrink-0 rounded-3xl border border-dusk-hairline bg-dusk-surface p-3 shadow-xl shadow-dusk-accent/5"
+        className="relative mt-auto shrink-0 rounded-2xl border border-dusk-hairline bg-dusk-surface px-2.5 py-2 shadow-lg shadow-dusk-accent/5"
         onSubmit={(event) => {
           event.preventDefault();
           submit();
@@ -409,9 +409,9 @@ export function ThinkingPromptInput({
               submit();
             }
           }}
-          className="block h-10 min-h-10 w-full resize-none rounded-lg bg-transparent p-1 text-[17px] leading-7 tracking-tight text-dusk-ink outline-none placeholder:text-dusk-muted focus-visible:ring-2 focus-visible:ring-dusk-accent disabled:opacity-50"
+          className="block h-8 min-h-8 w-full resize-none rounded-lg bg-transparent px-2 py-1 text-sm leading-5 text-dusk-ink outline-none placeholder:text-[13px] placeholder:leading-5 placeholder:text-dusk-muted focus-visible:ring-2 focus-visible:ring-dusk-accent disabled:opacity-50"
         />
-        <div className="mt-2 flex items-center justify-end">
+        <div className="mt-1.5 flex items-center justify-end">
           <button
             type={busy ? "button" : "submit"}
             data-stop={busy ? "" : undefined}
@@ -425,7 +425,7 @@ export function ThinkingPromptInput({
                 : undefined
             }
             disabled={disabled || (busy ? !onStop : !inputValue.trim() || !onSubmit)}
-            className="relative inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-dusk-accent text-dusk-base outline-none focus-visible:ring-2 focus-visible:ring-dusk-accent focus-visible:ring-offset-2 focus-visible:ring-offset-dusk-surface disabled:opacity-30"
+            className="relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-dusk-accent text-dusk-base outline-none focus-visible:ring-2 focus-visible:ring-dusk-accent focus-visible:ring-offset-2 focus-visible:ring-offset-dusk-surface disabled:opacity-30"
           >
             <span
               data-action-icon="send"
