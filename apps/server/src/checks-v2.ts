@@ -180,6 +180,18 @@ function recallViolation(question: string): string | null {
   return null;
 }
 
+/**
+ * File paths in prose read like a quiz about the repo, not about
+ * understanding — the reader is already looking at the change. The prompt
+ * bans them from every sentence; this validator catches the shape so the
+ * single retry spells it out. evidencePaths (structured, not prose) is the
+ * file's only place.
+ */
+function pathMention(text: string): string | null {
+  const match = text.match(FILE_TOKEN);
+  return match ? `names file path ${match[0]}` : null;
+}
+
 /** The key must test understanding, not recall: never a bare path, a line number, or quoted code. */
 function keyRecallViolation(optionText: string): string | null {
   if (/```/.test(optionText)) return "code block in correct option";
@@ -202,7 +214,8 @@ function knownSetsFor(cards: ChangeCard[], patches: Map<string, string>): KnownS
       const base = file.split("/").pop();
       if (base) files.add(base);
     }
-    for (const claim of [...card.why, ...card.before, ...card.now]) absorbText(claim.text);
+    for (const claim of [...card.why, ...card.before, ...card.now, ...card.checkedBy])
+      absorbText(claim.text);
     absorbText(card.headline);
     for (const id of card.constituentHunkIds) {
       const patch = patches.get(id);
@@ -225,6 +238,7 @@ const GRADING_PROMPT = [
   "For every point output {point, hit, excerpt, why}: hit is true only if the answer makes the point (paraphrase counts, wording does not matter).",
   "excerpt must be a verbatim substring of the user's answer supporting the judgment, or null when the point is missed.",
   "why is one line on why the excerpt means the point (or why it misses).",
+  "Judge only what the answer states — never infer knowledge beyond its words. An empty, evasive, or explicit I-don't-know answer misses every point.",
   'Reply with JSON only: {"hits": [{"point": string, "hit": boolean, "excerpt": string|null, "why": string|null}]}.',
   "Output one hit per rubric point, in order, with point copied exactly.",
 ].join("\n");
@@ -270,31 +284,33 @@ function parseGrading(value: unknown, rubric: string[]): RubricHitInput[] {
 
 const CHECK_SYSTEM_PROMPT = [
   "Write ownership checks from the session's story cards. Exactly one question per target, grounded ONLY in that target's card block.",
-  "Every file path, number or name must appear verbatim in the target card block. Never invent alternatives from outside knowledge.",
+  "A good check discriminates: someone who followed the session answers correctly; someone guessing from general knowledge does not. The correct option (or every rubric point) must follow from the card alone, and every distractor must be false under the card.",
+  "Ask one direct question with no preamble, and never leak the answer inside the stem. Vary the correct option's position across questions — never park the key in the same slot.",
+  "Choose the ONE kind that best fits each card — never cycle kinds, never balance across targets, never default to consequence:",
+  "- consequence (MCQ): the reader must predict an outcome — what happens if this behavior runs. Best when the card changes observable behavior.",
+  "- decision (MCQ): the reader must justify a fork the agent took — why this approach over the visible alternative. Best when detours or alternatives exist.",
+  "- tradeoff (free text): the reader must name what was given up — costs on both sides. Best when the change sacrifices something for something else.",
+  "- blast_radius (free text): the reader must reason about blast radius — what else could break. Best for shared code, stored data, destructive or production paths.",
+  "- teach_back (free text): the reader must explain the mechanism in their own words. Best when how it works matters more than the outcome.",
+  "Format is bound to kind: consequence and decision are always mcq (min 2 options, one correctOptionId, distractorSources for each distractor); tradeoff, blast_radius and teach_back are always free_text with 1-3 rubric points, each point one checkable claim in story-level language.",
+  "Every number or name must appear verbatim in the target card block. Never invent alternatives from outside knowledge. File paths never appear in prose — they live only in evidencePaths.",
   "MCQ distractors must be plausible tape-grounded alternatives (for example the reverted approach from the detour notes); record each distractor's source as a fact or attempt id in distractorSources.",
-  "Never quiz raw code or files: no questions about file contents, code text, symbol names, or line numbers, and the correct answer is never a filename, a line number, or quoted code. Test what the change DOES (behavior, consequence, decision) using story-level language; file paths may appear as context only. No fenced code blocks anywhere in question or options.",
+  "Patches show behavior so you can ask about what the change DOES — but never quote them, never cite line numbers from them, and never quiz them. See the no-recall rule.",
+  "Never quiz raw code or files: no questions about file contents, code text, symbol names, or line numbers, and the correct answer is never a filename, a line number, or quoted code. Test what the change DOES (behavior, consequence, decision) using story-level language; never name a file path anywhere in prose — describe the area in story words ('the reading side panel', 'the retry logic'). No fenced code blocks anywhere in question or options.",
+  "Card paths exist so you can fill evidencePaths and judge scope; never copy them into question, options, rubric, or explanation sentences.",
+  "explanation is the post-answer reveal (1-2 sentences): state the key fact and why it matters, in story-level language under the same grounding rule. It is shown to the reader right after they answer.",
+  "evidencePaths lists only paths from the card's Touches line that the question is about — never invent paths, and use an empty array when the question touches no single path. Prose never names them; this array is the file's only place.",
   "Lightweight markdown is welcome in question, option, rubric and explanation text: **bold** for the key term being tested and `code` for file paths, symbols and commands. Plain words otherwise — no headings, lists or links.",
-  'Reply with JSON only: {"questions": [{"cardId": string, "format": "mcq"|"free_text", "kind": "consequence"|"decision"|"tradeoff"|"blast_radius"|"teach_back", "question": string, "options": [{"id": string, "text": string}] (mcq only, min 2), "correctOptionId": string (mcq only, one of the option ids), "distractorSources": [string] (mcq only), "rubric": [string] (free_text only, min 1), "explanation": string, "evidencePaths": [string]}]}.',
+  'Reply with JSON only: {"questions": [{"cardId": string, "format": "mcq"|"free_text", "kind": "consequence"|"decision"|"tradeoff"|"blast_radius"|"teach_back", "question": string, "options": [{"id": string, "text": string}] (mcq only, min 2), "correctOptionId": string (mcq only, one of the option ids), "distractorSources": [string] (mcq only), "rubric": [string] (free_text only, 1-3 points), "explanation": string (1-2 sentences, shown after answering), "evidencePaths": [string] (Touches paths only, may be empty)}]}.',
 ].join("\n");
 
 /**
- * Question kinds cycle by target position only. No card content feeds kind
- * selection: ADR 0014 §g removes all risk targeting, so the old high-risk
- * teach-back rule and its free-text enforcement are gone. teach_back stays
- * in the cycle (as free text) without any risk meaning.
+ * Kind/format ownership: the model chooses the best-fit kind per card from
+ * the prompt catalog — nothing here assigns kinds by position, and risk
+ * labels never enter the prompt (ADR 0014 §g). Format is bound to kind and
+ * enforced in validateDraft, so a mismatch gets one retry with the rule
+ * spelled out.
  */
-const KIND_CYCLE: CheckKind[] = [
-  "consequence",
-  "decision",
-  "tradeoff",
-  "blast_radius",
-  "teach_back",
-];
-
-function kindForIndex(index: number): CheckKind {
-  return KIND_CYCLE[index % KIND_CYCLE.length] as CheckKind;
-}
-
 function formatForKind(kind: CheckKind): "mcq" | "free_text" {
   return kind === "consequence" || kind === "decision" ? "mcq" : "free_text";
 }
@@ -305,18 +321,17 @@ function claimLines(claims: Array<{ text: string }>): string {
 
 function targetBlock(
   card: ChangeCard,
-  index: number,
   patches: Map<string, string>,
   detours: SessionStory["detours"],
 ): string {
-  const kind = kindForIndex(index);
   const lines = [
-    `TARGET cardId=${card.id} format=${formatForKind(kind)} kind=${kind}`,
+    `TARGET cardId=${card.id}`,
     `Headline: ${card.headline}`,
     `Touches: ${card.touches.join(", ") || "(none)"}`,
     `Why:\n${claimLines(card.why)}`,
     `Before:\n${claimLines(card.before)}`,
     `Now:\n${claimLines(card.now)}`,
+    `Checked by:\n${claimLines(card.checkedBy)}`,
   ];
   const cardPatches = card.constituentHunkIds
     .map((id) => patches.get(id))
@@ -684,14 +699,46 @@ export function createChecksV2Service(
     if (!card) {
       return { question: null, errors: [`unknown target card ${draft.cardId}`] };
     }
+    const wantFormat = formatForKind(draft.kind);
+    if (draft.format !== wantFormat) {
+      return {
+        question: null,
+        errors: [`card ${draft.cardId} kind ${draft.kind} needs format ${wantFormat}`],
+      };
+    }
     const recall = recallViolation(draft.question);
     if (recall) {
       return { question: null, errors: [`card ${draft.cardId} quizzes code recall (${recall})`] };
+    }
+    const questionPath = pathMention(draft.question);
+    if (questionPath) {
+      return { question: null, errors: [`card ${draft.cardId} question ${questionPath}`] };
+    }
+    const touched = new Set<string>();
+    for (const file of card.touches) {
+      touched.add(file);
+      const base = file.split("/").pop();
+      if (base) touched.add(base);
+    }
+    for (const path of draft.evidencePaths) {
+      if (!touched.has(path)) {
+        return {
+          question: null,
+          errors: [`card ${draft.cardId} evidence path ${path} is not a touched path`],
+        };
+      }
     }
     for (const [label, text] of [
       ["question", draft.question],
       ["explanation", draft.explanation],
     ] as const) {
+      if (label === "explanation") {
+        const named = pathMention(text);
+        if (named !== null) {
+          errors.push(`card ${draft.cardId} ${label} ${named}`);
+          return { question: null, errors };
+        }
+      }
       const violation = textViolation(text, known);
       if (violation) {
         errors.push(`card ${draft.cardId} ${label} failed grounding (${violation})`);
@@ -718,6 +765,13 @@ export function createChecksV2Service(
           return {
             question: null,
             errors: [`card ${draft.cardId} option has a code block`],
+          };
+        }
+        const named = pathMention(option.text);
+        if (named !== null) {
+          return {
+            question: null,
+            errors: [`card ${draft.cardId} option ${named}`],
           };
         }
         const violation = textViolation(option.text, known);
@@ -763,6 +817,13 @@ export function createChecksV2Service(
           errors: [`card ${draft.cardId} rubric has a code block`],
         };
       }
+      const named = pathMention(point);
+      if (named !== null) {
+        return {
+          question: null,
+          errors: [`card ${draft.cardId} rubric ${named}`],
+        };
+      }
       const violation = textViolation(point, known);
       if (violation) {
         return {
@@ -800,9 +861,7 @@ export function createChecksV2Service(
   ): Promise<{ questions: StoredCheckQuestion[]; errors: string[] }> {
     const targetsById = new Map(targets.map((card) => [card.id, card]));
     const known = knownSetsFor(targets, patches);
-    const orderedBlocks = targets.map((card, index) =>
-      targetBlock(card, index, patches, story.detours),
-    );
+    const orderedBlocks = targets.map((card) => targetBlock(card, patches, story.detours));
     const sendDraft = async (extra: ChatMessage | null): Promise<unknown> => {
       const messages: ChatMessage[] = [
         { role: "system", content: CHECK_SYSTEM_PROMPT },
