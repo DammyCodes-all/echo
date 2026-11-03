@@ -1544,3 +1544,59 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 267 files (4 pre-existing infos), `pnpm test` → 75 files / 740 passed, `pnpm build` ok; dev-server smoke (`:5199`) serves shell + transforms `main.tsx`/`query.ts` 200, process stopped
 - notes: First visit to any id still loads for real (nothing to show yet); the win is revisits, back-nav, tab switches, and hovered links. Skeletons now mean genuinely cold data. Live lists keep their 5s/30s polls; polls + 30s staleTime mean at most a background revalidate on return, never a skeleton. Browser feel unverified here — confirm in `pnpm dev`: back-nav should be instant, hovered cards/tape segments should open without the diff spinner. Stage and commit nothing.
+
+## 2026-11-03 — Reader footer: "Change N of M · Next up" line removed
+
+- item: deleted the `Change {viewIndex + 1} of {changes.length} · Next up: …` paragraph under the reader footer buttons (`reader.tsx`); position context still lives in the tape's right-pinned `Change N of M`, and next-diff prefetch still uses the `next` variable
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 267 files (4 pre-existing infos), `pnpm test` → 75 files / 740 passed, `pnpm build` ok
+- notes: Footer is now `← Back` + action buttons only. Stage and commit nothing.
+
+## 2026-11-04 — Remove Learn tab and all Learn supporting code
+
+- item: Learn tab deleted end to end — web route + `ProjectLearnPage` file, nav item (pill is Overview/Architecture only), `api.learn` client, `queryKeys.learn`, server `GET /api/projects/:id/learn` route + `createLearnService` + `learn.test.ts`, contracts `LearnChecksStatus`/`LearnBucketTotals`/`LearnSessionEntry`/`LearnWeakArea`/`LearnNextUpEntry`/`ProjectLearnResponse` schemas + tests, README tab line. Deliberately kept: `packages/checks` weak-picture helpers (`isWeakPictureBucket`/`weakFileCounts`/`weakFiles`, `selectTargets` weak param) — checks-internal now, default-off, covered by their own tests; removing them buys nothing and risks checks behavior
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 74 files / 733 passed (was 75/739; delta is the deleted `learn.test.ts` + contract payload tests), `pnpm build` ok (dist bundles regenerated, no Learn schemas left in source); source-wide grep for Learn symbols returns nothing outside `docs/BuildTracker.md` history
+- notes: `docs/echo-spec.md` / `docs/ARCHITECTURE.md` still describe Learn — spec update left for the intent owner. History/ADRs untouched. No redirect from stale `/learn` URLs (clean cut). Stage and commit nothing.
+
+## 2026-11-03 — README polish + MIT LICENSE for submission (item 2)
+
+- item: submission-ready README (what Echo is, Meta-vs-mine line, Oct 27 history anchor, Quickstart, Privacy disclosure, TODO links for tape/demo/video, Layout/Design/License sections; Learn tab reference removed per the 11-04 deletion) + new MIT `LICENSE` (Copyright 2026 DammyCodes-all, per user choice)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 264 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 74 files / 733 passed, `pnpm build` ok (web + server + cli dists rebuilt); `lint` re-verified clean after the final README touch (docs-only delta, no code impact)
+- notes: License choice + holder name confirmed via interactive question (MIT / DammyCodes-all). Stage and commit nothing.
+
+## 2026-11-03 — README rewritten for the rubric (win-max packaging)
+
+- item: README restructured Problem → 3-min demo → How it works (mermaid pipeline, Meta-vs-mine line) → What judges can verify (history anchor, gate numbers, capture honesty, §12 targets) → Run locally → Honest limits → Layout/Design/License; per standing instruction all packaging work now optimizes for win chance within truthfulness (no inflated claims, limits stated)
+- status: done
+- evidence: `pnpm lint` clean (266 files, 4 pre-existing `useLiteralKeys` infos); code gate unchanged from the prior full run (`tsc` clean, 74 files / 733 tests passed, `pnpm build` ok) — README-only delta, no code impact
+- notes: Demo/video links are TODO placeholders until the tape + hosted demo land. Standing rule noted: maximize win chance, never at the cost of honest claims. Stage and commit nothing.
+
+## 2026-11-03 — README humanized (readability pass)
+
+- item: applied the humanize-writing skill to the rubric-shaped README (facts, links, sections, numbers all preserved); cut em dashes, bold-led list headers, and parallel cadence; added first-person line matching spec §2
+- status: done
+- evidence: `pnpm lint` clean (4 pre-existing `useLiteralKeys` infos); README-only delta, code gate untouched
+- notes: Change table reported in chat, not in the file. Stage and commit nothing.
+
+## 2026-11-03 — README: judges-verification section removed
+
+- item: deleted the "What judges can verify" section per user request (history anchor, gate numbers, gaps paragraph, §12 targets)
+- status: done
+- evidence: `pnpm lint` clean (4 pre-existing infos); README-only delta
+- notes: Stage and commit nothing.
+
+## 2026-11-03 — Ask redesign in the session reader (rail tab kept)
+
+- item: rewrote the Ask tab experience in place (`ask-thread-panel.tsx`: prose-first answers, numbered source chips with inline quote previews, optimistic questions, waiting state with cancel, retry with text restore, plain-language refused/partial/uncertain states, starters that send, scope chip, jargon-free empty state) + `ask-answer.ts` parser (paragraphs, `*`/`1.` lists, `[En]` tokens resolved against served evidence, unknown tokens kept literal) with colocated `ask-answer.test.ts` (5 tests over a captured real payload) + per-change "Ask about this change" entry in `reader.tsx` (anchor captured at open, chip × widens to session, rail scrolls into view on mobile) + `api.ask` abort-signal support + ask `SYSTEM_PROMPT` rewrite (direct lead, no evidence narration, no bundle-talk, same guardrails + JSON shape)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 266 files (4 pre-existing infos), `pnpm test` → 75 files / 738 passed (incl. new ask-answer 5/5 + ask 23/23), `pnpm build` ok; browser pass on isolated stack (snapshot data, ports 4785/5201, headless Chrome CDP): entry click → scope chip, starter → pending → refused ("Not in this session."), answered thread renders 8 list items + 24 chips with zero literal `[E2]`/`*` leaks, inline chip opens label-carrying preview, fresh model answer under the new prompt leads direct with a short list (screenshots `/tmp/echo-ask-verify/*.png`, processes reaped, ports closed)
+- notes: Placement/entry/answer-shape/citation-behavior settled via the question tool (rail kept, per-change entry, prose + tucked proof, inline previews); user steered copy twice (no em dashes, border back on the intro). Mid-gate flakes (9 tests across 5 files) passed on rerun; concurrent sessions deleted `learn.ts`/learn tests mid-run, explaining the 740 → 738 drift with +5 new. Prompt change verified live (2 real model calls on snapshot data); prompt text is unpinned by tests by design. No contracts/DB/endpoint changes. Stage and commit nothing.
+
+## 2026-11-03 — Deploy prep, host-neutral (no host chosen)
+
+- item: `demo-bundle/` gitignored (baked artifact can never commit); `Containerfile` honors `$PORT` with 8080 fallback + healthcheck reads `ECHO_PORT`; new `docs/DEPLOY.md` (bake → verify → build → run, env table with real defaults from `demo.ts`, secret handling, pre-handoff checks); README demo line points at the doc
+- status: done
+- evidence: `pnpm lint` clean (4 pre-existing infos); config/docs-only delta, code gate untouched
+- notes: Deliberately no fly.toml or host-specific config until the host decision lands. Stage and commit nothing.
