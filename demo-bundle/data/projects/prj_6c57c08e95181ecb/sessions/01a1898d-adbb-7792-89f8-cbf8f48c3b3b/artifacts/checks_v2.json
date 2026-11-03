@@ -1,0 +1,134 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "01a1898d-adbb-7792-89f8-cbf8f48c3b3b",
+  "status": "in_progress",
+  "generatedAt": "2026-11-03T12:52:58.792Z",
+  "tapeWatermark": {
+    "eventCount": 4225,
+    "sha256": "89ba9f2f4d37ea9149ac73a929d73d8db4bf2d26f10911a2acc8eb956c81a8da"
+  },
+  "questions": [
+    {
+      "id": "chk2_d2f0712c66e7",
+      "cardId": "c_6f371231c17b6f14",
+      "kind": "consequence",
+      "question": "If you open the session browsing view after this change, what will you see on the cards and where is the full text?",
+      "evidenceFactIds": [
+        "c_6f371231c17b6f14-before"
+      ],
+      "evidencePaths": [
+        "apps/web/src/components/session-card.tsx",
+        "apps/web/src/session-display.ts"
+      ],
+      "format": "mcq",
+      "options": [
+        {
+          "id": "a",
+          "text": "Short capped headlines across three lines on the cards, with full detail still one click away on the story page and on hover"
+        },
+        {
+          "id": "b",
+          "text": "Long summaries across two lines on the cards with no hover or story page detail"
+        }
+      ],
+      "correctOptionId": "a",
+      "distractorSources": [
+        "c_6f371231c17b6f14-before"
+      ],
+      "explanation": "Cards now show short capped headlines across three lines for a calmer browse, while the full text remains available on hover and the story page."
+    },
+    {
+      "id": "chk2_8da625d0fbfe",
+      "cardId": "c_04efcb87c6a140bb",
+      "kind": "teach_back",
+      "question": "In your own words, what did this documentation-only change do to **build history** and what does the new entry record?",
+      "evidenceFactIds": [],
+      "evidencePaths": [
+        "docs/BuildTracker.md"
+      ],
+      "format": "free_text",
+      "rubric": [
+        "States it only updated the build history document with a new dated entry",
+        "Says the entry records the one-sentence headline cap work that keeps cards calm while full details stay one click away"
+      ],
+      "explanation": "This card only touched documentation, adding a dated entry to the build history describing the headline cap and its test evidence."
+    },
+    {
+      "id": "chk2_e5ab9a87732c",
+      "cardId": "c_31e437501dcde5ca",
+      "kind": "tradeoff",
+      "question": "What tradeoff was made when capping **session summaries** to one short headline sentence?",
+      "evidenceFactIds": [],
+      "evidencePaths": [
+        "packages/story/src/narration.ts",
+        "packages/contracts/src/summary.ts"
+      ],
+      "format": "free_text",
+      "rubric": [
+        "Names what was given up: summaries could previously run up to two sentences long",
+        "Names what was gained: calmer browsing/cards with full story still one click away within the same character limit"
+      ],
+      "explanation": "The change traded the extra sentence of on-card detail for calmer browsing, keeping the full story one click away under the same character limit."
+    }
+  ],
+  "attempts": [],
+  "picture": [
+    {
+      "cardId": "c_6f371231c17b6f14",
+      "bucket": "never_looked",
+      "questionId": "chk2_d2f0712c66e7"
+    },
+    {
+      "cardId": "c_04efcb87c6a140bb",
+      "bucket": "never_looked",
+      "questionId": "chk2_8da625d0fbfe"
+    },
+    {
+      "cardId": "c_31e437501dcde5ca",
+      "bucket": "never_looked",
+      "questionId": "chk2_e5ab9a87732c"
+    },
+    {
+      "cardId": "c_900767df42b607e7",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_0cbb8d34d938f3e4",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_2d08dec99d77a602",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_56b2ec8c03256748",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_297e12246461b5cb",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_384707f9538674e2",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_bb0f416d60cba904",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_73b0587049cf9978",
+      "bucket": "never_looked",
+      "questionId": null
+    }
+  ],
+  "currentQuestionId": "chk2_d2f0712c66e7",
+  "origin": "offer"
+}

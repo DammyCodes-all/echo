@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "builtAt": "2026-11-03T17:11:48.551Z",
+  "projectId": "prj_6c57c08e95181ecb",
+  "projectName": "echo",
+  "sessions": [
+    "ses_e81ec7e61ffeP8oqwff3FOoHtS",
+    "01a1898d-adbb-7792-89f8-cbf8f48c3b3b"
+  ],
+  "tapeSha256": {
+    "ses_e81ec7e61ffeP8oqwff3FOoHtS": "029728591d426831263e428cdf9c6f0d4954ab48cf0f0c2af5e348b930efe45a",
+    "01a1898d-adbb-7792-89f8-cbf8f48c3b3b": "1174552fe65a80f11ba7a3aedb7363114c006e6521c0815b629ea85d50bafa93"
+  }
+}

@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "ses_e81ec7e61ffeP8oqwff3FOoHtS",
+  "status": "in_progress",
+  "generatedAt": "2026-11-03T12:00:17.678Z",
+  "tapeWatermark": {
+    "eventCount": 2238,
+    "sha256": "5784f1a9b5873b7cd791c343d15d942c246564c71b5a3ea98ff82dc1b7751f83"
+  },
+  "questions": [
+    {
+      "id": "chk2_5f885752953c",
+      "cardId": "c_8bcd650a2be7549e",
+      "kind": "consequence",
+      "question": "When a **scrub time** is provided to the file viewer, what does the viewer show?",
+      "evidenceFactIds": [
+        "c_8bcd650a2be7549e-before",
+        "c_8bcd650a2be7549e-before-style"
+      ],
+      "evidencePaths": [
+        "apps/web/src/components/diff-panel.tsx",
+        "apps/web/src/opened-hunks.ts",
+        "apps/web/src/design-tokens.ts"
+      ],
+      "format": "mcq",
+      "options": [
+        {
+          "id": "a",
+          "text": "It always shows the latest snapshot regardless of the scrub time"
+        },
+        {
+          "id": "b",
+          "text": "It follows the chosen scrub time and visited hunks show an opened label"
+        },
+        {
+          "id": "c",
+          "text": "It hides the file view and shows plain grey panels with tighter spacing"
+        }
+      ],
+      "correctOptionId": "b",
+      "distractorSources": [
+        "c_8bcd650a2be7549e-before",
+        "c_8bcd650a2be7549e-before-style"
+      ],
+      "explanation": "The card changes the viewer to follow the scrub time when given and adds an opened mark for visited hunks, replacing the previous latest-only view."
+    },
+    {
+      "id": "chk2_1852d6f50dd9",
+      "cardId": "c_18128985fca99d3c",
+      "kind": "consequence",
+      "question": "What happens when you select a moment in the **timeline list**?",
+      "evidenceFactIds": [
+        "c_18128985fca99d3c-before-timeline",
+        "c_18128985fca99d3c-before-cards"
+      ],
+      "evidencePaths": [
+        "apps/web/src/routes/replay.tsx",
+        "apps/web/src/routes/report.tsx",
+        "apps/web/src/styles.css"
+      ],
+      "format": "mcq",
+      "options": [
+        {
+          "id": "a",
+          "text": "The chosen moment is highlighted and the file view below shows that earlier state with a clear option to exit"
+        },
+        {
+          "id": "b",
+          "text": "The row stays plain text with no way to focus on one moment"
+        },
+        {
+          "id": "c",
+          "text": "The page shows mismatched grey and red boxes with different borders"
+        }
+      ],
+      "correctOptionId": "a",
+      "distractorSources": [
+        "c_18128985fca99d3c-before-timeline",
+        "c_18128985fca99d3c-before-cards"
+      ],
+      "explanation": "The change makes timeline rows selectable to revisit that moment in the file view below and adds a clear control, replacing plain text rows."
+    },
+    {
+      "id": "chk2_3ab0917fa138",
+      "cardId": "c_9d134b66b93bce20",
+      "kind": "decision",
+      "question": "Why were **ownership checks** chosen to replace predict-the-output puzzles?",
+      "evidenceFactIds": [
+        "c_9d134b66b93bce20-before-puzzles",
+        "c_9d134b66b93bce20-before-grading",
+        "c_9d134b66b93bce20-misread-breakage"
+      ],
+      "evidencePaths": [
+        "docs/adr/0010-ownership-checks.md",
+        "docs/ARCHITECTURE.md",
+        "docs/echo-spec.md"
+      ],
+      "format": "mcq",
+      "options": [
+        {
+          "id": "a",
+          "text": "To keep grading by running code for all questions with tighter grey styling"
+        },
+        {
+          "id": "b",
+          "text": "To test small coding puzzles faster with isolated runs for every question type"
+        },
+        {
+          "id": "c",
+          "text": "To ask about real changes with open answers judged against a checklist with quoted support"
+        },
+        {
+          "id": "d",
+          "text": "To remove any ground-truth verification and judge all answers subjectively"
+        }
+      ],
+      "correctOptionId": "c",
+      "distractorSources": [
+        "c_9d134b66b93bce20-before-puzzles",
+        "c_9d134b66b93bce20-before-grading",
+        "c_9d134b66b93bce20-misread-breakage"
+      ],
+      "explanation": "Docs now frame checks as ownership questions about consequences, decisions, tradeoffs, breakage and teach-back, with quoted checklists for open answers and isolated runs only for breakage."
+    }
+  ],
+  "attempts": [],
+  "picture": [
+    {
+      "cardId": "c_5bec2d69e597e756",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_8bcd650a2be7549e",
+      "bucket": "never_looked",
+      "questionId": "chk2_5f885752953c"
+    },
+    {
+      "cardId": "c_18128985fca99d3c",
+      "bucket": "never_looked",
+      "questionId": "chk2_1852d6f50dd9"
+    },
+    {
+      "cardId": "c_9d134b66b93bce20",
+      "bucket": "never_looked",
+      "questionId": "chk2_3ab0917fa138"
+    },
+    {
+      "cardId": "c_571eb4407b71fdda",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_e5cbbd6299a56851",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_d0d60ac851dfdfcf",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_ec6f7fb79ea4558b",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_8ef2c10206eb4f52",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_959893ef0a9c5867",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_d169e0994ff5bb5e",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_04803e1bd40549d3",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_64b0254dc96da5f1",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_69c91c965d5554d4",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_d94503c645c48a05",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_99e847b35e537668",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_89c535de342a8c1e",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_63a58d24f99ff8e1",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_81bd674d2aeba886",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_fb219feaf2c1d1f1",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "h_4c0f0180bf11872b",
+      "bucket": "never_looked",
+      "questionId": null
+    }
+  ],
+  "currentQuestionId": "chk2_5f885752953c",
+  "origin": "offer"
+}

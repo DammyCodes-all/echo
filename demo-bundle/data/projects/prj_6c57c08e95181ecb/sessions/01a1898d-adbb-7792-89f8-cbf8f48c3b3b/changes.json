@@ -1,0 +1,332 @@
+{
+  "sessionId": "01a1898d-adbb-7792-89f8-cbf8f48c3b3b",
+  "generatedAt": "2026-11-02T10:48:06.612Z",
+  "generator": "model-changes-v1",
+  "summary": "This session contains 7 reviewed changes. They span the files recorded in the changes. In short, Server formatting was straightened and session headline handling / This update adds a dated build log entry / Cards now show one short headline sentence instead / Adds shared headline rule limiting session summaries to / This change trims every saved session summary to; and 2 more.",
+  "diagnostics": [
+    "changes_folded:21->7",
+    "changes_unattributed:62",
+    "changes_evidence_gated_v2"
+  ],
+  "changes": [
+    {
+      "id": "c_6f371231c17b6f14",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "e738f3a28b6a1fc8a36d8ae1086f8de6311cd75c",
+        "nextOid": "058b9f1ed9ff1802d04c35ed527a8a3b7a03122b"
+      },
+      "title": "Calmer cards and code tidy",
+      "summary": "Session cards and learning lists now show one short headline instead of long summaries, with the full text still available on hover and the story page. The server code was also re-indented and imports were tidied, and tests were moved and reformatted without changing coverage.",
+      "before": [
+        "Cards could show long summaries across two lines and code had extra-deep indentation."
+      ],
+      "now": [
+        "Cards show short capped headlines across three lines while full detail stays one click away."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "apps/server/src/ingest.test.ts",
+          "note": "Moves test helper and reformats long lines."
+        },
+        {
+          "path": "apps/server/src/ingest.ts",
+          "note": "Straightens indentation and import order."
+        },
+        {
+          "path": "apps/server/src/story.test.ts",
+          "note": "Reformats one long expectation line."
+        },
+        {
+          "path": "apps/server/src/story.ts",
+          "note": "Tidies import ordering."
+        },
+        {
+          "path": "apps/web/src/components/session-card.tsx",
+          "note": "Allows three lines for the short headline."
+        },
+        {
+          "path": "apps/web/src/routes/project-learn.tsx",
+          "note": "Shows capped short headlines in learn list."
+        },
+        {
+          "path": "apps/web/src/session-display.ts",
+          "note": "Caps card titles to one short headline."
+        }
+      ],
+      "digest": "Server formatting was straightened and session headline handling was unified so cards lean rows and titles show one short capped sentence with older long summaries trimmed on display while hover text and story pages keep the full detail and tests were moved and reformatted without changing what they check for calm browsing",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "e738f3a28b6a1fc8a36d8ae1086f8de6311cd75c",
+        "nextOid": "058b9f1ed9ff1802d04c35ed527a8a3b7a03122b"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_04efcb87c6a140bb",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "07174631597a496f7faec88d0b9fbc4a555dfbb5",
+        "nextOid": "1e1dffcd3953109c37614b4739cddfe400a0c89f"
+      },
+      "title": "Build history adds headline entry",
+      "summary": "This change only updates the build history document with a new dated entry. It records the completed work to keep session summaries to one short headline sentence so cards stay calm while full details stay one click away.",
+      "before": [
+        "The build history had no entry for the one-sentence headline work."
+      ],
+      "now": [
+        "The build history now includes a dated entry describing the cap and its test evidence."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "docs/BuildTracker.md",
+          "note": "Adds a dated log entry for the headline summary work."
+        }
+      ],
+      "digest": "This update adds a dated build log entry in the project history document recording the completed headline summary work it notes that long session summaries are now capped to one short sentence for calm cards while full stories remain one click away it also records test and build evidence with no app code changed in this step itself only documentation grows",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "07174631597a496f7faec88d0b9fbc4a555dfbb5",
+        "nextOid": "1e1dffcd3953109c37614b4739cddfe400a0c89f"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_31e437501dcde5ca",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "f921e5768c25f4535308f4cf5f83ae25e95d154a",
+        "nextOid": "a84c2c0ebaa4b7394d5815d406f63fa8b53c3c4f"
+      },
+      "title": "Shorter story headlines for calmer cards",
+      "summary": "Session cards now show a single short headline sentence instead of up to two, keeping browsing calm while the full story stays one click away. The story instructions were reworded to ask for one plain sentence within the same character limit, and related exports and formatting were tidied.",
+      "before": [
+        "Session summaries could run up to two sentences long."
+      ],
+      "now": [
+        "Session summaries are capped to one short headline sentence."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "packages/contracts/src/index.ts",
+          "note": "Makes the shared summary rule available to other parts of the app."
+        },
+        {
+          "path": "packages/contracts/src/summary.test.ts",
+          "note": "Updates checks to expect a single-sentence headline."
+        },
+        {
+          "path": "packages/contracts/src/summary.ts",
+          "note": "Lowers the shared headline limit from two sentences to one."
+        },
+        {
+          "path": "packages/db/src/db.test.ts",
+          "note": "Tidies import order with no behavior change."
+        },
+        {
+          "path": "packages/db/src/index.ts",
+          "note": "Tidies export order and exposes the session last-seen time."
+        },
+        {
+          "path": "packages/db/src/repositories.ts",
+          "note": "Reformats session cleanup code with no behavior change."
+        },
+        {
+          "path": "packages/story/src/narration.test.ts",
+          "note": "Adds a check that instructions ask for a one-sentence headline."
+        },
+        {
+          "path": "packages/story/src/narration.ts",
+          "note": "Rewords story instructions to request one short headline sentence."
+        }
+      ],
+      "digest": "Cards now show one short headline sentence instead of two so lists feel calm while full stories remain one click away and the shared limit was lowered with instructions reworded to ask for one plain sentence within the existing character cap and tests were updated to lock in the new headline rule while export ordering and formatting were tidied without changing saved data.",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "f921e5768c25f4535308f4cf5f83ae25e95d154a",
+        "nextOid": "a84c2c0ebaa4b7394d5815d406f63fa8b53c3c4f"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_900767df42b607e7",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "f921e5768c25f4535308f4cf5f83ae25e95d154a",
+        "nextOid": "a4101c624c1ab86873fb8e376b931b407a880082"
+      },
+      "title": "Short calm headlines for stories",
+      "summary": "Story cards now show a short headline instead of a long summary. The story writer is asked for at most two plain sentences within 140 characters, and the same limit is enforced when saving and showing older items.",
+      "before": [
+        "Story summaries had no shared limit, so cards could run long."
+      ],
+      "now": [
+        "Card headlines stay to two sentences and 140 characters, with the full story one click away."
+      ],
+      "howItWorks": [
+        "Extra spaces and line breaks are tidied into one clean line.",
+        "Only the first two sentences are kept for the headline.",
+        "Long lines are shortened at a word break with an ellipsis, never mid-word.",
+        "The story writer is now told to aim for the same short headline style."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "packages/contracts/src/summary.test.ts",
+          "note": "Tests covering short, long, and edge-case headlines."
+        },
+        {
+          "path": "packages/contracts/src/summary.ts",
+          "note": "Shared two-sentence and character limit for headlines."
+        },
+        {
+          "path": "packages/story/src/narration.ts",
+          "note": "Prompt update asking for short card headline."
+        }
+      ],
+      "digest": "Adds shared headline rule limiting session summaries to two sentences and 140 characters with word boundary trimming and ellipsis for calm cards while story prompt now requests same short headline and server and web reuse bound for old and new items with full story still one click away and tests cover short long whitespace unbreakable and repeat capping.",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "f921e5768c25f4535308f4cf5f83ae25e95d154a",
+        "nextOid": "a4101c624c1ab86873fb8e376b931b407a880082"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_0cbb8d34d938f3e4",
+      "version": 2,
+      "snapshotPair": {
+        "prevOid": "8695a45b6ffb7ff250ad5f474dd7109c2d072559",
+        "nextOid": "705c56eed239467c99ff9dfb242c1f19db825c50"
+      },
+      "title": "Trim saved summaries to one headline",
+      "summary": "Session summaries are now shortened to a single headline sentence right before they are saved. The full story is still checked first, so trimming never hides a problem, and older long titles shrink to their first sentence the next time they are saved.",
+      "before": [
+        "Story summaries could stay long, with extra sentences carried all the way into saved records."
+      ],
+      "now": [
+        "Every saved summary keeps only its first short headline sentence, while the beginning of older titles stays the same."
+      ],
+      "howItWorks": [
+        "A full story draft is built with all of its claims, cards, and notes.",
+        "That full version is checked for accuracy before anything is cut.",
+        "Once checks pass, the summary is shortened to one short opening sentence for storage.",
+        "When an older title is kept for stability, the same shortening is applied on the next save.",
+        "Saved files, stored records, and shown stories all end up with the same short headline."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "apps/server/src/story.test.ts",
+          "note": "Adds checks that long summaries are shortened in fresh and saved stories."
+        },
+        {
+          "path": "apps/server/src/story.ts",
+          "note": "Shortens the summary to one headline sentence before saving it."
+        }
+      ],
+      "digest": "This change trims every saved session summary to one short headline sentence after all content checks pass so cards stay calm while full details remain elsewhere long titles carried from earlier saves shrink to their first sentence on next save with the start unchanged tests cover both fresh generation and carried over titles confirming stored files database rows and returned stories match",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "8695a45b6ffb7ff250ad5f474dd7109c2d072559",
+        "nextOid": "705c56eed239467c99ff9dfb242c1f19db825c50"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_2d08dec99d77a602",
+      "version": 2,
+      "snapshotPair": {
+        "prevOid": "620a19873124462887484d7a0eb878e5a39d22a3",
+        "nextOid": "f8e1f9b24c726d94a51ae992b5b3c07b1427f378"
+      },
+      "title": "Wait for quiet before story",
+      "summary": "Sessions now wait until activity has been quiet for a minute before a story can generate. While a session is still busy, the request reports waiting instead of narrating unfinished work.",
+      "before": [
+        "Stories could generate in the middle of active work, then regenerate on every open with unstable text."
+      ],
+      "now": [
+        "Active sessions report waiting until they go quiet, showing any previously saved story in the meantime."
+      ],
+      "howItWorks": [
+        "Check when the latest activity arrived with a quick database lookup instead of reading full history.",
+        "If activity happened less than a minute ago, pause and report that the story is waiting.",
+        "If a saved story file exists and still reads cleanly, return it alongside the waiting status.",
+        "When there is no recent activity, continue with normal story generation as before."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "apps/server/src/story.ts",
+          "note": "Adds quiet wait and waiting result before story generation."
+        },
+        {
+          "path": "packages/db/src/repositories.ts",
+          "note": "Adds quick lookup for latest session activity time."
+        }
+      ],
+      "digest": "Adds one minute quiet gate before session stories generate returning waiting when recent activity exists reusing saved story file when available new database helper fetches latest event time with single indexed query empty or bad timestamps allow generation corrupt saved file yields waiting with nothing stable UI calmer finalize cheap on active sessions",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "620a19873124462887484d7a0eb878e5a39d22a3",
+        "nextOid": "f8e1f9b24c726d94a51ae992b5b3c07b1427f378"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_56b2ec8c03256748",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "19625e2932f2f148088263dcc75736d67827b9d1",
+        "nextOid": "0a051fdd3c4743f65a654084150854b6556abd40"
+      },
+      "title": "Smarter headline sentence splitting",
+      "summary": "Story cards show a single short headline taken from the first sentence. The splitter now checks nearby letters so filenames versions and initials stay together instead of breaking early.",
+      "before": [
+        "Headlines could break after any period, so filenames or versions could be cut in the middle."
+      ],
+      "now": [
+        "Headlines stay whole through filenames versions and initials, still limited to one short sentence."
+      ],
+      "howItWorks": [
+        "Tidy extra spacing into single spaces to get clean headline text.",
+        "Look for punctuation followed by spacing and a capital letter or number as a possible break.",
+        "Keep the break only when a lowercase letter or number came right before it.",
+        "Take the first full piece and shorten very long text at a word edge when needed."
+      ],
+      "headsUp": [
+        {
+          "type": "watch_out",
+          "text": "Headlines ending in all capital letters stay joined and rely on the length limit to stay short."
+        }
+      ],
+      "files": [
+        {
+          "path": "packages/contracts/src/summary.test.ts",
+          "note": "Adds checks that filenames versions and initials stay together."
+        },
+        {
+          "path": "packages/contracts/src/summary.ts",
+          "note": "Updates headline splitting to avoid false breaks while keeping limits."
+        }
+      ],
+      "digest": "Story headlines now keep filenames versions and initials together so short card titles read correctly for everyone. The splitter only breaks after punctuation when spacing and a capital letter or number follows and a lowercase letter or number came just before. This keeps dotted names whole while still limiting cards to one calm headline. Long text still trims at a word edge within the character cap and tests cover each new case.",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "19625e2932f2f148088263dcc75736d67827b9d1",
+        "nextOid": "0a051fdd3c4743f65a654084150854b6556abd40"
+      },
+      "origin": "model"
+    }
+  ],
+  "snapshotWatermark": {
+    "snapshotCount": 93,
+    "lastOid": "0d21cc99ddf0f2ad483c7d13ed0acd3cc7be27cb"
+  }
+}

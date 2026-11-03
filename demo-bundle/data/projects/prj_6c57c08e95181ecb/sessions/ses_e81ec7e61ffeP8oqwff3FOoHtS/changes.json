@@ -1,0 +1,705 @@
+{
+  "sessionId": "ses_e81ec7e61ffeP8oqwff3FOoHtS",
+  "generatedAt": "2026-11-02T10:46:31.171Z",
+  "generator": "model-changes-v1",
+  "summary": "This session contains 13 reviewed changes. They span the files recorded in the changes. In short, Team instructions now allow automated helpers to run / Web interface switches to dusk dark look with / Pages now share soft rounded dusk cards with / This update rewrites the project documents to replace / This change adds mapping for captured sessions cleans; and 8 more.",
+  "diagnostics": [
+    "changes_folded:48->13",
+    "changes_unattributed:200",
+    "changes_evidence_gated_v2"
+  ],
+  "changes": [
+    {
+      "id": "c_5bec2d69e597e756",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "0c3f1eceb5626ecd90d6c4c48a6b4712d27dccf8",
+        "nextOid": "ec3a4ab29bbcafc321e085e81ee931f35a895ad8"
+      },
+      "title": "Housekeeping rules and styling tweak",
+      "summary": "The team instruction sheet now lets automated helpers install packages on their own and only ask you for a command when something fails or looks risky. The code formatting settings now understand website styling directives so those files check cleanly.",
+      "before": [
+        "Helpers had to hand you every install command and wait.",
+        "Styling files with special website directives could trip the formatter check."
+      ],
+      "now": [
+        "Helpers can run installs themselves and fall back to your help only when needed, with a reminder to log finished work.",
+        "Those styling directives are now accepted, so checks stay quiet with no change to how the site looks."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "AGENTS.md",
+          "note": "Updated helper rules for installs and work logging."
+        },
+        {
+          "path": "biome.json",
+          "note": "Allowed website styling directives in formatter checks."
+        }
+      ],
+      "digest": "Team instructions now allow automated helpers to run package installs themselves and only hand over a one line command when an install fails or looks risky while adding a reminder to read the build tracker before work and log each finished unit afterwards without editing others and formatting settings now accept website styling directives so style checks stay clean with no change to what users see or how pages behave in this small housekeeping update",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "0c3f1eceb5626ecd90d6c4c48a6b4712d27dccf8",
+        "nextOid": "ec3a4ab29bbcafc321e085e81ee931f35a895ad8"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_8bcd650a2be7549e",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "0c3f1eceb5626ecd90d6c4c48a6b4712d27dccf8",
+        "nextOid": "215be052c449a89ab9bffce947a92abae4068664"
+      },
+      "title": "Dusk styling and viewer tweaks",
+      "summary": "The web pages get a new dark dusk look with different fonts, colors, spacing, and rounded cards. The file viewer can now follow a chosen scrub time, and the hunk list can show a small opened mark for items already visited.",
+      "before": [
+        "Panels and header used plain grey styling with tighter spacing.",
+        "The file view always showed the latest snapshot and visited hunks had no mark."
+      ],
+      "now": [
+        "Panels, header, and pages use the dusk colors, fonts, and wider spacing.",
+        "The file view follows the scrub time when given, and visited hunks show an opened label."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "apps/web/index.html",
+          "note": "Loads the new text fonts for the pages."
+        },
+        {
+          "path": "apps/web/src/components/diff-panel.tsx",
+          "note": "Shows differences with updated styling and spacing."
+        },
+        {
+          "path": "apps/web/src/components/file-state-panel.tsx",
+          "note": "Shows file contents with new styling and scrub time support."
+        },
+        {
+          "path": "apps/web/src/components/hunk-panel.tsx",
+          "note": "Lists change sections with new styling and opened marks."
+        },
+        {
+          "path": "apps/web/src/components/scaffold-page.tsx",
+          "note": "Updates placeholder pages to the new look."
+        },
+        {
+          "path": "apps/web/src/design-tokens.ts",
+          "note": "Adds shared color and shape values for the new look."
+        },
+        {
+          "path": "apps/web/src/layout.tsx",
+          "note": "Updates header, links, and footer to the new look."
+        },
+        {
+          "path": "apps/web/src/opened-hunks.ts",
+          "note": "Remembers which change sections were opened."
+        },
+        {
+          "path": "apps/web/src/routes/checks.tsx",
+          "note": "Updates status page to the new look."
+        },
+        {
+          "path": "apps/web/src/routes/demo.tsx",
+          "note": "Updates demo page to the new look."
+        }
+      ],
+      "digest": "Web interface switches to dusk dark look with new fonts colors spacing and rounded cards across panels header footer demo and checks pages while file viewer follows scrub time when provided and hunk list shows opened marks stored locally with tokens file mirroring stylesheet for future canvas use keeping layout simpler",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "0c3f1eceb5626ecd90d6c4c48a6b4712d27dccf8",
+        "nextOid": "215be052c449a89ab9bffce947a92abae4068664"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_18128985fca99d3c",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "0c3f1eceb5626ecd90d6c4c48a6b4712d27dccf8",
+        "nextOid": "215be052c449a89ab9bffce947a92abae4068664"
+      },
+      "title": "Softer cards and quieter tones",
+      "summary": "The project, projects, missing, and report pages now share the same soft rounded cards and muted dusk colors instead of mismatched greys and reds. The timeline list also highlights a chosen moment so the file view below can show that earlier state, with an easy way to clear it.",
+      "before": [
+        "Pages used mismatched grey and red boxes with different borders.",
+        "Timeline rows were plain text with no way to focus on one moment."
+      ],
+      "now": [
+        "Pages share calm rounded cards with soft muted text and quiet scrollbars.",
+        "A timeline row can be selected to revisit that moment, with a clear option."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "apps/web/src/routes/not-found.tsx",
+          "note": "Missing page button now uses soft dusk colors."
+        },
+        {
+          "path": "apps/web/src/routes/project.tsx",
+          "note": "Session list now uses rounded dusk cards and spacing."
+        },
+        {
+          "path": "apps/web/src/routes/projects.tsx",
+          "note": "Project cards and waiting messages use calm dusk style."
+        },
+        {
+          "path": "apps/web/src/routes/replay.tsx",
+          "note": "Timeline rows can be picked to revisit an earlier file moment."
+        },
+        {
+          "path": "apps/web/src/routes/report.tsx",
+          "note": "Waiting message now matches the other calm cards."
+        },
+        {
+          "path": "apps/web/src/styles.css",
+          "note": "Global styles add dusk colors, fonts, and slim scrollbars."
+        }
+      ],
+      "digest": "Pages now share soft rounded dusk cards with calm muted text instead of mismatched grey and red boxes while empty loading and error states feel quieter timeline rows can be picked to revisit an earlier file moment with a clear option and global styles add dusk colors fonts and slim scrollbars so reading stays steady with no change to words or navigation",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "0c3f1eceb5626ecd90d6c4c48a6b4712d27dccf8",
+        "nextOid": "215be052c449a89ab9bffce947a92abae4068664"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_9d134b66b93bce20",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "0c3f1eceb5626ecd90d6c4c48a6b4712d27dccf8",
+        "nextOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22"
+      },
+      "title": "Ownership checks replace puzzle questions",
+      "summary": "The documents now describe understanding checks as ownership questions about real changes instead of small coding puzzles. Open answers are judged against a checklist with quoted support, while breakage questions still use isolated runs to establish ground truth. Recent progress notes and visual direction wording are updated to match.",
+      "before": [
+        "Checks were described as predict-the-output and spot-the-bug puzzles graded by running code."
+      ],
+      "now": [
+        "Checks are described as ownership questions about consequences, decisions, tradeoffs, breakage, and teaching back."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "docs/ARCHITECTURE.md",
+          "note": "Rewords check design around ownership questions and grading."
+        },
+        {
+          "path": "docs/BUILD-PLAN.md",
+          "note": "Updates plan wording to match ownership checks."
+        },
+        {
+          "path": "docs/BuildTracker.md",
+          "note": "Adds progress entries for recent work and merges."
+        },
+        {
+          "path": "docs/adr/0010-ownership-checks.md",
+          "note": "Records decision to cut puzzles for ownership questions."
+        },
+        {
+          "path": "docs/design-direction.md",
+          "note": "Refines wording for the review interface look and feel."
+        },
+        {
+          "path": "docs/echo-spec.md",
+          "note": "Updates product description to ownership checks."
+        },
+        {
+          "path": "docs/spikes/2026-10-28-model-smoke.md",
+          "note": "Keeps research note on model behavior."
+        },
+        {
+          "path": "docs/spikes/2026-10-28-opencode-live-ingest.md",
+          "note": "Keeps research note on live session ingest."
+        },
+        {
+          "path": "docs/spikes/2026-10-28-sandbox-backends.md",
+          "note": "Keeps research note on isolated run options."
+        }
+      ],
+      "digest": "This update rewrites the project documents to replace puzzle style coding questions with ownership style questions that ask about consequences decisions tradeoffs breakage and teaching back. It clarifies that open answers are judged against a checklist with quoted support while runnable breakage examples still run twice in isolation. It also records recent capture retrieval and merge progress and refines the dark visual direction for the review interface.",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "0c3f1eceb5626ecd90d6c4c48a6b4712d27dccf8",
+        "nextOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_571eb4407b71fdda",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "043251fa131b9d2b567010c275b1059aaf00c4b5",
+        "nextOid": "597f347ae2bf93f9155a52ab5552ca5e92ee321b"
+      },
+      "title": "Cleaner captures and steadier checks",
+      "summary": "This update adds a new way to translate captured sessions into readable history and tidies what gets saved. It also refreshes ownership checks, test fixtures, and packaging so saved evidence stays clear and safe.",
+      "before": [
+        "Saved session details could include unreadable encrypted blobs and checks mixed different grading styles."
+      ],
+      "now": [
+        "Saved history keeps only readable rationale and checks now share one clear rubric style with proof where needed."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "packages/capture-muse/src/map.ts",
+          "note": "Adds translation of captured sessions into readable history."
+        },
+        {
+          "path": "packages/capture-opencode/src/import.test.ts",
+          "note": "Adds tests that unreadable secrets are removed but readable notes stay."
+        },
+        {
+          "path": "packages/capture-opencode/src/map.ts",
+          "note": "Cleans saved evidence so hidden encrypted values do not remain."
+        },
+        {
+          "path": "packages/checks/src/checks.test.ts",
+          "note": "Updates tests for the shared check style and proof handling."
+        },
+        {
+          "path": "packages/checks/src/index.ts",
+          "note": "Simplifies checks around rubrics with extra proof for breakage questions."
+        },
+        {
+          "path": "packages/fixtures/src/fixtures.test.ts",
+          "note": "Adds tests covering the sample history sequence and safe secret handling."
+        },
+        {
+          "path": "packages/fixtures/src/index.ts",
+          "note": "Provides a sample history used for tests and reviews."
+        },
+        {
+          "path": "packages/model/src/index.ts",
+          "note": "Adjusts the model package entry handling."
+        },
+        {
+          "path": "packages/model/src/model.test.ts",
+          "note": "Updates model tests to match current behavior."
+        },
+        {
+          "path": "packages/retrieval/package.json",
+          "note": "Updates packaging details for the retrieval package."
+        }
+      ],
+      "digest": "This change adds mapping for captured sessions cleans encrypted reasoning from stored evidence updates ownership checks to use rubrics and demonstrations adds a fixture tape covering failures snapshots and secrets and adjusts model and retrieval packaging while keeping existing behavior readable and safe for review across all ten touched packages with tests guarding the new handling and expectations",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "043251fa131b9d2b567010c275b1059aaf00c4b5",
+        "nextOid": "597f347ae2bf93f9155a52ab5552ca5e92ee321b"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_e5cbbd6299a56851",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "d8a56f32981a6cb0cf01177de7aee13d9a6058cb",
+        "nextOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22"
+      },
+      "title": "Safer sandbox output reading",
+      "summary": "The helper that reads the first line of tool output now accepts missing output and returns an empty result instead of failing. This keeps backend detection steady when version or inspection commands produce no text.",
+      "before": [
+        "Reading command output assumed text was always present, so missing output could break the check."
+      ],
+      "now": [
+        "Missing output now safely becomes an empty line, so detection continues and reports availability cleanly."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "packages/retrieval/src/fts.ts",
+          "note": "Included in this change set."
+        },
+        {
+          "path": "packages/retrieval/src/index.ts",
+          "note": "Included in this change set."
+        },
+        {
+          "path": "packages/retrieval/src/retrieval.test.ts",
+          "note": "Included in this change set."
+        },
+        {
+          "path": "packages/sandbox/src/bwrap.ts",
+          "note": "Included in this change set."
+        },
+        {
+          "path": "packages/sandbox/src/container.ts",
+          "note": "Holds the safer first-line reading described above."
+        },
+        {
+          "path": "packages/sandbox/src/detect.ts",
+          "note": "Included in this change set."
+        },
+        {
+          "path": "packages/sandbox/src/harness.ts",
+          "note": "Included in this change set."
+        },
+        {
+          "path": "packages/sandbox/src/index.ts",
+          "note": "Included in this change set."
+        },
+        {
+          "path": "packages/sandbox/src/sandbox.test.ts",
+          "note": "Included in this change set."
+        },
+        {
+          "path": "packages/sandbox/src/types.ts",
+          "note": "Included in this change set."
+        }
+      ],
+      "digest": "This update makes the sandbox output helper tolerant when command output is missing by returning an empty line instead of failing so backend detection keeps working and reports Docker status cleanly while the rest of the retrieval and sandbox files in this set carry supporting implementation and tests unchanged in behavior for readers",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "d8a56f32981a6cb0cf01177de7aee13d9a6058cb",
+        "nextOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_d0d60ac851dfdfcf",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "485451a942900156ad9d9e6fd60c9a312190e357",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "title": "Safe runs, project identity, change views",
+      "summary": "The small built-in code runner now actually runs snippets in an isolated space with limited memory, time, and output instead of reporting as unavailable. Snapshots can now recognize which project a folder belongs to and show line-by-line changes between saved states, and review helpers for reading patches are now shared.",
+      "before": [
+        "The built-in runner always reported itself as missing, so no code could run there.",
+        "Snapshots had no shared way to tie a subfolder to its project or to show what changed between saves."
+      ],
+      "now": [
+        "Snippets run safely with console output captured, overlong output trimmed, and timeouts or errors reported clearly.",
+        "Working folders now join their main project, saved states can be compared as plain change text, and patch reading helpers are available to others."
+      ],
+      "howItWorks": [],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "packages/sandbox/src/wasm.ts",
+          "note": "Turns on the isolated runner with output capture, limits, and error reporting."
+        },
+        {
+          "path": "packages/snapshots/src/git.ts",
+          "note": "Adds project identity lookup and plain text comparison between saved states."
+        },
+        {
+          "path": "packages/snapshots/src/index.ts",
+          "note": "Shares the new identity, comparison, and file-walking helpers with others."
+        },
+        {
+          "path": "packages/snapshots/src/snapshot.test.ts",
+          "note": "Adds checks that identity joining and change text work as expected."
+        },
+        {
+          "path": "packages/tape/src/index.ts",
+          "note": "Shares existing patch reading and review linking helpers for reuse."
+        }
+      ],
+      "digest": "This change turns on the safe built in code runner so snippets run in isolation with captured output limits and timeouts it adds repository recognition so work in any subfolder links to the same project via its stored remote it adds a way to show exact line changes between saved snapshots and it exposes review helpers for reading patches and linking evidence while tests cover identity and diffs",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "485451a942900156ad9d9e6fd60c9a312190e357",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_ec6f7fb79ea4558b",
+      "version": 20,
+      "snapshotPair": {
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "title": "Session review with change history",
+      "summary": "Readers now get an assembled review for a session that turns saved file snapshots and past events into ranked changes with evidence. Log intake was reworked to read only new data and record snapshots, while the web client gained calls for reviews, stories, history, and checks.",
+      "before": [
+        "Sessions stored snapshots and events but had no single review explaining final changes and earlier attempts.",
+        "The web client could only list projects, sessions, events, and snapshot files."
+      ],
+      "now": [
+        "A session can now show final edits, per-file attempts including reverted work, and linked evidence for each change.",
+        "Log intake tails files incrementally and the web client can request reviews, stories, history, and checks."
+      ],
+      "howItWorks": [
+        "Collects all snapshots for the session and picks the starting and ending file states for comparison.",
+        "Compares file versions across time to mark each attempt as starting, replaced, or landed and to trace final lines back to the snapshot that introduced them.",
+        "Ranks the final edits by importance and attaches nearby tool uses and messages as supporting evidence.",
+        "Falls back to a diagnostic needing two snapshots when there is not enough history, keeping uncertain files marked uncertain."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "apps/server/src/muse-ingest.ts",
+          "note": "Reworks log intake to tail new bytes and record snapshots and checkpoints."
+        },
+        {
+          "path": "apps/server/src/review-index.test.ts",
+          "note": "Adds coverage for linking final edits to earlier and reverted snapshots."
+        },
+        {
+          "path": "apps/server/src/review-index.ts",
+          "note": "Builds the ranked session review with attempts and evidence."
+        },
+        {
+          "path": "apps/web/src/api.ts",
+          "note": "Adds web requests for reviews, stories, history, checks, and engagement."
+        }
+      ],
+      "digest": "Added deterministic session review that compares baseline and final snapshots maps each final line to its origin ranks hunks and links tool and message evidence while ingest now tails logs from checkpoints records snapshots and reconciles quietly and web client gains review story history and checks calls for richer reading without changing stored data formats",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_8ef2c10206eb4f52",
+      "version": 22,
+      "snapshotPair": {
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "title": "Track file attempts across review history",
+      "summary": "This change adds a review index that reads file change comparisons and explains what happened to every saved version. Each version is labeled with a clear outcome, such as landed, reverted, replaced, or uncertain, plus how much text survived to the end.",
+      "before": [
+        "There was no shared way to read change comparisons and explain what happened to each file version."
+      ],
+      "now": [
+        "Change comparisons are now read directly, and each file version is labeled with what survived to the end, like landed, reverted, replaced, or uncertain.",
+        "Matching change blocks now get stable identity even when trailing spaces differ."
+      ],
+      "howItWorks": [
+        "Read change comparison text into per-file lists of added, removed, and unchanged lines, rejecting blocks that disagree with their header.",
+        "Treat trailing spaces as meaningless when comparing blocks so identical edits share one identity.",
+        "Compare each saved version line by line against the final file to count introduced and surviving lines and locate where they landed.",
+        "Label each version as starting point, landed, partly landed, reverted, replaced, failed, or uncertain when its text was missing."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "packages/tape/src/review-index.test.ts",
+          "note": "Adds tests covering parsing, identity, and attempt outcomes."
+        },
+        {
+          "path": "packages/tape/src/review-index.ts",
+          "note": "Adds review index for parsing diffs and tracking file attempts."
+        }
+      ],
+      "digest": "Adds review index that parses unified diffs for added deleted and changed files validates hunk bodies normalizes trailing whitespace for stable identities tracks each file version against final text labels attempts as baseline landed reverted replaced or uncertain and records surviving lines replacement text origins and evidence links with thorough tests guarding parsing identity and lifecycle outcomes",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_959893ef0a9c5867",
+      "version": 20,
+      "snapshotPair": {
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "title": "Sessions join repository projects correctly",
+      "summary": "Sessions that start in a subfolder are now grouped under their repository's shared project instead of splitting by folder. The allowed folder list still controls which work gets captured, so nearby folders stay out unless enabled.",
+      "before": [
+        "Sessions were matched by direct folder, so subfolder work could miss its repository home and sibling folders risked mixing."
+      ],
+      "now": [
+        "Subfolder work now lands under one stable repository project, unrelated siblings are skipped, and quiet sessions can trigger a background story summary."
+      ],
+      "howItWorks": [
+        "Find the repository and remote for where the session ran to pick one shared project.",
+        "Check that the starting folder sits inside the allowed list before capturing anything.",
+        "Save the session tape and snapshots under that shared project storage.",
+        "When a session goes quiet, start a story summary in the background without slowing or stopping capture."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "apps/server/src/index.ts",
+          "note": "Wires new project endpoints and background story finalize into server startup."
+        },
+        {
+          "path": "apps/server/src/ingest.test.ts",
+          "note": "Adds tests for shared project joining and sibling folder exclusion."
+        },
+        {
+          "path": "apps/server/src/ingest.ts",
+          "note": "Groups capture by repository identity and notifies when sessions go quiet."
+        },
+        {
+          "path": "apps/server/src/muse-ingest.test.ts",
+          "note": "Extends tests for identity joining, scope checks, and resume behavior."
+        }
+      ],
+      "digest": "Server groups coding sessions by repository identity so subfolder work shares one project while allowlist still gates capture by where agent ran sibling folders stay excluded tapes and snapshots use stable project storage quiet sessions fire background story finalize without blocking ingest new project files tech stack and code endpoints expose state and added tests cover identity joining scope exclusion checkpoint resume and baseline snapshots for reliable review",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_d169e0994ff5bb5e",
+      "version": 22,
+      "snapshotPair": {
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "title": "Database remembers more project history",
+      "summary": "The local database now keeps extra tables for reading progress, project links, build details, and code listings. Opening an older database upgrades it in place and keeps existing projects working when folders move.",
+      "before": [
+        "The store only kept basic projects, sessions, events, and snapshots."
+      ],
+      "now": [
+        "It also tracks where reading stopped, which remote a folder belongs to, and richer session summaries."
+      ],
+      "howItWorks": [
+        "Opening the file creates any missing tables and brings older copies up to date.",
+        "Saving a project keeps its long-term identity when the folder moves or a remote address appears.",
+        "Reading position, engagement signals, build markers, and generated files are stored alongside sessions.",
+        "List views return counts, status, and links so screens can show progress without extra work."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "packages/db/src/db.test.ts",
+          "note": "Adds checks for upgrades, moves, and richer listings."
+        },
+        {
+          "path": "packages/db/src/index.ts",
+          "note": "Re-exports the new database helpers for other parts."
+        },
+        {
+          "path": "packages/db/src/migrations.ts",
+          "note": "Creates the new tables used for extra history."
+        },
+        {
+          "path": "packages/db/src/repositories.ts",
+          "note": "Saves and loads the extra project and session details."
+        }
+      ],
+      "digest": "database storage expands beyond sessions and events to remember reading progress project links build versions engagement signals and code listings so reopening continues where it left off folder moves keep historic identity instead of duplicating repos legacy databases heal automatically and listing helpers expose richer summaries with counts and status for display layers",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_04803e1bd40549d3",
+      "version": 22,
+      "snapshotPair": {
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "title": "Projects refresh, replay removed",
+      "summary": "The projects list now shows repositories as folder cards with soft loading placeholders while data arrives. The session replay view and its hunk inspector were deleted, and the build tracker gained notes covering recent project, snapshot, and merge work.",
+      "before": [
+        "Projects used simple links with plain loading text, and a replay view showed timelines with a hunk inspector."
+      ],
+      "now": [
+        "Projects show centered folder cards with skeleton placeholders, the replay and hunk views are gone, and history notes are updated."
+      ],
+      "howItWorks": [
+        "Opening projects shows placeholder cards until the real project cards appear.",
+        "Each project appears as a folder-style card in a centered grid.",
+        "The old replay route and hunk inspector are no longer part of the app.",
+        "Build notes now record recent identity, snapshot, installer, and merge progress."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "apps/web/src/components/hunk-panel.tsx",
+          "note": "Removed hunk inspector panel from the web app."
+        },
+        {
+          "path": "apps/web/src/routes/projects.tsx",
+          "note": "Shows folder cards with skeleton placeholders while loading."
+        },
+        {
+          "path": "apps/web/src/routes/replay.tsx",
+          "note": "Removed session replay page from the web app."
+        },
+        {
+          "path": "docs/BuildTracker.md",
+          "note": "Adds build history entries for recent work."
+        }
+      ],
+      "digest": "Projects page now presents each repository as a folder card in a centered grid with skeleton placeholders while loading. The session replay page and its hunk inspector panel were removed entirely. Build tracker gained entries documenting canonical project identity snapshot triggers installer work and merge history. Overall the change simplifies the web surface around browsing projects while preserving the written record of recent backend progress.",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_64b0254dc96da5f1",
+      "version": 22,
+      "snapshotPair": {
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "title": "Projects join by repository address",
+      "summary": "Projects are now identified by their shared remote repository address when one exists, so the same code counts as one project even from different folders or machines. Session imports can accept a server-chosen project identity, and the shared data shapes now carry richer project, session, and review details.",
+      "before": [
+        "Each local folder made its own separate project identity, so subfolders and different checkouts stayed split."
+      ],
+      "now": [
+        "Equivalent repository addresses collapse to one project, with the local folder used only when no remote is known."
+      ],
+      "howItWorks": [
+        "Cleaning of repository addresses removes differences in login details, ports, slashes, and endings so matching code maps together.",
+        "A repository identity is resolved from the main folder and cleaned remote, producing one stable project identifier.",
+        "Incoming sessions use the server-provided project when available and otherwise fall back to folder identity.",
+        "Shared project, session, file, and review records now carry extra context such as remotes, activity, checks, and detailed changes."
+      ],
+      "headsUp": [],
+      "files": [
+        {
+          "path": "packages/capture-opencode/src/map.ts",
+          "note": "Lets session import use a server-provided project identity when present."
+        },
+        {
+          "path": "packages/contracts/src/api.ts",
+          "note": "Expands shared shapes for projects, sessions, files, and review detail."
+        },
+        {
+          "path": "packages/core/src/project.test.ts",
+          "note": "Adds coverage for remote cleanup and repository joining behavior."
+        },
+        {
+          "path": "packages/core/src/project.ts",
+          "note": "Builds stable project identity from remote address or local root."
+        }
+      ],
+      "digest": "Sessions now join to one project through the shared code repository address instead of the local folder, so different machines and subfolders map together while server provided identifiers win when present, and shared data shapes now carry remote addresses, file activity, technology summaries, review checks and detailed change hunks for consistent display across tools.",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "ebe2e050be9f757592df3b5de42c24fe01ea2b22",
+        "nextOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+      },
+      "origin": "model"
+    }
+  ],
+  "snapshotWatermark": {
+    "snapshotCount": 55,
+    "lastOid": "b4630b7c6ec7dc1c199d4f42bb4515c8876a846d"
+  }
+}
