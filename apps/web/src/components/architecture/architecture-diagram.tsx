@@ -6,7 +6,6 @@ import {
 } from "@echo/contracts";
 import { autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import {
-  Background,
   BaseEdge,
   type Edge,
   EdgeLabelRenderer,
@@ -441,7 +440,7 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
     : [];
 
   return (
-    <div className="relative h-[520px] overflow-hidden rounded-dusk-card bg-dusk-surface">
+    <div className="relative h-[520px] overflow-hidden">
       {layout === null ? (
         <p
           role="status"
@@ -450,28 +449,28 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
           Laying out the diagram…
         </p>
       ) : null}
-      <ReactFlow
-        key={architecture.version}
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        onNodeMouseEnter={onNodeMouseEnter}
-        onNodeMouseLeave={onNodeMouseLeave}
-        onNodeClick={(_event, node) => {
-          if (node.type !== "arch") return;
-          const target = byId.get(node.id);
-          if (target) onPin({ id: target.id, label: target.label });
-        }}
-        nodesConnectable={false}
-        fitView
-        fitViewOptions={{ padding: 0.12 }}
-        minZoom={0.4}
-        maxZoom={1.5}
-        proOptions={{ hideAttribution: false }}
-      >
-        <Background color={duskDarkTokens.color.hairlineStrong} gap={28} size={1} />
-      </ReactFlow>
+      <div className="absolute inset-0">
+        <ReactFlow
+          key={architecture.version}
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodeMouseEnter={onNodeMouseEnter}
+          onNodeMouseLeave={onNodeMouseLeave}
+          onNodeClick={(_event, node) => {
+            if (node.type !== "arch") return;
+            const target = byId.get(node.id);
+            if (target) onPin({ id: target.id, label: target.label });
+          }}
+          nodesConnectable={false}
+          fitView
+          fitViewOptions={{ padding: 0.12 }}
+          minZoom={0.4}
+          maxZoom={1.5}
+          proOptions={{ hideAttribution: false }}
+        />
+      </div>
       {hovered ? (
         <div ref={refs.setFloating} style={{ ...floatingStyles, zIndex: 20 }}>
           <GraphHoverCard
