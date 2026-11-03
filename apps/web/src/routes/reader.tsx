@@ -1,7 +1,7 @@
 import type { Change, ChangeId, ChecksV2Response, ProgressState } from "@echo/contracts";
 import { firstNotUnderstood } from "@echo/contracts";
 import { GitCompareArrowsIcon } from "@hugeicons/core-free-icons";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router";
 import { api, ChangesNotReadyError } from "../api";
@@ -13,6 +13,7 @@ import { CheckRunner } from "../components/check-runner";
 import { ProgressTape } from "../components/progress-tape";
 import { ReaderRail } from "../components/reader-rail";
 import { ScaffoldPage } from "../components/scaffold-page";
+import { IMMUTABLE_STALE_TIME, prefetchCode, queryKeys } from "../query";
 
 const PRIMARY =
   "rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40";
@@ -60,23 +61,28 @@ export function ReaderPage() {
   const queryClient = useQueryClient();
 
   const changesQuery = useQuery({
-    queryKey: ["changes", sessionId],
+    queryKey: queryKeys.changes(sessionId),
     queryFn: () => api.changes(sessionId),
+    // Switching sessions keeps the old list on screen while the new one
+    // loads instead of flashing the full-page skeleton.
+    placeholderData: keepPreviousData,
   });
 
   // Header owns project/session names; changes own the body. Separate
   // queries so a slow session row never blocks the change list.
   const sessionQuery = useQuery({
-    queryKey: ["session", sessionId],
+    queryKey: queryKeys.session(sessionId),
     queryFn: () => api.session(sessionId),
     retry: false,
+    placeholderData: keepPreviousData,
   });
   const projectId = sessionQuery.data?.projectId ?? "";
   const projectQuery = useQuery({
-    queryKey: ["project", projectId],
+    queryKey: queryKeys.project(projectId),
     queryFn: () => api.project(projectId),
     enabled: projectId.length > 0,
     retry: false,
+    placeholderData: keepPreviousData,
   });
   const headerTitle = sessionQuery.data?.title?.trim() || `Session ${sessionId.slice(0, 8)}`;
   const projectName = projectQuery.data?.name?.trim() || "Project";
@@ -141,7 +147,7 @@ export function ReaderPage() {
       .recordProgress(sessionId, { changeId: change.id, version: change.version, state })
       .catch(() => null)
       .then(() => {
-        void queryClient.invalidateQueries({ queryKey: ["changes", sessionId] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.changes(sessionId) });
       });
   };
 
@@ -166,18 +172,20 @@ export function ReaderPage() {
 
   // Diff for the change on screen, served from shadow git on demand.
   // Keyed by change id; the id guard drops stale data mid-transition.
+  // Shadow-git diffs are immutable, so a viewed change never refetches.
   const codeQuery = useQuery({
-    queryKey: ["code", sessionId, current?.id],
+    queryKey: queryKeys.code(sessionId, current?.id ?? ""),
     queryFn: () => api.changeCode(sessionId, current?.id ?? ""),
     enabled: current !== null,
     retry: false,
+    staleTime: IMMUTABLE_STALE_TIME,
   });
   const code = codeQuery.data?.changeId === current?.id ? codeQuery.data : null;
 
   // Stored check state for the inline per-change result line. The runner's
   // live state wins once a check runs this visit.
   const storedChecksQuery = useQuery({
-    queryKey: ["checks", sessionId],
+    queryKey: queryKeys.checks(sessionId),
     queryFn: () => api.checksV2State(sessionId),
     retry: false,
   });
@@ -190,6 +198,14 @@ export function ReaderPage() {
   const previous = !atEnd && viewIndex > 0 ? (changes[viewIndex - 1] ?? null) : null;
   const next = !atEnd && viewIndex < changes.length - 1 ? (changes[viewIndex + 1] ?? null) : null;
   const skipped = changes.filter((change) => progress[progressKey(change)]?.state === "skipped");
+
+  // Per-change Ask state. The anchor is captured at open time so stepping
+  // through changes behind the thread never shifts the question mid-answer;
+  // clearing the chip widens to the whole session. The thread lives in the
+  // rail's Ask tab.
+  const [railTab, setRailTab] = useState<"changes" | "ask">("changes");
+  const [askChange, setAskChange] = useState<{ id: string; title: string } | null>(null);
+  const [askScopeAll, setAskScopeAll] = useState(false);
 
   // Gate modal bookkeeping: only this change's questions block Continue.
   // Other questions may ride along in the runner, but they never gate.
@@ -208,11 +224,7 @@ export function ReaderPage() {
   // opening Code or stepping forward never waits on shadow git.
   useEffect(() => {
     if (next === null) return;
-    void queryClient.prefetchQuery({
-      queryKey: ["code", sessionId, next.id],
-      queryFn: () => api.changeCode(sessionId, next.id),
-      staleTime: 60_000,
-    });
+    prefetchCode(queryClient, sessionId, next.id);
   }, [queryClient, sessionId, next]);
   // Same-file neighbors in session order, nearest each way. Pure overlap
   // from the served list — no backend needed.
@@ -244,6 +256,17 @@ export function ReaderPage() {
 
   const handleDone = () => {
     navigate("/projects");
+  };
+
+  // "Ask about this change" anchors the thread to the change on screen and
+  // flips the rail to it. Nearest-block scroll is a no-op on desktop (the
+  // rail is already visible) and brings the thread into view on mobile.
+  const handleAskAboutChange = () => {
+    if (current === null) return;
+    setAskChange({ id: current.id, title: current.title });
+    setAskScopeAll(false);
+    setRailTab("ask");
+    document.getElementById("reader-rail")?.scrollIntoView({ block: "nearest" });
   };
 
   const handleStartCheck = async () => {
@@ -511,6 +534,10 @@ export function ReaderPage() {
               getState={(change) => progress[progressKey(change)]?.state}
               isLive={isLive}
               onJump={jump}
+              onPeek={(index) => {
+                const peeked = changes[index];
+                if (peeked !== undefined) prefetchCode(queryClient, sessionId, peeked.id);
+              }}
             />
 
             {current !== null ? (
@@ -562,13 +589,11 @@ export function ReaderPage() {
                       <div className="flex flex-wrap items-center gap-3">
                         <button
                           type="button"
-                          onClick={() => {
-                            mark(current, "skipped");
-                            jump(viewIndex + 1);
-                          }}
-                          className={QUIET}
+                          onClick={handleAskAboutChange}
+                          disabled={gate !== null}
+                          className={GHOST}
                         >
-                          Skip quietly
+                          Ask about this change
                         </button>
                         <button
                           type="button"
@@ -600,6 +625,12 @@ export function ReaderPage() {
                   onJump={jump}
                   files={current.files}
                   codeFiles={code?.files ?? null}
+                  tab={railTab}
+                  onTabChange={setRailTab}
+                  sessionId={sessionId}
+                  askChange={askChange}
+                  askScopeAll={askScopeAll}
+                  onClearAskScope={() => setAskScopeAll(true)}
                 />
               </div>
             ) : isLive && !showSummary ? (
