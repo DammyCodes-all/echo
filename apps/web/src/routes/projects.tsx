@@ -8,6 +8,7 @@ import { ScaffoldPage } from "../components/scaffold-page";
 import type { SortKey } from "../components/search/project-sort";
 import { ProjectFolderSkeleton } from "../components/skeleton";
 import { displayProjectName } from "../project-display";
+import { queryKeys } from "../query";
 
 function matchesQuery(project: ProjectSummary, query: string): boolean {
   const q = query.trim().toLowerCase();
@@ -28,7 +29,7 @@ function compareProjects(a: ProjectSummary, b: ProjectSummary, sort: SortKey): n
 
 export function ProjectsPage() {
   const projects = useQuery({
-    queryKey: ["projects"],
+    queryKey: queryKeys.projects,
     queryFn: api.projects,
     refetchInterval: 5000,
   });
