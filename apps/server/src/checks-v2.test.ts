@@ -465,13 +465,16 @@ describe("createChecksV2Service", () => {
       expect(pictured.get("h_2222222222222222")).not.toBeNull();
       expect(pictured.get("h_3333333333333333")).toBeNull();
       expect(pictured.get("h_5555555555555555")).toBeNull();
-      // The prompt carries no risk: kinds cycle by position, no Risk line.
+      // The prompt carries no risk and prescribes no kinds: the model chooses
+      // from the catalog, targets carry no kind=/format=, and there is no Risk line.
       const request = bodies()[0] ?? "";
       expect(request).not.toContain("Risk:");
       expect(request).not.toContain("high-risk");
-      expect(request).toContain("kind=consequence");
-      expect(request).toContain("kind=decision");
-      expect(request).toContain("kind=tradeoff");
+      expect(request).not.toContain("kind=");
+      expect(request).not.toContain("format=");
+      expect(request).toContain("Choose the ONE kind that best fits each card");
+      expect(request).toContain("blast_radius");
+      expect(request).toContain("teach_back");
     } finally {
       db.close();
     }
@@ -970,6 +973,111 @@ describe("createChecksV2Service", () => {
       expect(ChecksV2ResponseSchema.parse(single.body).questions[0]?.question).toBe(
         "What changed here?",
       );
+    } finally {
+      db.close();
+    }
+  });
+
+  it("honors a model-chosen kind regardless of target position", async () => {
+    const sessionId = "ses_v2_ownkind";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [makeChange("c_aaaaaaaaaaaaaaaa", "src/a.ts")];
+      writeChanges(db, dataDir, sessionId, changes);
+      const { fetchImpl, calls } = stubFetchQueue([freeTextDraftForChanges(changes)]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      // Position 0 cycled to consequence under the old scheme; the model
+      // choosing teach_back must stand.
+      const single = await service.checkMe(sessionId, "c_aaaaaaaaaaaaaaaa");
+      expect(single.status).toBe(200);
+      const state = ChecksV2ResponseSchema.parse(single.body);
+      expect(state.questions).toHaveLength(1);
+      expect(state.questions[0]).toMatchObject({ kind: "teach_back", format: "free_text" });
+      expect(calls()).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects kind/format mismatches and recovers on retry", async () => {
+    const sessionId = "ses_v2_kindformat";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [makeChange("c_aaaaaaaaaaaaaaaa", "src/a.ts")];
+      writeChanges(db, dataDir, sessionId, changes);
+      const mismatchDraft = {
+        questions: [
+          {
+            cardId: "c_aaaaaaaaaaaaaaaa",
+            format: "free_text",
+            kind: "consequence",
+            question: "What will break here?",
+            rubric: ["Names a breakage."],
+            explanation: "Change in src/a.ts.",
+            evidencePaths: ["src/a.ts"],
+          },
+        ],
+      };
+      const { fetchImpl, calls } = stubFetchQueue([
+        mismatchDraft,
+        mcqDraftForChange(changes[0] as Change),
+      ]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const single = await service.checkMe(sessionId, "c_aaaaaaaaaaaaaaaa");
+      expect(single.status).toBe(200);
+      expect(ChecksV2ResponseSchema.parse(single.body).questions[0]?.question).toBe(
+        "What changed here?",
+      );
+      expect(calls()).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects invented evidence paths and recovers on retry", async () => {
+    const sessionId = "ses_v2_badevidence";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [makeChange("c_aaaaaaaaaaaaaaaa", "src/a.ts")];
+      writeChanges(db, dataDir, sessionId, changes);
+      const badEvidenceDraft = {
+        questions: [
+          {
+            cardId: "c_aaaaaaaaaaaaaaaa",
+            format: "mcq",
+            kind: "consequence",
+            question: "What changed here?",
+            options: [
+              { id: "o1", text: "It changed" },
+              { id: "o2", text: "Nothing changed" },
+            ],
+            correctOptionId: "o1",
+            distractorSources: [],
+            explanation: "It changed.",
+            evidencePaths: ["src/invented.ts"],
+          },
+        ],
+      };
+      const { fetchImpl, calls } = stubFetchQueue([
+        badEvidenceDraft,
+        mcqDraftForChange(changes[0] as Change),
+      ]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const single = await service.checkMe(sessionId, "c_aaaaaaaaaaaaaaaa");
+      expect(single.status).toBe(200);
+      expect(ChecksV2ResponseSchema.parse(single.body).questions[0]?.question).toBe(
+        "What changed here?",
+      );
+      expect(calls()).toBe(2);
     } finally {
       db.close();
     }
