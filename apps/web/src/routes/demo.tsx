@@ -2,6 +2,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
+import { AskThread } from "../components/ask-thread-panel";
 import { demoLinks } from "../components/demo-banner";
 import { ScaffoldPage } from "../components/scaffold-page";
 import { SessionCard } from "../components/session-card";
@@ -32,6 +33,7 @@ function CopyQuestion({ text }: { text: string }) {
 
 export function DemoPage() {
   const { isDemo } = useDemoMode();
+  const [askOpen, setAskOpen] = useState(false);
   const projectsQuery = useQuery({ queryKey: queryKeys.projects, queryFn: () => api.projects() });
   const project = projectsQuery.data?.[0] ?? null;
   const sessionsQuery = useQuery({
@@ -82,7 +84,7 @@ export function DemoPage() {
       title="Try Echo on a real session"
       description={
         isDemo
-          ? "One recorded agent session, baked in. Read the story, take the check, ask why — answers grade live but nothing is stored."
+          ? "One recorded agent session, baked in. Read the review, take the check, ask why — answers grade live but nothing is stored."
           : "Everything below reads live data. Bake a bundle with echo-cli demo build to preview the hosted demo."
       }
     >
@@ -102,12 +104,37 @@ export function DemoPage() {
             >
               Open the review
             </Link>{" "}
-            — the story, the evidence, the questionable bits.
+            — the changes, the evidence, the questionable bits.
           </li>
-          <li>Take the check at the end of the story. It grades what you retained.</li>
-          <li>Ask why in the thread. It answers from the tape or refuses.</li>
+          <li>Take the check at the end of the review. It grades what you retained.</li>
+          <li>
+            <button
+              type="button"
+              onClick={() => setAskOpen(true)}
+              className="font-semibold text-dusk-accent-soft underline underline-offset-4"
+            >
+              Ask why
+            </button>{" "}
+            in the thread. It answers from the tape or refuses.
+          </li>
         </ol>
       </section>
+
+      {askOpen ? (
+        <section aria-label="Ask about this session" className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold tracking-tight">Ask about this session</h2>
+            <button
+              type="button"
+              onClick={() => setAskOpen(false)}
+              className="rounded-dusk-code bg-dusk-pill px-3 py-1.5 text-xs text-dusk-ink transition-colors hover:text-dusk-accent-soft"
+            >
+              Close
+            </button>
+          </div>
+          <AskThread sessionId={firstSession.id} onClearScope={() => undefined} />
+        </section>
+      ) : null}
 
       {examples.length > 0 ? (
         <section aria-label="Try asking" className="space-y-3">

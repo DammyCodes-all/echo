@@ -6,7 +6,6 @@ import {
 } from "@echo/contracts";
 import { autoUpdate, flip, offset, shift, useFloating } from "@floating-ui/react";
 import {
-  Background,
   BaseEdge,
   type Edge,
   EdgeLabelRenderer,
@@ -21,7 +20,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { memo, useEffect, useMemo, useState } from "react";
-import { formatTime } from "../../api";
 import { duskDarkTokens } from "../../design-tokens";
 import {
   ARCH_NODE_HEIGHT,
@@ -30,6 +28,7 @@ import {
   layoutArchitecture,
   type RoutedPoint,
 } from "./elk-layout";
+import { GraphCard } from "./graph-card";
 import {
   arrowheadPoints,
   computeHubs,
@@ -38,9 +37,11 @@ import {
   polylineMidpoint,
   routedPath,
 } from "./graph-helpers";
+import { GraphHoverCard } from "./graph-hover-card";
 
 type ArchNodeData = {
   label: string;
+  description: string;
   status: "existing" | "proposed";
   tint: number;
   dimmed: boolean;
@@ -146,23 +147,18 @@ function ArchEdge({
 }
 
 function ArchNode({ data }: NodeProps<Node<ArchNodeData, "arch">>) {
-  const tintStrength = 0.05 + Math.min(Math.max(data.tint, 0), 1) * 0.22;
+  // No outlines: pinned/highlighted nodes read as a stronger tint wash only.
+  const attention = data.pinned || data.highlighted ? 0.1 : 0;
+  const tintStrength = 0.05 + Math.min(Math.max(data.tint, 0), 1) * 0.22 + attention;
   return (
     <div
-      className={`relative h-full w-full rounded-dusk-code px-3 py-2 ${data.pulsing ? "arch-pulse" : ""}`}
+      className={`relative h-full w-full overflow-hidden rounded-dusk-code ${data.pulsing ? "arch-pulse" : ""}`}
       style={{
         backgroundColor: `rgba(45, 136, 255, ${tintStrength.toFixed(2)})`,
         backgroundBlendMode: "screen",
-        border:
-          data.status === "proposed"
-            ? `1.5px dashed ${duskDarkTokens.color.peach}`
-            : `1px solid ${duskDarkTokens.color.hairlineStrong}`,
-        outline: data.pinned
-          ? `2px solid ${duskDarkTokens.color.accent}`
-          : data.highlighted
-            ? `2px solid ${duskDarkTokens.color.accentSoft}`
-            : "none",
-        outlineOffset: 2,
+        // No outlines or hairlines on cards: the only frame is the dashed
+        // peach ring that marks a proposed node.
+        border: data.status === "proposed" ? `1.5px dashed ${duskDarkTokens.color.peach}` : "none",
         opacity: data.dimmed ? 0.25 : 1,
         transition: "opacity 120ms ease",
       }}
@@ -177,17 +173,12 @@ function ArchNode({ data }: NodeProps<Node<ArchNodeData, "arch">>) {
           height: 6,
         }}
       />
-      <p className="truncate text-[13px] font-semibold leading-5 text-dusk-ink">{data.label}</p>
-      {data.status === "proposed" ? (
-        <span className="mt-1 inline-block rounded-dusk-pill bg-dusk-peach-wash px-2 py-px text-[10px] uppercase tracking-widest text-dusk-peach">
-          proposed
-        </span>
-      ) : null}
-      {data.hubUsers !== null ? (
-        <span className="absolute -right-2 -top-2 rounded-dusk-pill bg-dusk-pill px-1.5 py-px font-mono text-[10px] text-dusk-muted shadow">
-          used by {data.hubUsers}
-        </span>
-      ) : null}
+      <GraphCard
+        label={data.label}
+        description={data.description}
+        status={data.status}
+        hubUsers={data.hubUsers}
+      />
       <Handle
         type="source"
         position={Position.Bottom}
@@ -230,17 +221,6 @@ interface ArchitectureDiagramProps {
   pulseIds: string[];
   pinnedId: string | null;
   onPin: (node: PinnedNode) => void;
-}
-
-function NeighborList({ title, names }: { title: string; names: string[] }) {
-  return (
-    <div>
-      <p className="text-[10px] uppercase tracking-widest text-dusk-muted">{title}</p>
-      <p className="mt-0.5 text-[13px] leading-5 text-dusk-ink">
-        {names.length > 0 ? names.join(", ") : "—"}
-      </p>
-    </div>
-  );
 }
 
 export const ArchitectureDiagram = memo(function ArchitectureDiagram({
@@ -365,6 +345,7 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
         style: { width: ARCH_NODE_WIDTH, height: ARCH_NODE_HEIGHT },
         data: {
           label: node?.label ?? placed.id,
+          description: node?.description ?? "",
           status: node?.status ?? "existing",
           tint: total > 0 ? sessions / total : 0,
           dimmed: !near,
@@ -432,33 +413,9 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
   };
 
   const popoverEvidence = hovered ? evidence[hovered.id] : undefined;
-  const receivesFrom = hovered
-    ? flowEdges
-        .filter(
-          (edge) =>
-            edge.to === hovered.id || (edge.bidirectional === true && edge.from === hovered.id),
-        )
-        .map(
-          (edge) =>
-            byId.get(edge.to === hovered.id ? edge.from : edge.to)?.label ??
-            (edge.to === hovered.id ? edge.from : edge.to),
-        )
-    : [];
-  const sendsTo = hovered
-    ? flowEdges
-        .filter(
-          (edge) =>
-            edge.from === hovered.id || (edge.bidirectional === true && edge.to === hovered.id),
-        )
-        .map(
-          (edge) =>
-            byId.get(edge.from === hovered.id ? edge.to : edge.from)?.label ??
-            (edge.from === hovered.id ? edge.to : edge.from),
-        )
-    : [];
 
   return (
-    <div className="relative h-[520px] overflow-hidden rounded-dusk-card bg-dusk-surface">
+    <div className="relative h-[520px] overflow-hidden">
       {layout === null ? (
         <p
           role="status"
@@ -467,50 +424,37 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
           Laying out the diagram…
         </p>
       ) : null}
-      <ReactFlow
-        key={architecture.version}
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        onNodeMouseEnter={onNodeMouseEnter}
-        onNodeMouseLeave={onNodeMouseLeave}
-        onNodeClick={(_event, node) => {
-          if (node.type !== "arch") return;
-          const target = byId.get(node.id);
-          if (target) onPin({ id: target.id, label: target.label });
-        }}
-        nodesConnectable={false}
-        fitView
-        fitViewOptions={{ padding: 0.12 }}
-        minZoom={0.4}
-        maxZoom={1.5}
-        proOptions={{ hideAttribution: false }}
-      >
-        <Background color={duskDarkTokens.color.hairlineStrong} gap={28} size={1} />
-      </ReactFlow>
+      <div className="absolute inset-0">
+        <ReactFlow
+          key={architecture.version}
+          nodes={nodes}
+          edges={edges}
+          nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
+          onNodeMouseEnter={onNodeMouseEnter}
+          onNodeMouseLeave={onNodeMouseLeave}
+          onNodeClick={(_event, node) => {
+            if (node.type !== "arch") return;
+            const target = byId.get(node.id);
+            if (target) onPin({ id: target.id, label: target.label });
+          }}
+          nodesConnectable={false}
+          fitView
+          fitViewOptions={{ padding: 0.12 }}
+          minZoom={0.4}
+          maxZoom={1.5}
+          proOptions={{ hideAttribution: false }}
+        />
+      </div>
       {hovered ? (
         <div ref={refs.setFloating} style={{ ...floatingStyles, zIndex: 20 }}>
-          <div
+          <GraphHoverCard
             key={hovered.id}
-            className="arch-popover-in w-64 space-y-2 rounded-dusk-code border border-dusk-hairline-strong bg-dusk-pill p-3 shadow-xl"
-          >
-            <p className="text-sm font-semibold text-dusk-ink">{hovered.label}</p>
-            <p className="text-[13px] leading-5 text-dusk-muted">{hovered.description}</p>
-            <NeighborList title="Receives from" names={receivesFrom} />
-            <NeighborList title="Sends to" names={sendsTo} />
-            <p className="text-[13px] text-dusk-ink">
-              Agent worked here:{" "}
-              <span className="font-semibold">
-                {popoverEvidence ? popoverEvidence.sessions : 0} of{" "}
-                {popoverEvidence ? popoverEvidence.totalSessions : 0} sessions
-              </span>
-            </p>
-            <p className="font-mono text-[11px] text-dusk-muted">
-              Last touched:{" "}
-              {popoverEvidence?.lastTouched ? formatTime(popoverEvidence.lastTouched) : "never"}
-            </p>
-          </div>
+            label={hovered.label}
+            description={hovered.description}
+            sessions={popoverEvidence ? popoverEvidence.sessions : 0}
+            totalSessions={popoverEvidence ? popoverEvidence.totalSessions : 0}
+          />
         </div>
       ) : null}
     </div>

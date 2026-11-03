@@ -3,6 +3,7 @@ import {
   CHANGES_FILE_NAME,
   ChangeIdSchema,
   ChangeSchema,
+  ChangesArtifactSchema,
   firstNotUnderstood,
   PROGRESS_FILE_NAME,
   ProgressSchema,
@@ -205,5 +206,29 @@ describe("review-reader progress contracts", () => {
       changes: "changes.json",
       progress: "progress.json",
     });
+  });
+
+  it("validates the persisted changes artifact (the demo builder shares it)", () => {
+    const valid = {
+      sessionId: "ses_demo",
+      generatedAt: "2026-11-02T00:00:00.000Z",
+      generator: "model-changes-v1",
+      summary: "Two reviewed changes.",
+      diagnostics: ["changes_evidence_gated_v2"],
+      changes: [minimalChange()],
+      snapshotWatermark: { snapshotCount: 3, lastOid: "abc123" },
+    };
+    expect(ChangesArtifactSchema.safeParse(valid).success).toBe(true);
+    // Pre-watermark artifacts stay readable: the watermark is optional.
+    const { snapshotWatermark: _dropped, ...unwatermarked } = valid;
+    expect(ChangesArtifactSchema.safeParse(unwatermarked).success).toBe(true);
+    // Zero-diff sessions are honest artifacts; the builder (not the schema)
+    // decides they cannot demo.
+    expect(ChangesArtifactSchema.safeParse({ ...valid, changes: [] }).success).toBe(true);
+    // One bad change entry fails the whole artifact, never partially.
+    const badEntry = { ...valid, changes: [minimalChange({ id: "h_0123456789abcdef" })] };
+    expect(ChangesArtifactSchema.safeParse(badEntry).success).toBe(false);
+    const missingSummary = { ...valid, summary: undefined };
+    expect(ChangesArtifactSchema.safeParse(missingSummary).success).toBe(false);
   });
 });

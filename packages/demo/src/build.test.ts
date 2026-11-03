@@ -2,32 +2,43 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { openEchoDb, upsertProject, upsertSession } from "@echo/db";
+import {
+  openEchoDb,
+  recordChangeRef,
+  recordProgress,
+  upsertProject,
+  upsertSession,
+} from "@echo/db";
 import { describe, expect, it } from "vitest";
 import { buildDemoBundle, DemoBuildError } from "./build";
 
 const PROJECT_ID = "prj_demo_build";
 const SESSION_A = "ses_demo_build_a";
 const SESSION_B = "ses_demo_build_b";
+const CHANGE_A = "c_0123456789abcdef";
 
-function storyFor(sessionId: string): Record<string, unknown> {
+function changesFor(sessionId: string, changeCount = 1): Record<string, unknown> {
   return {
-    schemaVersion: 1,
     sessionId,
     generatedAt: "2026-10-31T00:00:00.000Z",
-    generator: { kind: "skeleton", model: null, promptVersion: "skeleton-v1" },
-    tapeWatermark: { eventCount: 1, sha256: "abc" },
-    summary: "did demo things",
-    skeleton: true,
-    shortVersion: [],
-    askVsResult: { asked: [], delivered: [], extras: [], missing: [] },
-    cards: [],
-    routineSummary: null,
-    detours: [],
-    looseEnds: [],
-    blindSpots: [],
-    gaps: [],
-    verifiedCounts: { observed: 0, partlyObserved: 0, agentStated: 0, nothing: 0, total: 0 },
+    generator: "model-changes-v1",
+    summary: "This session contains 1 reviewed change.",
+    diagnostics: ["changes_evidence_gated_v2"],
+    changes: Array.from({ length: changeCount }, (_, i) => ({
+      id: i === 0 ? CHANGE_A : `c_0123456789abcde${i}`,
+      version: 1,
+      snapshotPair: { prevOid: "aaa", nextOid: "bbb" },
+      title: "Retry failed billing writes once",
+      summary: "The agent added a retry around billing writes. It fires once after a short delay.",
+      before: ["Billing writes failed without a retry."],
+      now: ["Billing writes retry once after a short delay."],
+      howItWorks: ["The wrapper catches the write error."],
+      headsUp: [{ type: "watch_out", text: "Retries can double-charge on timeouts." }],
+      files: [{ path: "src/billing/retry.ts", note: "Adds the one-shot retry wrapper." }],
+      digest: Array.from({ length: 60 }, (_, w) => `token${w}`).join(" "),
+      createdFrom: { kind: "snapshot_pair", prevOid: "aaa", nextOid: "bbb" },
+    })),
+    snapshotWatermark: { snapshotCount: 2, lastOid: "bbb" },
   };
 }
 
@@ -88,6 +99,20 @@ function seedSource(sessions: string[]): Fixture {
         tapePath: join(dataDir, "projects", PROJECT_ID, "sessions", sessionId, "tape.jsonl"),
         captureQuality: "full",
       });
+      // Builder-side reading state: must never ship in the bundle.
+      recordChangeRef(db, {
+        sessionId,
+        changeId: CHANGE_A,
+        version: 1,
+        prevOid: "aaa",
+        nextOid: "bbb",
+      });
+      recordProgress(db, {
+        sessionId,
+        changeId: CHANGE_A,
+        version: 1,
+        state: "understood",
+      });
       db.prepare(
         `INSERT INTO events (id, session_id, tape_seq, source_sequence, kind, ts, observed_at, tool_call_id, payload_json, redaction_json, created_at, record_key)
          VALUES (?, ?, 0, 0, 'prompt.submitted', '2026-10-31T00:00:00.000Z', '2026-10-31T00:00:00.000Z', NULL, '{}', '[]', '2026-10-31T00:00:00.000Z', NULL)`,
@@ -101,7 +126,7 @@ function seedSource(sessions: string[]): Fixture {
     const dir = join(dataDir, "projects", PROJECT_ID, "sessions", sessionId);
     mkdirSync(join(dir, "artifacts"), { recursive: true });
     writeFileSync(join(dir, "tape.jsonl"), '{"v":1}\n');
-    writeFileSync(join(dir, "story.json"), JSON.stringify(storyFor(sessionId)));
+    writeFileSync(join(dir, "changes.json"), JSON.stringify(changesFor(sessionId)));
     writeFileSync(join(dir, "artifacts", "checks_v2.json"), JSON.stringify(checksFor(sessionId)));
   }
 
@@ -146,7 +171,7 @@ describe("demo build", () => {
     });
     expect(steps.length).toBeGreaterThan(3);
     expect(meta).toMatchObject({
-      version: 1,
+      version: 2,
       builtAt: "2026-10-31T00:00:00.000Z",
       projectId: PROJECT_ID,
       projectName: "demo",
@@ -159,6 +184,8 @@ describe("demo build", () => {
     expect(dbRows(bakedData, "events")).toBe(1);
     expect(dbRows(bakedData, "projects")).toBe(1);
     expect(dbRows(bakedData, "reader_checkpoints")).toBe(0);
+    expect(dbRows(bakedData, "change_refs")).toBe(0);
+    expect(dbRows(bakedData, "change_progress")).toBe(0);
     const db = openEchoDb(join(bakedData, "echo.sqlite"));
     try {
       const root = db.prepare("SELECT canonical_root FROM projects").get() as {
@@ -200,6 +227,22 @@ describe("demo build", () => {
     expect(() =>
       buildDemoBundle({ dataDir, sessionIds: [SESSION_A], outDir, webDir }),
     ).toThrowError(/bundle scan failed.*bearer-token/);
+  });
+
+  it("rejects sessions with no reviewed changes to show", () => {
+    const { dataDir, webDir, outDir } = seedSource([SESSION_A]);
+    const changesPath = join(
+      dataDir,
+      "projects",
+      PROJECT_ID,
+      "sessions",
+      SESSION_A,
+      "changes.json",
+    );
+    writeFileSync(changesPath, JSON.stringify(changesFor(SESSION_A, 0)));
+    expect(() =>
+      buildDemoBundle({ dataDir, sessionIds: [SESSION_A], outDir, webDir }),
+    ).toThrowError(/no reviewed changes/);
   });
 
   it("rejects bad allowlists and missing bakes", () => {

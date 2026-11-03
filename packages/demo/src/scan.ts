@@ -14,7 +14,10 @@ const PLACEHOLDER_PATTERN = /\[REDACTED:[^\]\r\n]*\]/g;
  * returns rule ids only, never the matched secrets.
  */
 export function scanTextContent(text: string, allowedSecrets: string[]): string[] {
-  let stripped = text.replace(PLACEHOLDER_PATTERN, "");
+  // Placeholders stand in for already-redacted values, so they read as empty
+  // (not absent): stripping to "" glued KEY=" to trailing code the rules
+  // then matched as a secret. The quotes break adjacency on both sides.
+  let stripped = text.replace(PLACEHOLDER_PATTERN, '""');
   for (const secret of allowedSecrets) {
     if (secret.length > 0) stripped = stripped.split(secret).join("");
   }

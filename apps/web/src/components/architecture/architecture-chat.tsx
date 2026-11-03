@@ -75,10 +75,6 @@ export function ArchitectureChat({
   const queryClient = useQueryClient();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
-  // Think = diagram-aware mode. When on, answers highlight related nodes and
-  // patches offer an Apply button. When off, the same request is sent but the
-  // response renders as plain text (no highlight, no apply affordance).
-  const [think, setThink] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [failure, setFailure] = useState<string | null>(null);
   const keyCounter = useRef(0);
@@ -122,12 +118,10 @@ export function ArchitectureChat({
           applied: response.applied,
         },
       ]);
-      if (think) {
-        onHighlight(response.relatedNodeIds);
-        if (response.patch && response.applied) {
-          onPatched(response.patch);
-          refresh();
-        }
+      onHighlight(response.relatedNodeIds);
+      if (response.patch && response.applied) {
+        onPatched(response.patch);
+        refresh();
       }
     },
     onError: (error, variables) => {
@@ -226,16 +220,54 @@ export function ArchitectureChat({
     : donePair.answer.applied
       ? "Applied to diagram"
       : donePair.answer.patch
-        ? think
-          ? "Patch ready — apply below"
-          : "Diagram edits off — enable Think to apply"
+        ? "Patch ready — apply below"
         : undefined;
 
   return (
     <div className="flex h-[520px] flex-col overflow-hidden rounded-dusk-card bg-dusk-surface">
-      <div className="border-b border-dusk-hairline px-4 py-3">
-        <h3 className="text-sm font-semibold text-dusk-ink">Diagram chat</h3>
-        <p className="text-xs text-dusk-muted">Ask about the system, or describe a change.</p>
+      <div className="px-4 pb-3 pt-4">
+        <div className="flex items-center">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <h3 className="text-sm font-semibold tracking-tight text-dusk-ink">Diagram chat</h3>
+              {send.isPending ? (
+                <span className="inline-flex items-center gap-1.5 rounded-dusk-pill bg-dusk-accent-wash px-2 py-0.5 text-[11px] font-medium leading-4 text-dusk-accent-soft">
+                  <span
+                    aria-hidden="true"
+                    className="size-1.5 rounded-full bg-dusk-accent motion-safe:animate-pulse"
+                  />
+                  Thinking
+                </span>
+              ) : latestPatch ? (
+                <span className="inline-flex items-center gap-1.5 rounded-dusk-pill bg-dusk-secondary px-2 py-0.5 text-[11px] font-medium leading-4 text-dusk-accent-soft">
+                  <span aria-hidden="true" className="size-1.5 rounded-full bg-dusk-accent" />
+                  Patch ready
+                </span>
+              ) : null}
+            </div>
+            <p className="mt-0.5 truncate text-xs leading-5 text-dusk-muted">
+              Ask about the system, or describe a change.
+            </p>
+          </div>
+        </div>
+        {messages.length === 0 && !send.isPending ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setInput("What does ingest do?")}
+              className="rounded-dusk-pill border border-dusk-hairline-strong bg-dusk-pill/60 px-3 py-1.5 text-xs leading-4 text-dusk-muted outline-none transition-colors hover:border-dusk-accent/40 hover:text-dusk-ink focus-visible:ring-2 focus-visible:ring-dusk-accent"
+            >
+              What does ingest do?
+            </button>
+            <button
+              type="button"
+              onClick={() => setInput("Add a retry queue between ingest and storage")}
+              className="rounded-dusk-pill border border-dusk-hairline-strong bg-dusk-pill/60 px-3 py-1.5 text-xs leading-4 text-dusk-muted outline-none transition-colors hover:border-dusk-accent/40 hover:text-dusk-ink focus-visible:ring-2 focus-visible:ring-dusk-accent"
+            >
+              Add a retry queue between ingest and storage
+            </button>
+          </div>
+        ) : null}
       </div>
       {history.length > 0 ? (
         <div
@@ -251,11 +283,6 @@ export function ArchitectureChat({
             />
           ))}
         </div>
-      ) : null}
-      {messages.length === 0 && !send.isPending ? (
-        <p className="px-4 pt-3 text-sm leading-6 text-dusk-muted">
-          Try “add a retry queue between ingest and storage”, or ask what a part does.
-        </p>
       ) : null}
       {pinned ? (
         <div className="flex px-4 pt-2">
@@ -281,16 +308,14 @@ export function ArchitectureChat({
           elapsedSeconds={elapsed}
           value={input}
           onValueChange={setInput}
-          think={think}
-          onThinkChange={setThink}
           onSubmit={submit}
           onStop={stop}
-          placeholder="Describe a change…"
-          followUpPlaceholder="Ask a follow-up"
+          placeholder="Ask about the system or describe a change…"
+          followUpPlaceholder="Ask a follow-up about the diagram…"
           answerNote={answerNote}
         />
       </div>
-      {donePair && latestPatch && think ? (
+      {donePair && latestPatch ? (
         <div className="border-t border-dusk-hairline px-4 py-2">
           <button
             type="button"

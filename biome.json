@@ -5,6 +5,7 @@
       "**",
       "!**/*.md",
       "!**/dist",
+      "!**/demo-bundle",
       "!**/node_modules",
       "!**/coverage",
       "!**/pnpm-lock.yaml",

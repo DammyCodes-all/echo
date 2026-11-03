@@ -14,6 +14,20 @@ describe("demo scan", () => {
     expect(JSON.stringify(bare)).not.toContain("abcdefghij");
   });
 
+  it("does not match code adjacent to a stripped placeholder", () => {
+    // Regression: the bake failed on a redaction-test assertion shaped like
+    // startsWith("OPENAI_API_KEY=<placeholder>")).toBe(true) — stripping the
+    // placeholder to empty glued KEY=" to trailing code the rule then read
+    // as a secret value. The placeholder proves that position redacted.
+    expect(
+      scanTextContent('x("OPENAI_API_KEY=[REDACTED:env-assignment:fe65]")).toBe(true);', []),
+    ).toEqual([]);
+    // Control: a real secret in the same shape still fails closed.
+    expect(scanTextContent('x("OPENAI_API_KEY=hunter2hunter2")).toBe(true);', [])).toEqual([
+      "env-assignment",
+    ]);
+  });
+
   it("honors explicitly allowed synthetic values", () => {
     expect(scanTextContent("token sk-SYNTHETIC_DEMO_0000 ok", ["sk-SYNTHETIC_DEMO_0000"])).toEqual(
       [],

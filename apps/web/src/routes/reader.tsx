@@ -576,33 +576,37 @@ export function ReaderPage() {
                     />
                   ) : null}
 
-                  <div className="space-y-2 border-t border-dusk-hairline pt-4">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <button
-                        type="button"
-                        onClick={() => jump(viewIndex - 1)}
-                        disabled={viewIndex === 0}
-                        className={GHOST}
-                      >
-                        ← Back
-                      </button>
-                      <div className="flex flex-wrap items-center gap-3">
+                  {/* The action bar is fixed to the viewport, so this holds its in-flow room. */}
+                  <div aria-hidden className="h-32 lg:h-20" />
+                  <div className="fixed inset-x-0 bottom-0 z-20 border-t border-dusk-hairline bg-dusk-base/95 backdrop-blur lg:left-[max(1.5rem,calc((100vw-80rem)/2+1.5rem))] lg:right-[max(26rem,calc((100vw-80rem)/2+26rem))]">
+                    <div className="px-6 pb-4 pt-4 lg:px-0">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
                         <button
                           type="button"
-                          onClick={handleAskAboutChange}
-                          disabled={gate !== null}
+                          onClick={() => jump(viewIndex - 1)}
+                          disabled={viewIndex === 0}
                           className={GHOST}
                         >
-                          Ask about this change
+                          ← Back
                         </button>
-                        <button
-                          type="button"
-                          onClick={handleGotIt}
-                          disabled={gate !== null}
-                          className={PRIMARY}
-                        >
-                          Got it, next change →
-                        </button>
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={handleAskAboutChange}
+                            disabled={gate !== null}
+                            className={GHOST}
+                          >
+                            Ask about this change
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleGotIt}
+                            disabled={gate !== null}
+                            className={PRIMARY}
+                          >
+                            Got it, next change →
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>

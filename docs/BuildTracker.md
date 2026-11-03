@@ -1600,3 +1600,72 @@ notes.
 - status: done
 - evidence: `pnpm lint` clean (4 pre-existing infos); config/docs-only delta, code gate untouched
 - notes: Deliberately no fly.toml or host-specific config until the host decision lands. Stage and commit nothing.
+## 2026-11-02 — Graph cards + hover cards in jul.chat dark-card language (no outlines)
+
+- item: typed `GraphCard` (`apps/web/src/components/architecture/graph-card.tsx`: centered title + truncated description line + proposed pill + hub badge) and `GraphHoverCard` (`graph-hover-card.tsx`: jul.chat `rounded-3xl` centered card with neighbor lists, evidence lines, Not now / Explore buttons with lucide `X`/`Pin`, pinned disables Explore); `ArchNode` in `architecture-diagram.tsx` renders `GraphCard` inside the existing tinted frame and the floating popover renders `GraphHoverCard`; outlines removed entirely (pinned/highlighted read as a +0.1 tint wash, no `outline` left in the architecture components)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 268 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm build` ok; headless-Chrome screenshots of the real components (tsx `renderToStaticMarkup` + dev-server styles): golden + long-label/proposed/hub edge for nodes (truncation holds, no outline), golden + empty-neighbor/pinned edge for hover (— placeholders, Pinned disabled); dev server reaped afterwards
+- notes: Option B from the plan — no `react-jsx-parser`, no shadcn init, no new deps (`lucide-react` already present). UI is vitest-exempt, no new tests. `highlightedIds`/`pinnedId` still flow into node data (tint only) and the hover `pinned` state; `NeighborList` removed with the old popover. User follow-up honored: outlines deleted after the first pass.
+
+## 2026-11-02 — Graph cards borderless (outline follow-up)
+
+- item: existing-status nodes now render with `border: none` — the 1px hairline read as a blue ring on the tint wash, which the screenshot flagged; only proposed nodes keep a frame (dashed peach = status, not decoration). Also dropped the native `title` tooltips on the card label/description (the black tooltip box in the screenshot); full text lives in the hover card
+- status: done
+- evidence: `tsc` clean, `biome` 268 files (4 pre-existing infos), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm build` ok; headless-Chrome screenshot of the real `GraphCard`: wash with rounded corners, no ring
+- notes: Verified React Flow's own stylesheet sets `outline: none` on nodes, so the app border was the sole source. Nothing staged or committed.
+
+## 2026-11-02 — Diagram chat header redesign
+
+- item: `apps/web/src/components/architecture/architecture-chat.tsx` top block — Waypoints tile in accent-wash + title/status pill (Thinking / Patch ready / Ready) + single muted subtitle; removed the `border-b` title bar and the static "Try …" hint paragraph, replaced with two clickable starter chips ("What does ingest do?", "Add a retry queue between ingest and storage") that fill the composer; Dusk tokens only, sentence case, no new deps
+- status: done
+- evidence: `tsc` clean, `biome` 268 files (4 pre-existing infos), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm --filter @echo/web build` ok (full `pnpm build` timed out under parallel-tree contention; web bundle verified separately)
+- notes: UI is vitest-exempt, no new tests. A concurrent uncommitted slice is editing the same file (think-toggle removal, placeholder copy); this entry's diff sits on top of that working tree — re-applied the Waypoints import + Ready pill after the concurrent write dropped them. Nothing staged or committed.
+
+## 2026-11-02 — Diagram chat header cleanup + compact composer
+
+- item: removed the idle `Ready` pill and the Waypoints header icon from `architecture-chat.tsx` (`Thinking` / `Patch ready` states kept; unused import dropped); compacted the `ThinkingPromptInput` composer (single-row default: autosize floor 64→40px, rows 2→1, `h-10`/`min-h-10`, form `p-4`→`p-3`, button row `mt-3`→`mt-2`)
+- status: done
+- evidence: `tsc` clean, `biome` clean (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm build` ok (vite web build included)
+- notes: UI verified via build only, no browser pass. Nothing staged or committed.
+
+## 2026-11-02 — Remove Undo/Regenerate header buttons (architecture page)
+
+- item: removed the Undo/Regenerate button group from the `System at a glance` header (`apps/web/src/routes/project-architecture.tsx`: header is now title + subtitle only) plus the now-unused undo mutation, `undoError` state and error line; empty-state first `Generate architecture` button kept so a map-less project can still create its first map, with generation progress/error/warnings UI untouched; server `undo`/`generate` endpoints and `apps/web/src/api.ts` unchanged
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`; 1 format reflow on the edited file), `pnpm test` → 75 files / 728 passed + 8 skipped, `pnpm build` ok; browser pass on isolated stack (fresh `VACUUM INTO` snapshot, daemon :4791 `ECHO_MODEL=off`, vite :5211, CDP-driven system Chrome, all reaped): echo map page settles with diagram markup, zero Undo/Regenerate buttons, no load error; map-less project shows empty state with first-generate kept and no Undo; 10/10 DOM assertions pass, sole console error on both pages is sandbox-blocked Google Fonts (`ERR_INTERNET_DISCONNECTED`, environmental); screenshots `/tmp/arch-buttons-pass/{with-map,no-map}.png`; POST undo on the snapshot still returns a new version (backend intact)
+- notes: UI is vitest-exempt, no new tests. Two harness lessons: (1) `--dump-dom`/`--virtual-time-budget` hang forever on this page — the open SSE stream freezes virtual-time expiry and `--timeout` is ignored by headless=new — CDP navigate + settle-poll + evaluate is the working shape (`/tmp/cdp-arch.mjs` + `/tmp/arch-buttons-pass2.sh` kept for re-runs). (2) `pkill -f` with a self-matching pattern SIGTERMs your own shell (tracker warned); verify-by-port + kill explicit PIDs instead. Concurrent session is mid-rewrite of the same page's chat/diagram components — my diff touches only the header block + undo code in `project-architecture.tsx`; HMR churn from their writes was absorbed by settle polling. Nothing staged or committed.
+
+## 2026-11-03 — Demo repair + rebake for the reader (ADR 0017)
+
+- item: demo targets the reader instead of the deleted story route — `ChangesArtifactSchema` in contracts (builder validates strictly, server keeps its lenient reader); `build.ts` requires non-empty `changes.json` (meta v2), copies it instead of `story.json`, wipes `change_refs`/`change_progress`, full-wipes before narrowing parents (FK order); `verify.ts` 11 checks (reader changes, change code diffs, baked generate, MCQ grade, off-tape refusal, judgment 503, skip 403, progress 403, unknown 404, web index); `POST /progress` 403 in demo; demo page hosts ask (`AskThreadPanel` slide-over, citations land on the reader) + reader copy; scanner reads placeholders as empty values (`""`) instead of absent text; rebaked `01a19d97` (muse, 9 model changes, 3 fresh checks, 2 seeded asks)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 267 files (4 pre-existing infos), `pnpm test` → 75 files / 731 passed + 8 skipped, `pnpm build` ok; `demo build` → 11/11 smoke on the bake; bundle `/tmp/echo-demo-reader` (33M, meta v2, 1 session / 2863 events / 69 snapshots, refs+progress+checkpoints 0, root `/demo/echo`); prod-deploy layout boots demo + serves reader/generate/403s/France-refusal/404; CDP browser pass 10/10 (demo copy, recorded examples, ask panel opens with thread, reader 9 changes, zero failed requests)
+- notes: Two real bugs fixed en route, both caught by tests before the fix: (1) full-wipe tables with session REFERENCES tripped FK enforcement when narrowing parents first — latent on real DBs, my seeded refs/progress exposed it. (2) Bake failed closed on `shadow.git` redaction-test blob: placeholder strip-to-empty glued `KEY="` to trailing assertion code the env rule matched as a secret (single line 7, placeholder-bearing, proven content-free); fix reads placeholders as empty values with a regression test + fail-closed control. Cause-first per debugging skill; no `--allow-secret` needed. Ask seeding needed one retry (transient model_error, self-healed). Concurrent session committed the repair slices mid-unit (contracts/build/verify/route/demo-page commits on main); remaining uncommitted here is the scan fix + test + ADR 0017. CDP screenshot helper had a wrong response shape (`result.result.value` vs `result.data`) so no PNGs — DOM assertions are the evidence. Bundle stays in /tmp; rebake with `node apps/cli/dist/index.js demo build --session 01a19d97-343f-7770-93a8-c842c08df84a --out <dir>`. Nothing staged or committed.
+
+## 2026-11-03 — Compact diagram-chat composer + smaller placeholder
+
+- item: `apps/web/src/components/ui/thinking-prompt-input.tsx` composer compaction — form `rounded-3xl p-3`→`rounded-2xl px-2.5 py-2` (`shadow-xl`→`shadow-lg`), textarea `h-10/min-h-10 text-[17px] leading-7`→`h-8/min-h-8 text-sm leading-5` with `placeholder:text-[13px]`, button `size-9 rounded-xl`→`size-8 rounded-lg`, button row `mt-2`→`mt-1.5`; autosize floor 40→32px, cap 120→96px to match
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 267 files (4 pre-existing `useLiteralKeys` infos in untouched `checks-v2.test.ts`), `pnpm test` → 75 files / 731 passed + 8 skipped, `pnpm build` ok
+- notes: UI is vitest-exempt, no new tests. Nothing staged or committed.
+
+## 2026-11-03 — Graph backdrop: line grid + accent sheen replaces dot grid
+
+- item: new `GraphBackdrop` (`apps/web/src/components/architecture/graph-backdrop.tsx`, no props/state, aria-hidden + pointer-events-none): sparse hairline line-grid (`6rem x 4rem`, edge-dissolving radial mask) + one soft radial accent sheen top-right (`--color-dusk-accent-glow`, new `@theme` token at 10% Meta blue); `ArchitectureDiagram` renders it beneath ReactFlow (flow wrapped in `absolute inset-0` so DOM order, not z-index, stacks it) and drops the `<Background>` dots; adapted from two pasted background snippets, translated into Dusk tokens (no fuchsia/lavender, no new deps, not in `components/ui` — repo has no shadcn structure and tokens forbid off-palette colors)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 268 files (4 pre-existing infos), `pnpm test` → 75 files / 731 passed + 8 skipped, `pnpm build` ok; browser pass on the user's live stack (fresh headless targets, user processes untouched): before/after screenshots compared (dots gone, grid + sheen render, 18 nodes intact), CDP hit-test proves the backdrop never intercepts (H2 → node chain, node pointer-events all), click-to-pin verified (`Unpin Tape Storage` appears), zero JS exceptions
+- notes: UI is vitest-exempt, no new tests. CDP `mouseMoved` does not stick React hover state here (no dimming/card) — proven pre-existing, not a regression: identical hover-card-false/pin-true on the stashed unmodified tree, and native mouseover/mouseenter events demonstrably fire; handlers, state and card code are untouched by this diff. Screenshots were workspace-temp and removed; probe scripts kept under `/tmp/echo-arch-*.mjs`. Nothing staged or committed.
+
+## 2026-11-03 — Graph canvas goes seamless (no card boundary)
+
+- item: `ArchitectureDiagram` container drops `rounded-dusk-card bg-dusk-surface` (keeps `h-[520px] overflow-hidden` as a viewport clip only) so the grid + sheen + graph sit directly on the page base with no visible edge; the architecture loading skeleton drops its fill to match; chat panel and error/empty/generating states keep their surfaces (separate components, not the canvas)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 268 files (4 pre-existing infos), `pnpm test` → 75 files / 731 passed + 8 skipped, `pnpm build` ok; browser pass on the user's live stack (fresh headless target, user processes untouched): after-screenshot shows no boundary between canvas and page, 18 nodes + grid + sheen intact
+- notes: UI is vitest-exempt, no new tests. Rounded corners went with the fill — clipping the backdrop to a rounded rect would have drawn a curved cut-line in the grid, defeating the seamless ask. Temp screenshots removed. Nothing staged or committed.
+
+## 2026-11-03 — Graph background removed completely
+
+- item: deleted `GraphBackdrop` (`apps/web/src/components/architecture/graph-backdrop.tsx`, file removed) + its import/usage in `architecture-diagram.tsx` and the now-orphaned `--color-dusk-accent-glow` `@theme` token — canvas is bare page base with nodes/edges/groups only, zero backdrop layers
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 267 files (4 pre-existing infos), `pnpm test` → 75 files green, `pnpm build` ok; browser pass on the user's live stack (fresh headless target, user processes untouched): 18 nodes render on bare base, grep-clean for backdrop/token references
+- notes: UI is vitest-exempt, no new tests. Suite needed 4 runs to land green (1 fail, then 3, then 1, then clean — rotating git-heavy flakes: changes fold 40s timeout, demo build pair); every flake passes in isolation (fold 2.5s, build 5/5), none touch this web-only diff. First screenshot attempt timed out on the 21s arch API, not the render — longer settle budget fixed it. Temp screenshots removed. Nothing staged or committed.

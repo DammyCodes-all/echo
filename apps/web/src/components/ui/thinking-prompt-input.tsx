@@ -10,7 +10,6 @@ import * as React from "react";
 
 export type ThinkingStatus = "idle" | "thinking" | "answering" | "done";
 export type ThinkingStep = { id: string; text: string; status?: "active" | "complete" };
-export type ThinkingSubmitOptions = { think: boolean };
 export type ThinkingPromptInputProps = {
   status?: ThinkingStatus;
   prompt?: string;
@@ -20,10 +19,7 @@ export type ThinkingPromptInputProps = {
   value?: string;
   defaultValue?: string;
   onValueChange?: (value: string) => void;
-  think?: boolean;
-  defaultThink?: boolean;
-  onThinkChange?: (think: boolean) => void;
-  onSubmit?: (value: string, options: ThinkingSubmitOptions) => void;
+  onSubmit?: (value: string) => void;
   onStop?: () => void;
   placeholder?: string;
   followUpPlaceholder?: string;
@@ -45,9 +41,6 @@ export function ThinkingPromptInput({
   value,
   defaultValue = "",
   onValueChange,
-  think,
-  defaultThink = true,
-  onThinkChange,
   onSubmit,
   onStop,
   placeholder = "Ask anything",
@@ -57,7 +50,6 @@ export function ThinkingPromptInput({
   className = "",
 }: ThinkingPromptInputProps) {
   const [draft, setDraft] = React.useState(defaultValue);
-  const [localThink, setLocalThink] = React.useState(defaultThink);
   const [expanded, setExpanded] = React.useState(false);
   const [reduced, setReduced] = React.useState(true);
   const transcript = React.useRef<HTMLDivElement | null>(null);
@@ -69,7 +61,6 @@ export function ThinkingPromptInput({
   const previousTurn = React.useRef({ status, prompt });
   const regionId = React.useId();
   const inputValue = value ?? draft;
-  const thinkingEnabled = think ?? localThink;
   const busy = status === "thinking" || status === "answering";
   const open = status === "thinking" || expanded;
   const seconds = Number.isFinite(elapsedSeconds) ? Math.max(0, Math.round(elapsedSeconds)) : 0;
@@ -148,7 +139,7 @@ export function ThinkingPromptInput({
       if (disposed) return;
       const before = input.getBoundingClientRect().height;
       input.style.height = "auto";
-      const height = Math.max(64, Math.min(input.scrollHeight, 120));
+      const height = Math.max(32, Math.min(input.scrollHeight, 96));
       input.style.height = `${height}px`;
       if (!reduced && Math.abs(before - height) > 1 && typeof input.animate === "function") {
         animation = input.animate([{ height: `${before}px` }, { height: `${height}px` }], {
@@ -255,7 +246,7 @@ export function ThinkingPromptInput({
   function submit() {
     const message = inputValue.trim();
     if (!message || busy || disabled || !onSubmit) return;
-    onSubmit(message, { think: thinkingEnabled });
+    onSubmit(message);
     changeValue("");
   }
 
@@ -398,7 +389,7 @@ export function ThinkingPromptInput({
       )}
       <form
         data-composer
-        className="relative mt-auto shrink-0 rounded-3xl border border-dusk-hairline bg-dusk-surface p-4 shadow-xl shadow-dusk-accent/5"
+        className="relative mt-auto shrink-0 rounded-2xl border border-dusk-hairline bg-dusk-surface px-2.5 py-2 shadow-lg shadow-dusk-accent/5"
         onSubmit={(event) => {
           event.preventDefault();
           submit();
@@ -410,7 +401,7 @@ export function ThinkingPromptInput({
           placeholder={inputPlaceholder}
           value={inputValue}
           disabled={disabled}
-          rows={2}
+          rows={1}
           onChange={(event) => changeValue(event.target.value)}
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -418,23 +409,9 @@ export function ThinkingPromptInput({
               submit();
             }
           }}
-          className="block h-16 min-h-16 w-full resize-none rounded-lg bg-transparent p-1 text-[17px] leading-7 tracking-tight text-dusk-ink outline-none placeholder:text-dusk-muted focus-visible:ring-2 focus-visible:ring-dusk-accent disabled:opacity-50"
+          className="block h-8 min-h-8 w-full resize-none rounded-lg bg-transparent px-2 py-1 text-sm leading-5 text-dusk-ink outline-none placeholder:text-[13px] placeholder:leading-5 placeholder:text-dusk-muted focus-visible:ring-2 focus-visible:ring-dusk-accent disabled:opacity-50"
         />
-        <div className="mt-3 flex items-center justify-between">
-          <button
-            type="button"
-            aria-pressed={thinkingEnabled}
-            disabled={disabled || busy}
-            onClick={() => {
-              if (think === undefined) setLocalThink(!thinkingEnabled);
-              onThinkChange?.(!thinkingEnabled);
-            }}
-            className={`inline-flex h-8 items-center gap-2 rounded-full border px-3 text-xs font-medium outline-none transition-colors motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-dusk-accent disabled:opacity-50 ${thinkingEnabled ? "border-dusk-accent/15 bg-dusk-accent-wash text-dusk-ink" : "border-dusk-hairline bg-dusk-surface text-dusk-muted"}`}
-          >
-            <Sparkles className="size-3.5" aria-hidden="true" />
-            Think
-            {thinkingEnabled && <Check className="size-3" aria-hidden="true" />}
-          </button>
+        <div className="mt-1.5 flex items-center justify-end">
           <button
             type={busy ? "button" : "submit"}
             data-stop={busy ? "" : undefined}
@@ -448,7 +425,7 @@ export function ThinkingPromptInput({
                 : undefined
             }
             disabled={disabled || (busy ? !onStop : !inputValue.trim() || !onSubmit)}
-            className="relative inline-flex size-9 shrink-0 items-center justify-center rounded-xl bg-dusk-accent text-dusk-base outline-none focus-visible:ring-2 focus-visible:ring-dusk-accent focus-visible:ring-offset-2 focus-visible:ring-offset-dusk-surface disabled:opacity-30"
+            className="relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-dusk-accent text-dusk-base outline-none focus-visible:ring-2 focus-visible:ring-dusk-accent focus-visible:ring-offset-2 focus-visible:ring-offset-dusk-surface disabled:opacity-30"
           >
             <span
               data-action-icon="send"

@@ -25,10 +25,11 @@ function sessionOf(meta: DemoBundleMeta): string {
 }
 
 /**
- * ARCH §18 build step 5 as pure HTTP: project, session, story, baked
- * generate, MCQ answer, ask refusal, readonly rejection, unknown-session
- * 404, web index. Runs model-free (the server boots ECHO_MODEL=off), so the
- * ask check uses a question the tape cannot answer and expects refusal.
+ * ARCH §18 build step 5 as pure HTTP: project, reader changes, change code,
+ * baked generate, MCQ answer, ask refusal, readonly rejections (skip and
+ * progress), unknown-session 404, web index. Runs model-free (the server
+ * boots ECHO_MODEL=off), so the ask check uses a question the tape cannot
+ * answer and expects refusal.
  */
 export async function runDemoChecks(
   fetchImpl: FetchLike,
@@ -55,12 +56,25 @@ export async function runDemoChecks(
     projects.status === 200 && projectList.some((p) => p.id === meta.projectId),
   );
 
-  const story = await get(`/api/sessions/${sessionId}/story`);
-  const storyBody = (await story.json()) as { cards?: unknown[] };
+  const reader = await get(`/api/sessions/${sessionId}/changes`);
+  const readerBody = (await reader.json()) as { changes?: Array<{ id?: unknown }> };
+  const firstChangeId =
+    typeof readerBody.changes?.[0]?.id === "string" ? readerBody.changes[0].id : null;
   check(
-    "story renders with cards",
-    story.status === 200 && Array.isArray(storyBody.cards) && storyBody.cards.length > 0,
+    "reader renders changes",
+    reader.status === 200 &&
+      Array.isArray(readerBody.changes) &&
+      readerBody.changes.length > 0 &&
+      firstChangeId !== null,
   );
+
+  if (firstChangeId) {
+    const code = await get(`/api/sessions/${sessionId}/changes/${firstChangeId}/code`);
+    const codeBody = (await code.json()) as { files?: unknown[] };
+    check("change code serves diffs", code.status === 200 && Array.isArray(codeBody.files));
+  } else {
+    check("change code serves diffs", false, "no change id in the reader response");
+  }
 
   const generated = await post(`/api/sessions/${sessionId}/checks-v2/generate`, {});
   const generatedBody = (await generated.json()) as {
@@ -113,7 +127,18 @@ export async function runDemoChecks(
     skipped.status === 403 && skippedBody.error?.code === "readonly_demo",
   );
 
-  const unknown = await get("/api/sessions/ses_unknown/story");
+  const progressed = await post(`/api/sessions/${sessionId}/progress`, {
+    changeId: "c_0123456789abcdef",
+    version: 1,
+    state: "understood",
+  });
+  const progressedBody = (await progressed.json()) as { error?: { code?: string } };
+  check(
+    "progress write rejected",
+    progressed.status === 403 && progressedBody.error?.code === "readonly_demo",
+  );
+
+  const unknown = await get("/api/sessions/ses_unknown/changes");
   check("unknown session 404s", unknown.status === 404);
 
   const index = await get("/");

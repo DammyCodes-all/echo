@@ -703,6 +703,7 @@ app.get<{ Params: { id: string; changeId: string } }>(
 );
 
 app.post<{ Params: { id: string } }>("/api/sessions/:id/progress", async (request, reply) => {
+  if (DEMO) return reply.code(403).send(demoReadonly());
   const outcome = changes.recordProgress(request.params.id, request.body);
   return reply.code(outcome.status).send(outcome.body);
 });
