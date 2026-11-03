@@ -590,6 +590,169 @@ describe("service", () => {
     }
   });
 
+  test("chat drills into requested nodes and returns ephemeral focus", async () => {
+    const { db } = seedDb();
+    try {
+      replaceProjectCodeIndex(db, "prj_1", {
+        files: [
+          {
+            file: {
+              path: "packages/capture-core/index.ts",
+              language: "ts",
+              size: 100,
+              sha256: "a",
+              parsed: true,
+            },
+            symbols: [],
+            edges: [],
+          },
+          {
+            file: {
+              path: "packages/capture-core/watch.ts",
+              language: "ts",
+              size: 80,
+              sha256: "b",
+              parsed: true,
+            },
+            symbols: [],
+            edges: [],
+          },
+          {
+            file: {
+              path: "packages/tape/ledger.ts",
+              language: "ts",
+              size: 90,
+              sha256: "c",
+              parsed: true,
+            },
+            symbols: [],
+            edges: [],
+          },
+        ],
+        state: {
+          filesHash: "h",
+          fileCount: 3,
+          symbolCount: 0,
+          edgeCount: 0,
+          stackJson: "{}",
+          indexedAt: "2026-10-29T00:00:00.000Z",
+          parser: "test",
+        },
+      });
+      const drillDetail = {
+        groups: [{ id: "capture", label: "Capture" }],
+        nodes: [
+          {
+            id: "watcher",
+            label: "File watcher",
+            group: "capture",
+            description: "Watches files.",
+            paths: ["packages/capture-core/watch.ts"],
+            status: "existing",
+          },
+          {
+            id: "normalizer",
+            label: "Normalizer",
+            group: "capture",
+            description: "Normalizes events.",
+            paths: ["packages/capture-core/index.ts"],
+            status: "existing",
+          },
+        ],
+        edges: [{ from: "watcher", to: "normalizer" }],
+      };
+      const { fetchImpl, calls } = stubFetchQueue([
+        {
+          answer: "Zooming in.",
+          autoApply: false,
+          relatedNodeIds: ["reader"],
+          focusNodeIds: ["reader", "ghost"],
+        },
+        drillDetail,
+      ]);
+      const service = createArchitectureService({ db, log: silentLog }, { env: ENV, fetchImpl });
+      saveFixture(db);
+      const outcome = await service.chat("prj_1", "show me the reader", null);
+      expect(outcome.status).toBe(200);
+      const body = outcome.body as {
+        answer: string;
+        focus: {
+          label: string;
+          nodeIds: string[];
+          detail: { nodes: Array<{ id: string }> };
+          evidence: Record<string, unknown>;
+        } | null;
+        clearFocus: boolean;
+      };
+      expect(body.answer).toBe("Zooming in.");
+      expect(body.focus?.label).toBe("Capture");
+      expect(body.focus?.nodeIds).toEqual(["reader"]);
+      expect(body.focus?.detail.nodes.map((node) => node.id)).toEqual(["watcher", "normalizer"]);
+      expect(body.clearFocus).toBe(false);
+      expect(calls()).toBe(2);
+      expect(getLatestArchitectureVersion(db, "prj_1")?.version).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("chat drops unknown focus ids without drilling", async () => {
+    const { db } = seedDb();
+    try {
+      const { fetchImpl, calls } = stubFetchQueue([
+        { answer: "Nowhere.", autoApply: false, relatedNodeIds: [], focusNodeIds: ["ghost"] },
+      ]);
+      const service = createArchitectureService({ db, log: silentLog }, { env: ENV, fetchImpl });
+      saveFixture(db);
+      const outcome = await service.chat("prj_1", "show me the ghost", null);
+      const body = outcome.body as { focus: unknown; clearFocus: boolean };
+      expect(body.focus).toBeNull();
+      expect(body.clearFocus).toBe(false);
+      expect(calls()).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("chat echoes clearFocus without drilling", async () => {
+    const { db } = seedDb();
+    try {
+      const { fetchImpl, calls } = stubFetchQueue([
+        { answer: "Whole system.", autoApply: false, relatedNodeIds: [], clearFocus: true },
+      ]);
+      const service = createArchitectureService({ db, log: silentLog }, { env: ENV, fetchImpl });
+      saveFixture(db);
+      const outcome = await service.chat("prj_1", "show everything", null);
+      const body = outcome.body as { focus: unknown; clearFocus: boolean };
+      expect(body.focus).toBeNull();
+      expect(body.clearFocus).toBe(true);
+      expect(calls()).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("chat keeps the answer when the drill fails", async () => {
+    const { db } = seedDb();
+    try {
+      const { fetchImpl } = stubFetchQueue([
+        { answer: "Trying.", autoApply: false, relatedNodeIds: [], focusNodeIds: ["reader"] },
+        { nope: true },
+      ]);
+      const service = createArchitectureService({ db, log: silentLog }, { env: ENV, fetchImpl });
+      saveFixture(db);
+      const outcome = await service.chat("prj_1", "show me the reader", null);
+      expect(outcome.status).toBe(200);
+      const body = outcome.body as { answer: string; focus: unknown; clearFocus: boolean };
+      expect(body.answer).toBe("Trying.");
+      expect(body.focus).toBeNull();
+      expect(body.clearFocus).toBe(false);
+      expect(getLatestArchitectureVersion(db, "prj_1")?.version).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test("apply saves explicitly; undo restores the previous version", () => {
     const { db } = seedDb();
     try {
