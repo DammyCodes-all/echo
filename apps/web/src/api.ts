@@ -21,7 +21,6 @@ import type {
   ProjectDisableResponse,
   ProjectEnableResponse,
   ProjectFilesResponse,
-  ProjectLearnResponse,
   ProjectSummary,
   ProjectTechStack,
   SessionHistoryResponse,
@@ -109,8 +108,6 @@ export const api = {
     getJson<ProjectSummary>(`/api/projects/${encodeURIComponent(projectId)}`),
   projectFiles: (projectId: string) =>
     getJson<ProjectFilesResponse>(`/api/projects/${encodeURIComponent(projectId)}/files`),
-  learn: (projectId: string) =>
-    getJson<ProjectLearnResponse>(`/api/projects/${encodeURIComponent(projectId)}/learn`),
   techStack: (projectId: string) =>
     getJson<ProjectTechStack>(`/api/projects/${encodeURIComponent(projectId)}/tech-stack`),
   sessions: (projectId: string) =>
