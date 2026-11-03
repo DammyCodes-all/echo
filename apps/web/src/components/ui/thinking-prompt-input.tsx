@@ -1,11 +1,13 @@
 // biome-ignore-all lint/correctness/useExhaustiveDependencies: pasted conversation
 // UI with intentional DOM-coupled effect triggers (autosize on draft,
-// autoscroll on content, FLIP on turn change). The flagged deps are props and
-// state the effects must re-run on; promoting unstable closures into deps
-// would re-fire the animations every render.
+// autoscroll on content). The flagged deps are props and state the effects
+// must re-run on; promoting unstable closures into deps would re-fire the
+// animations every render.
 "use client";
 
-import { ArrowUp, Check, ChevronRight, Sparkles, Square } from "lucide-react";
+import { SentIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
+import { Check, ChevronRight, Square } from "lucide-react";
 import * as React from "react";
 import { ModelMarkdown } from "../model-markdown";
 
@@ -27,6 +29,8 @@ export type ThinkingPromptInputProps = {
   answerNote?: string;
   disabled?: boolean;
   className?: string;
+  /** Earlier turns, rendered above the latest inside the same scroll area. */
+  history?: React.ReactNode;
 };
 
 const EMPTY_STEPS: ThinkingStep[] = [];
@@ -49,6 +53,7 @@ export function ThinkingPromptInput({
   answerNote,
   disabled = false,
   className = "",
+  history = null,
 }: ThinkingPromptInputProps) {
   const [draft, setDraft] = React.useState(defaultValue);
   const [expanded, setExpanded] = React.useState(false);
@@ -56,10 +61,7 @@ export function ThinkingPromptInput({
   const transcript = React.useRef<HTMLDivElement | null>(null);
   const transcriptBody = React.useRef<HTMLDivElement | null>(null);
   const textarea = React.useRef<HTMLTextAreaElement | null>(null);
-  const question = React.useRef<HTMLDivElement | null>(null);
   const shimmer = React.useRef<HTMLSpanElement | null>(null);
-  const inputRect = React.useRef<DOMRect | null>(null);
-  const previousTurn = React.useRef({ status, prompt });
   const regionId = React.useId();
   const inputValue = value ?? draft;
   const busy = status === "thinking" || status === "answering";
@@ -88,48 +90,8 @@ export function ThinkingPromptInput({
     if (status === "thinking" || status === "idle") setExpanded(false);
   }, [status]);
 
-  // Capture the previous input rectangle before resizing the now-empty composer.
-  React.useLayoutEffect(() => {
-    const previous = previousTurn.current;
-    previousTurn.current = { status, prompt };
-    const newTurn =
-      status !== "idle" &&
-      (previous.status === "idle" ||
-        previous.prompt !== prompt ||
-        (previous.status === "done" && busy));
-    const from = inputRect.current;
-    const bubble = question.current;
-    const panel = transcript.current;
-    if (!newTurn || !from || !bubble || !panel || reduced) return;
-    let disposed = false;
-    let animation: Animation | null = null;
-    queueMicrotask(() => {
-      if (disposed || typeof bubble.animate !== "function") return;
-      const to = bubble.getBoundingClientRect();
-      if (!to.width || !to.height) return;
-      // Let the bubble cross the gap from the composer, then restore scrolling.
-      panel.style.overflow = "visible";
-      animation = bubble.animate(
-        [
-          {
-            transform: `translate(${from.left - to.left}px, ${from.top - to.top}px) scale(${from.width / to.width}, ${from.height / to.height})`,
-          },
-          { transform: "translate(0px, 0px) scale(1, 1)" },
-        ],
-        { duration: 560, easing: EASE },
-      );
-      animation.onfinish = () => {
-        panel.style.overflow = "";
-        scrollToLatest();
-      };
-    });
-    return () => {
-      disposed = true;
-      animation?.cancel();
-      panel.style.overflow = "";
-    };
-  }, [status, prompt, busy, reduced]);
-
+  // The question bubble appears in place with no entrance motion; the
+  // transcript autoscroll below already carries the eye to the latest turn.
   // Only the composer grows for multiline drafts; the transcript remains above it.
   React.useLayoutEffect(() => {
     const input = textarea.current;
@@ -148,16 +110,6 @@ export function ThinkingPromptInput({
           easing: EASE,
         });
       }
-      const rect = input.getBoundingClientRect();
-      const style = getComputedStyle(input);
-      const left = Number.parseFloat(style.paddingLeft);
-      const top = Number.parseFloat(style.paddingTop);
-      inputRect.current = new DOMRect(
-        rect.left + left,
-        rect.top + top,
-        rect.width - left - Number.parseFloat(style.paddingRight),
-        height - top - Number.parseFloat(style.paddingBottom),
-      );
     });
     return () => {
       disposed = true;
@@ -267,11 +219,11 @@ export function ThinkingPromptInput({
           tabIndex={0}
           className="mb-4 min-h-0 flex-1 overflow-y-auto rounded-lg outline-none [overflow-anchor:none] focus-visible:ring-2 focus-visible:ring-dusk-accent"
         >
-          <div ref={transcriptBody} className="space-y-5 px-1 py-1">
+          <div ref={transcriptBody} className="space-y-3 px-1 py-1">
+            {history}
             <div
-              ref={question}
               data-question
-              className="ml-auto w-fit max-w-[94%] origin-top-left rounded-2xl rounded-br-sm bg-dusk-pill px-3.5 py-2.5 text-[13px] leading-5 text-dusk-ink"
+              className="ml-auto w-fit max-w-[85%] rounded-2xl rounded-br-md bg-dusk-accent px-3.5 py-2 text-sm leading-5 text-dusk-base"
             >
               <p className="break-words">{prompt}</p>
             </div>
@@ -287,7 +239,6 @@ export function ThinkingPromptInput({
                     onClick={() => setExpanded(!expanded)}
                     className={`flex max-w-full items-center gap-2 rounded-full text-xs outline-none transition-colors motion-reduce:transition-none focus-visible:ring-2 focus-visible:ring-dusk-accent ${status === "thinking" ? "h-7 w-full text-dusk-muted" : "border border-dusk-hairline bg-dusk-pill/60 px-2.5 py-1.5 text-dusk-muted hover:bg-dusk-pill hover:text-dusk-ink"}`}
                   >
-                    <Sparkles className="size-3.5 shrink-0 text-dusk-muted" aria-hidden="true" />
                     {status === "thinking" ? (
                       <span
                         ref={shimmer}
@@ -355,7 +306,7 @@ export function ThinkingPromptInput({
                   data-answer
                   aria-label="Response"
                   aria-live="off"
-                  className="mt-4 space-y-2.5 break-words text-sm leading-6 text-dusk-ink"
+                  className="mt-4 space-y-2 break-words px-1 py-1 text-sm leading-6 text-dusk-ink"
                 >
                   <ModelMarkdown text={answer} />
                   {status === "answering" && (
@@ -383,7 +334,7 @@ export function ThinkingPromptInput({
       )}
       <form
         data-composer
-        className="relative mt-auto shrink-0 rounded-2xl border border-dusk-hairline bg-dusk-surface px-2.5 py-2 shadow-lg shadow-dusk-accent/5"
+        className="relative mt-auto flex shrink-0 items-center gap-2 rounded-full border border-dusk-hairline bg-dusk-surface px-1.5 py-1.5 shadow-sm focus-within:border-dusk-accent/50 focus-within:ring-1 focus-within:ring-dusk-accent/20"
         onSubmit={(event) => {
           event.preventDefault();
           submit();
@@ -403,40 +354,38 @@ export function ThinkingPromptInput({
               submit();
             }
           }}
-          className="block h-8 min-h-8 w-full resize-none rounded-lg bg-transparent px-2 py-1 text-sm leading-5 text-dusk-ink outline-none placeholder:text-[13px] placeholder:leading-5 placeholder:text-dusk-muted focus-visible:ring-2 focus-visible:ring-dusk-accent disabled:opacity-50"
+          className="block h-8 max-h-24 min-h-8 min-w-0 flex-1 resize-none bg-transparent px-3 py-1 text-sm leading-6 text-dusk-ink outline-none placeholder:text-dusk-muted disabled:opacity-50"
         />
-        <div className="mt-1.5 flex items-center justify-end">
-          <button
-            type={busy ? "button" : "submit"}
-            data-stop={busy ? "" : undefined}
-            aria-label={busy ? "Stop" : "Send prompt"}
-            onClick={
-              busy
-                ? (event) => {
-                    event.preventDefault();
-                    onStop?.();
-                  }
-                : undefined
-            }
-            disabled={disabled || (busy ? !onStop : !inputValue.trim() || !onSubmit)}
-            className="relative inline-flex size-8 shrink-0 items-center justify-center rounded-lg bg-dusk-accent text-dusk-base outline-none focus-visible:ring-2 focus-visible:ring-dusk-accent focus-visible:ring-offset-2 focus-visible:ring-offset-dusk-surface disabled:opacity-30"
+        <button
+          type={busy ? "button" : "submit"}
+          data-stop={busy ? "" : undefined}
+          aria-label={busy ? "Stop" : "Send prompt"}
+          onClick={
+            busy
+              ? (event) => {
+                  event.preventDefault();
+                  onStop?.();
+                }
+              : undefined
+          }
+          disabled={disabled || (busy ? !onStop : !inputValue.trim() || !onSubmit)}
+          className="relative inline-flex size-8 shrink-0 items-center justify-center rounded-full bg-dusk-accent text-dusk-base outline-none transition-colors hover:bg-dusk-accent/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40"
+        >
+          <span
+            data-action-icon="send"
+            aria-hidden="true"
+            className={`absolute inset-0 flex items-center justify-center transition-[opacity,scale] duration-200 motion-reduce:transition-none ${busy ? "scale-75 opacity-0" : "scale-100 opacity-100"}`}
           >
-            <span
-              data-action-icon="send"
-              aria-hidden="true"
-              className={`absolute inset-0 flex items-center justify-center transition-[opacity,scale] duration-200 motion-reduce:transition-none ${busy ? "scale-75 opacity-0" : "scale-100 opacity-100"}`}
-            >
-              <ArrowUp className="size-4" strokeWidth={2} />
-            </span>
-            <span
-              data-action-icon="stop"
-              aria-hidden="true"
-              className={`absolute inset-0 flex items-center justify-center transition-[opacity,scale] duration-200 motion-reduce:transition-none ${busy ? "scale-100 opacity-100" : "scale-75 opacity-0"}`}
-            >
-              <Square className="size-3 fill-current" />
-            </span>
-          </button>
-        </div>
+            <HugeiconsIcon icon={SentIcon} size={16} strokeWidth={1.9} aria-hidden />
+          </span>
+          <span
+            data-action-icon="stop"
+            aria-hidden="true"
+            className={`absolute inset-0 flex items-center justify-center transition-[opacity,scale] duration-200 motion-reduce:transition-none ${busy ? "scale-100 opacity-100" : "scale-75 opacity-0"}`}
+          >
+            <Square className="size-3 fill-current" />
+          </span>
+        </button>
       </form>
       <div
         className="sr-only"

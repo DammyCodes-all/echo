@@ -504,6 +504,7 @@ app.post<{ Params: { id: string } }>(
       request.params.id,
       parsed.data.message,
       parsed.data.pinnedNodeId,
+      parsed.data.focusedNodeIds,
     );
     return reply.code(outcome.status).send(outcome.body);
   },
