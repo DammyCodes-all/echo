@@ -1446,3 +1446,101 @@ notes.
 - status: done
 - evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing infos), `pnpm test` → 75 files / 736 passed (2 new: recall draft refused then recovered via the retry note, bare-path key refused then recovered), `pnpm build` ok
 - notes: Applies to newly drafted checks; existing baked artifacts unchanged. Stage and commit nothing.
+
+## 2026-11-02 — Model-chosen check kinds: no more position cycling + kind catalog prompt
+
+- item: removed `KIND_CYCLE`/`kindForIndex` position rotation; `TARGET` blocks no longer prescribe `kind=`/`format=`; `CHECK_SYSTEM_PROMPT` gains a 5-kind catalog with selection semantics (consequence/decision MCQ, tradeoff/blast_radius/teach_back free text) and a choose-best-fit rule (never cycle/balance/default); `validateDraft` enforces kind/format consistency with one retry; risk labels still never enter the prompt (ADR 0014 §g holds)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing infos), `pnpm test` → 75 files / 738 passed (updated prompt-shape pins; 2 new: model-chosen teach_back honored at position 0, kind/format mismatch refused then recovered), `pnpm build` ok
+- notes: Applies to newly drafted checks; existing baked artifacts keep their cycled kinds. Stage and commit nothing.
+
+## 2026-11-02 — Settings menu density pass: smaller radii, realigned header
+
+- item: panel/sheet corners 28px → 16px (`rounded-2xl`, tokens untouched), rows 16px → 12px with tighter `py-2`, sub-rows to `rounded-lg`, motion pills slimmer; header switches `items-center` → `items-start` so the status dot sits on the title's first line instead of floating between the lines, title set 13px/leading-5 with matching px-4 rhythm
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 75 files / 738 passed, `pnpm build` ok; fresh vite transform of `settings-sheet.tsx` serves the tightened classes (7 row markers), dev server stopped after, port verified free (both :5173 and daemon are down post-restart)
+- notes: Daemon is down after the host restart, so the live look still needs your eyes with it running. Stage and commit nothing.
+
+## 2026-11-03 — Systematic prompt-engineering pass on check generation + grading
+
+- item: `CHECK_SYSTEM_PROMPT` rewritten as a real spec — discriminative rule (follows from card alone, distractors false under card), no stem leaks, varied key position; kind catalog kept; rubric tightened to 1-3 single-claim points; patches framed as behavior context (never quoted/quizzed); `explanation` defined as the 1-2 sentence post-answer reveal; `evidencePaths` defined as Touches-only-or-empty. `TARGET` blocks gain the card's `Checked by` line (grounding sets absorb it). `validateDraft` rejects invented evidence paths (Touches + basenames only, one retry). `GRADING_PROMPT` hardened: judge only stated words, evasive/I-don't-know misses every point
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing infos), `pnpm test` → 75 files / 739 passed (1 new: invented evidence path refused then recovered via retry), `pnpm build` ok
+- notes: Applies to newly drafted checks; baked artifacts unchanged. Stage and commit nothing.
+
+## 2026-11-02 — Settings menu cut + count fix + card remove with confirm
+
+- item: removed everything from MOTION down (Motion segmented control, divider, Copy support info) plus its dead code (`changeMotion`, support-copy branch, group keyboard nav, InformationCircleIcon); panel/sheet corners 16px → 12px. Fixed the "4 repos" lie: header now counts materialized projects (same number the projects page shows) while the expandable list keeps showing the raw enabled folders it acts on. Expanded rows gained leading folder icons. Project folder cards (`···` menu) gained a red "Remove repository…" item opening a dusk `alertdialog` confirm (plain-word consequences, Cancel autofocused, Escape/scrim/backdrop close, pending + error states) that disables the folder and refreshes the grid
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 75 files / 739 passed, `pnpm build` ok; dev transform serves the tightened menu (7 row markers, 2 flat-container markers, zero Motion/support UI refs — only the motion mechanism remains)
+- notes: :5173 is held by another session's bare vite serving this tree (my strictPort instance exited, nothing of mine running). Live checks with the daemon up: header says 2, card remove asks first and the card vanishes on confirm. Stage and commit nothing.
+
+## 2026-11-03 — Overview panel: dead High-risk tile replaced with live Awaiting check
+
+- item: `project-overview.tsx` fourth tile High-risk cards → Awaiting check (`Clock01Icon`, `checkStatus === "not_checked"` count). Verified the other three tiles live: Sessions = changeCount>0 count, Checked/Skipped from `sessions.check_status` written by checks-v2. The old tile summed `highRiskCount`, whose only writer (`setSessionStoryState`, story pipeline) is gone — frozen legacy data. Live API proof on echo project: 31 sessions, 15 with changes, all 15 not_checked, highRiskSum 1 from one stale row. Statuses now partition: 15 = 0 + 0 + 15
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 265 files (4 pre-existing infos), `pnpm test` → 75 files / 739 passed, `pnpm build` ok; fresh vite on :5173 serves the new tile (Awaiting check + Clock01Icon present, zero High-risk/Alert02 refs), dev server stopped and :5173 free
+- notes: Same stale `highRiskCount` still feeds session-card "N high-risk" badges and project-folder-card labels — flagged as follow-up, out of this unit's scope. Stage and commit nothing.
+
+## 2026-11-02 — Settings menu: borderless panel, plain words, de-jargoned type
+
+- item: outer panel/sheet border removed (shadow + blur carry the separation per the materials rule, no more hard edge); row subtitles and header status line moved from mono to sans — mono now only where the text is literal (terminal command, folder paths). Copy rewritten throughout: header Running/Demo/Not running; hooks row is "Capture Claude sessions" with On/Partly on/Off states; enable row is "Add from the terminal"; demo rows say "Turned off in the demo"; picker fallback and server enable errors say "on this computer" instead of "daemon machine"
+- status: done
+- evidence: full gate green → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 75 files / 739 passed, `pnpm build` ok; dev transform serves all new copy + flat container (8 markers); my vite stopped after, :5173 still held by the sibling's bare vite
+- notes: Daemon down, so the live menu still needs eyes with it running. Stage and commit nothing.
+
+## 2026-11-02 — Menu repos grouped by project; card remove dialog; Muse naming fix
+
+- item: expanded repo list now groups enabled folders under their materialized repo (name + folder count, one remove per repo that stops every folder inside it) so subfolders never surface alone; allowlist paths the daemon couldn't place show under a plain "gone — remove to tidy up" note with per-path remove, and raw paths remain the fallback when projects won't load. Folder card `···` menu gains red "Remove repository…" opening a dusk `alertdialog` confirm (plain consequences, Cancel focused, Escape/scrim/backdrop out, pending + error states, grid refreshes on success). Also fixed my own copy error: hooks capture Muse sessions, not Claude's — all three menu strings corrected (spec confirms Muse Code is the subject agent)
+- status: done
+- evidence: full gate green twice → `typecheck` clean, `lint` clean (4 pre-existing infos), `pnpm test` → 75 files / 739 passed, `pnpm build` ok; dev transform serves the grouped list (5 markers); nothing of mine running on :5173
+- notes: Daemon down, so live checks (2 rows not 5, remove asks first, stale note if folders are gone) need the daemon up. Stage and commit nothing.
+
+## 2026-11-03 — Reader Door 1: per-change Ask entry (UI only)
+
+- item: action row gains ghost "Ask about this change" between Skip quietly and Got it; opens the (previously unmounted) `AskThreadPanel` slide-over anchored to the open change, anchor captured at open so stepping behind the panel never shifts scope, chip × widens to session-wide. Citations intentionally land on a Door-2 no-op with comment. No server/contract changes
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 266 files (4 pre-existing infos), `pnpm test` → 75 files / 739 passed, `pnpm build` ok; vite transform serves the button + panel + scope state (5 markers), live thread endpoint returns empty schema-1 thread for a real session; dev server stopped, :5174 free
+- notes: Asking itself (model call) and citation→change jumps (Door 2) not exercised — needs your eyes in the browser. Stage and commit nothing.
+
+## 2026-11-03 — Reader diff rendering via Pierre worker pool (official setup)
+
+- item: `DiffWorkerProvider` (module-singleton `WorkerPoolContextProvider`, poolSize 4, Vite `?worker` factory over `@pierre/diffs/worker/worker.js`, 14 Shiki langs, pierre light/dark themes) mounted once in `main.tsx`; `worker: { format: "es" }` in `vite.config.ts` (IIFE can't code-split the shared worker chunks); `change-code.tsx` drops the entire homemade loading apparatus (skeleton, shadow-DOM polling, deferred mount, `disableWorkerPool`) for the sanctioned pattern — plain-text first paint, highlight streams in from workers — plus one stable module-level `PATCH_DIFF_OPTIONS` (unstable per-render options were redoing setup work)
+- status: done
+- evidence: `tsc` clean, `biome` clean (266 files, 4 pre-existing infos), `pnpm --filter @echo/web build` exit 0 with `dist/assets/worker-*.js` emitted; research-backed (Pierre skill docs + `On Rendering Diffs`: render-first-then-defer-highlight, options stability, worker pool setup)
+- notes: Browser behavior unverified here — needs your eyes on `pnpm dev`: toggle should open instantly with readable plain text, color arriving a beat later. If `?worker` misbehaves under a future Vite upgrade, the documented fallback is `?url` + `worker-portable.js`. Stage and commit nothing.
+
+## 2026-11-03 — Rail tabs: Ask moves out of the slide-over into Changes | Ask
+
+- item: `ask-thread-panel.tsx` slide-over (`AskThreadPanel`, fixed overlay) replaced by inline `AskThread` (anchor chip + thread + composer, host owns height); `reader-rail.tsx` gains a `Changes · N | Ask` tablist — Ask tab renders the thread in a bounded scroll column (`min-h 320px`, `70vh`/`100vh-14rem` caps), rail without Ask wiring (showcase) stays navigator-only; `reader.tsx` action button flips the tab with the captured anchor instead of opening an overlay, slide-over mount deleted
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 266 files (4 pre-existing infos), `pnpm test` → 75 files / 739 passed, `pnpm build` ok; vite transform serves tablist + tabpanel + thread in rail with zero `fixed right-0` refs; dev server stopped, :5174 free
+- notes: Thread content unverified beyond the live empty-thread endpoint — open the Ask tab and fire a real question in the browser. Citation clicks still Door-2 no-ops. Stage and commit nothing.
+
+## 2026-11-03 — Ask rail polish: duplicate header removed, pill skeletons + empty state + composer refined
+
+- item: `reader-rail.tsx` duplicate "CHANGES 7" header inside nave removed — tab already carries `Changes · N`. `ask-thread-panel.tsx` Ask tab refined: header to 11px uppercase tracking, anchor chip to pill, loading skeletons to slim rounded-xl bordered cards with small pill bars (was huge pill blocks), empty state to dashed centered card with 3 starter chips that seed the composer (was duplicate muted text), user bubbles to accent pill with rounded-br-md, assistant cards to bordered surface, composer to pill bar with focus ring
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 266 files (4 pre-existing infos), `pnpm test` → 75 files / 739 passed, `pnpm build` ok; vite transform serves refined rail (no second CHANGES header, 3 starter chips, pill composer), dev server stopped, :5174 free
+- notes: Refresh the Ask tab — loading should feel quiet, empty should invite. Stage and commit nothing.
+
+## 2026-11-03 — Rail tabs simplified, composer send becomes icon button
+
+- item: rail tabs back to plain text `Changes` / `Ask` (count dropped from the label, tab-icon experiment reverted per review — icon belongs on the composer, not the tab); `ask-thread-panel.tsx` composer submit is now a round accent `SentIcon` button with accessible `Asking…` label while busy (was full "Ask" text button). No server/contract changes
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 266 files (4 pre-existing infos), `pnpm test` → 75 files / 739 passed, `pnpm build` ok; vite transform serves text tabs (zero BubbleChat refs) + SentIcon size-8 send button; only my own dev server (PID-tracked, :5199) ever stopped — no pkill used
+- notes: Refresh the rail + Ask tab. Citation clicks still Door-2 no-ops. Stage and commit nothing.
+
+## 2026-11-03 — No file paths in check prose: prompt ban + validator enforcement
+
+- item: `CHECK_SYSTEM_PROMPT` now bans file paths from every sentence (question, options, rubric, explanation) — describe the area in story words, paths live only in structured `evidencePaths`; new `pathMention` validator refuses path-naming prose with one retry (question, each option, each rubric point, explanation); grounding rule narrowed to numbers/names. Fixtures reworded path-free (draftSet, max-3 drafts, recall/key/mismatch explanations); grading hit points moved with the rubric (`gradeRubric` matches positionally)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 266 files (4 pre-existing infos), `pnpm test` → 75 files / 740 passed (1 new: path-naming draft refused then recovered via retry), `pnpm build` ok
+- notes: Applies to newly drafted checks; the baked "In reader-rail.tsx…" artifact keeps its stem — generate a fresh check to see path-free questions. Stage and commit nothing.
+
+## 2026-11-03 — SWR data caching: stale-while-revalidate + hover prefetch
+
+- item: new `apps/web/src/query.ts` (single home for all cache keys + `prefetchReader`/`prefetchCode`/`prefetchProject` helpers + `IMMUTABLE_STALE_TIME`); `main.tsx` QueryClient defaults (`staleTime` 30s, `gcTime` 10min, `refetchOnWindowFocus` false, `retry` 1) so back-navigation paints from cache while stale mounts revalidate in the background; `keepPreviousData` on all param-keyed queries (reader changes/session/project, overview/learn/architecture/demo) so switching ids keeps the old screen instead of flashing skeletons; shadow-git diffs (`code` query + next/prefetches) marked immutable and never refetched; hover/focus prefetch on `SessionCard` (reader data), `ProjectFolderCard` preview now reads through the query cache (previously raw `api.sessions`, bypassing the cache the overview reads) + warms project/tech-stack, and `ProgressTape` segments warm jump-target diffs via new `onPeek`. All inline keys migrated to the shared factories (hash-identical, cache survives)
+- status: done
+- evidence: full gate green → `tsc` clean, `biome` 267 files (4 pre-existing infos), `pnpm test` → 75 files / 740 passed, `pnpm build` ok; dev-server smoke (`:5199`) serves shell + transforms `main.tsx`/`query.ts` 200, process stopped
+- notes: First visit to any id still loads for real (nothing to show yet); the win is revisits, back-nav, tab switches, and hovered links. Skeletons now mean genuinely cold data. Live lists keep their 5s/30s polls; polls + 30s staleTime mean at most a background revalidate on return, never a skeleton. Browser feel unverified here — confirm in `pnpm dev`: back-nav should be instant, hovered cards/tape segments should open without the diff spinner. Stage and commit nothing.
