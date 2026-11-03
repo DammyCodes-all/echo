@@ -44,7 +44,6 @@ import { ensureEnabledProjects } from "./enabled-projects";
 import { loadLocalEnv } from "./env";
 import { createHistoryService } from "./history";
 import { createIngest } from "./ingest";
-import { createLearnService } from "./learn";
 import { createMuseIngest } from "./muse-ingest";
 import { createMuseWatcher } from "./muse-watch";
 import { createProjectTechStackService } from "./project-tech-stack";
@@ -119,7 +118,6 @@ const ask = createAskService(db, paths.dataDir, { log: app.log });
 const checksV2 = createChecksV2Service({ db, dataDir: paths.dataDir, log: app.log });
 const history = createHistoryService(db, paths.dataDir);
 const codeIndex = createCodeIndexService({ db });
-const learn = createLearnService({ db, dataDir: paths.dataDir });
 const architecture = createArchitectureService(
   { db, log: app.log },
   {
@@ -276,11 +274,6 @@ app.get<{ Params: { id: string } }>("/api/projects/:id/sessions", async (request
   // The reader serves every session (live ones render the in-progress slot);
   // story-era quiet/emptiness filtering is gone with the story pipeline.
   return listSessions(db, request.params.id);
-});
-
-app.get<{ Params: { id: string } }>("/api/projects/:id/learn", async (request, reply) => {
-  const outcome = learn.summary(request.params.id);
-  return reply.code(outcome.status).send(outcome.body);
 });
 
 app.get<{ Params: { id: string } }>("/api/projects/:id/files", async (request, reply) => {
