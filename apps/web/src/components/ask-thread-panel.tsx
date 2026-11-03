@@ -4,6 +4,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { type AnswerBlock, type AnswerSpan, parseAnswer } from "./ask-answer";
 import { RichText } from "./rich-text";
 
 /** Reader anchor: the change the question is scoped to, captured at open time. */
@@ -69,6 +70,90 @@ function BackingPreview({ item, quote }: { item: AskEvidence; quote: string | nu
   );
 }
 
+function SourceRef({
+  position,
+  open,
+  onToggle,
+}: {
+  position: number;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-expanded={open}
+      aria-label={`Show source ${position}`}
+      onClick={onToggle}
+      className={`mx-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full px-1 align-baseline text-[11px] tabular-nums transition-colors ${
+        open
+          ? "bg-dusk-accent font-semibold text-dusk-base"
+          : "bg-dusk-track text-dusk-accent-soft hover:bg-dusk-pill"
+      }`}
+    >
+      {position}
+    </button>
+  );
+}
+
+function AnswerBody({
+  answer,
+  evidenceIds,
+  openPosition,
+  onTogglePosition,
+}: {
+  answer: string;
+  evidenceIds: string[];
+  /** Position (1-based) whose preview is open, if any. */
+  openPosition: number | null;
+  onTogglePosition: (position: number) => void;
+}) {
+  const blocks = parseAnswer(answer, evidenceIds);
+  const renderSpan = (span: AnswerSpan, key: string) => {
+    if (span.kind === "source") {
+      return (
+        <SourceRef
+          key={key}
+          position={span.position}
+          open={span.position === openPosition}
+          onToggle={() => onTogglePosition(span.position)}
+        />
+      );
+    }
+    return <RichText key={key} text={span.text} />;
+  };
+  return (
+    <>
+      {blocks.map((block: AnswerBlock, blockIndex: number) => {
+        const blockKey = `block-${blockIndex}`;
+        if (block.kind === "list") {
+          const List = block.ordered ? "ol" : "ul";
+          return (
+            <List
+              key={blockKey}
+              className={`space-y-1 pl-5 text-sm leading-6 text-dusk-ink ${
+                block.ordered ? "list-decimal" : "list-disc"
+              }`}
+            >
+              {block.items.map((item, itemIndex) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: item order never reorders.
+                <li key={`item-${itemIndex}`}>
+                  {item.map((span, spanIndex) => renderSpan(span, `span-${spanIndex}`))}
+                </li>
+              ))}
+            </List>
+          );
+        }
+        return (
+          <p key={blockKey} className="text-sm leading-6 text-dusk-ink">
+            {block.spans.map((span, spanIndex) => renderSpan(span, `span-${spanIndex}`))}
+          </p>
+        );
+      })}
+    </>
+  );
+}
+
 function AssistantMessage({ message }: { message: AskThreadMessage }) {
   const response = message.response;
   const [openId, setOpenId] = useState<string | null>(null);
@@ -76,9 +161,12 @@ function AssistantMessage({ message }: { message: AskThreadMessage }) {
   if (response === null) {
     return (
       <div className="rounded-xl border border-dusk-hairline bg-dusk-surface px-3.5 py-3">
-        <p className="text-sm leading-6 text-dusk-ink">
-          <RichText text={message.text} />
-        </p>
+        <AnswerBody
+          answer={message.text}
+          evidenceIds={[]}
+          openPosition={null}
+          onTogglePosition={() => {}}
+        />
       </div>
     );
   }
@@ -101,51 +189,28 @@ function AssistantMessage({ message }: { message: AskThreadMessage }) {
       ? null
       : (response.claims.find((claim) => claim.evidenceIds.includes(open.evidenceId))?.quote ??
         null);
+  const togglePosition = (position: number) => {
+    const target = evidence[position - 1]?.evidenceId ?? null;
+    setOpenId((current) => (current === target ? null : target));
+  };
 
   return (
     <div className="space-y-2 rounded-xl border border-dusk-hairline bg-dusk-surface px-3.5 py-3">
-      <p className="text-sm leading-6 text-dusk-ink">
-        <RichText text={response.answer} />
-      </p>
+      <AnswerBody
+        answer={response.answer}
+        evidenceIds={evidence.map((item) => item.evidenceId)}
+        openPosition={open === null ? null : evidence.indexOf(open) + 1}
+        onTogglePosition={togglePosition}
+      />
       {response.status === "partial" ? (
         <p className="text-xs leading-5 text-dusk-muted">
           I could only answer part of that. The rest is not in this session.
-        </p>
-      ) : null}
-      {response.uncertainty === "medium" ? (
-        <p className="text-xs leading-5 text-dusk-muted">
-          I am not fully sure about parts of this.
         </p>
       ) : null}
       {response.uncertainty === "high" ? (
         <p className="text-xs leading-5 text-dusk-muted">
           I am not sure about this one. The session barely covers it.
         </p>
-      ) : null}
-      {evidence.length > 0 ? (
-        <div className="flex flex-wrap gap-1.5 pt-0.5">
-          {evidence.map((item, index) => {
-            const isOpen = item.evidenceId === openId;
-            return (
-              <button
-                key={item.evidenceId}
-                type="button"
-                aria-expanded={isOpen}
-                aria-label={`Show source ${index + 1}`}
-                onClick={() =>
-                  setOpenId((current) => (current === item.evidenceId ? null : item.evidenceId))
-                }
-                className={`flex h-6 min-w-6 items-center justify-center rounded-full px-2 text-xs tabular-nums transition-colors ${
-                  isOpen
-                    ? "bg-dusk-accent font-semibold text-dusk-base"
-                    : "bg-dusk-track text-dusk-accent-soft hover:bg-dusk-pill"
-                }`}
-              >
-                {index + 1}
-              </button>
-            );
-          })}
-        </div>
       ) : null}
       {open !== null ? <BackingPreview item={open} quote={openQuote} /> : null}
     </div>
@@ -241,8 +306,8 @@ export function AskThread({ sessionId, change = null, onClearScope }: AskThreadP
 
   // A chat that does not follow itself is broken: trail the bottom as turns
   // land. Instant, so reduced-motion users get the same position for free.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are triggers only;
-  // the effect intentionally reads no reactive value besides the scroll node.
+  // The deps are triggers only; the effect reads no reactive value besides the node.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: trigger-only deps by design.
   useEffect(() => {
     const node = scrollRef.current;
     if (node !== null) node.scrollTop = node.scrollHeight;
@@ -301,7 +366,7 @@ export function AskThread({ sessionId, change = null, onClearScope }: AskThreadP
             </button>
           </div>
         ) : messages.length === 0 && pendingText === null ? (
-          <div className="px-4 py-6 text-center">
+          <div className="rounded-xl border border-dashed border-dusk-hairline bg-dusk-surface/40 px-4 py-6 text-center">
             <p className="text-sm font-medium text-dusk-ink">What do you want to know?</p>
             <p className="mt-1 text-sm leading-5 text-dusk-muted">
               Ask anything about this session. If it is not here, you will hear that instead of a
