@@ -222,7 +222,7 @@ export const api = {
     ),
   chatArchitecture: async (
     projectId: string,
-    input: { message: string; pinnedNodeId: string | null },
+    input: { message: string; pinnedNodeId: string | null; focusedNodeIds?: string[] },
     options: { signal?: AbortSignal } = {},
   ): Promise<ArchitectureChatResponse> => {
     // Custom shape (not postJson): an invalid patch still carries the model's
