@@ -1,10 +1,10 @@
-import type { ArchitecturePatch } from "@echo/contracts";
+import type { ArchitectureFocus, ArchitecturePatch } from "@echo/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { queryKeys } from "../../query";
-import { ThinkingPromptInput } from "../ui/thinking-prompt-input";
 import { ModelMarkdown } from "../model-markdown";
+import { ThinkingPromptInput } from "../ui/thinking-prompt-input";
 import type { PinnedNode } from "./architecture-diagram";
 
 interface ChatMessage {
@@ -13,6 +13,11 @@ interface ChatMessage {
   text: string;
   patch: ArchitecturePatch | null;
   applied: boolean;
+  at: number;
+}
+
+function shortTime(ms: number): string {
+  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
 interface ArchitectureChatProps {
@@ -21,6 +26,8 @@ interface ArchitectureChatProps {
   onClearPin: () => void;
   onHighlight: (ids: string[]) => void;
   onPatched: (patch: ArchitecturePatch) => void;
+  focus: ArchitectureFocus | null;
+  onFocusChange: (focus: ArchitectureFocus | null) => void;
 }
 
 function errorText(error: unknown): string {
@@ -38,16 +45,19 @@ function HistoryMessage({
 }) {
   if (message.role === "user") {
     return (
-      <div className="flex justify-end">
-        <p className="max-w-[85%] rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink">
-          {message.text}
-        </p>
+      <div>
+        <div className="flex justify-end">
+          <p className="max-w-[85%] rounded-2xl rounded-br-md bg-dusk-accent px-3.5 py-2 text-sm leading-5 text-dusk-base">
+            {message.text}
+          </p>
+        </div>
+        <p className="mt-1 text-right text-[11px] text-dusk-muted/70">{shortTime(message.at)}</p>
       </div>
     );
   }
   const patch = message.patch;
   return (
-    <div className="space-y-2 rounded-dusk-code bg-dusk-pill px-3.5 py-3">
+    <div className="space-y-2 px-1 py-1">
       <ModelMarkdown text={message.text} />
       {patch && !message.applied ? (
         <button
@@ -72,6 +82,8 @@ export function ArchitectureChat({
   onClearPin,
   onHighlight,
   onPatched,
+  focus,
+  onFocusChange,
 }: ArchitectureChatProps) {
   const queryClient = useQueryClient();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -80,8 +92,6 @@ export function ArchitectureChat({
   const [failure, setFailure] = useState<string | null>(null);
   const keyCounter = useRef(0);
   const abortRef = useRef<AbortController | null>(null);
-  const historyRef = useRef<HTMLDivElement | null>(null);
-  const messageCount = messages.length;
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.architecture(projectId) });
@@ -91,7 +101,13 @@ export function ArchitectureChat({
     mutationFn: ({ text, signal }: { text: string; signal: AbortSignal }) =>
       api.chatArchitecture(
         projectId,
-        { message: text, pinnedNodeId: pinned?.id ?? null },
+        {
+          message: text,
+          // Pins point at full-model nodes; while focused they may name
+          // ephemeral focus ids the server would reject.
+          pinnedNodeId: focus ? null : (pinned?.id ?? null),
+          focusedNodeIds: focus?.nodeIds ?? [],
+        },
         { signal },
       ),
     onMutate: ({ text }) => {
@@ -101,7 +117,7 @@ export function ArchitectureChat({
       const key = keyCounter.current;
       setMessages((current) => [
         ...current,
-        { key, role: "user", text, patch: null, applied: false },
+        { key, role: "user", text, patch: null, applied: false, at: Date.now() },
       ]);
       setInput("");
       setElapsed(0);
@@ -117,9 +133,12 @@ export function ArchitectureChat({
           text: response.answer,
           patch: response.patch,
           applied: response.applied,
+          at: Date.now(),
         },
       ]);
       onHighlight(response.relatedNodeIds);
+      if (response.focus) onFocusChange(response.focus);
+      else if (response.clearFocus) onFocusChange(null);
       if (response.patch && response.applied) {
         onPatched(response.patch);
         refresh();
@@ -147,7 +166,7 @@ export function ArchitectureChat({
         const key = keyCounter.current;
         setMessages((current) => [
           ...current,
-          { key, role: "assistant", text: answerText, patch: null, applied: false },
+          { key, role: "assistant", text: answerText, patch: null, applied: false, at: Date.now() },
         ]);
       }
       setFailure(errorText(error));
@@ -189,16 +208,9 @@ export function ArchitectureChat({
     return () => window.clearInterval(id);
   }, [send.isPending]);
 
-  // Scroll the history strip only when the turn count changes; the effect
-  // reads a ref Biome cannot see, so the dep looks unnecessary to the rule.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: history autoscroll on new turns.
-  useEffect(() => {
-    const box = historyRef.current;
-    if (box) box.scrollTop = box.scrollHeight;
-  }, [messageCount]);
-
-  // The thinking input shows only the latest turn; earlier turns render above
-  // in matching bubbles so no transcript is ever duplicated or lost.
+  // One continuous thread, like the ask panel: earlier turns render above
+  // the latest inside the same scroll area, so nothing is ever clipped into
+  // a slit or duplicated.
   const last = messages.at(-1) ?? null;
   const secondLast = messages.at(-2) ?? null;
   const pendingUser = send.isPending && last && last.role === "user" ? last : null;
@@ -221,7 +233,7 @@ export function ArchitectureChat({
     : donePair.answer.applied
       ? "Applied to diagram"
       : donePair.answer.patch
-        ? "Patch ready — apply below"
+        ? "Patch ready. Apply below."
         : undefined;
 
   return (
@@ -231,15 +243,7 @@ export function ArchitectureChat({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <h3 className="text-sm font-semibold tracking-tight text-dusk-ink">Diagram chat</h3>
-              {send.isPending ? (
-                <span className="inline-flex items-center gap-1.5 rounded-dusk-pill bg-dusk-accent-wash px-2 py-0.5 text-[11px] font-medium leading-4 text-dusk-accent-soft">
-                  <span
-                    aria-hidden="true"
-                    className="size-1.5 rounded-full bg-dusk-accent motion-safe:animate-pulse"
-                  />
-                  Thinking
-                </span>
-              ) : latestPatch ? (
+              {!send.isPending && latestPatch ? (
                 <span className="inline-flex items-center gap-1.5 rounded-dusk-pill bg-dusk-secondary px-2 py-0.5 text-[11px] font-medium leading-4 text-dusk-accent-soft">
                   <span aria-hidden="true" className="size-1.5 rounded-full bg-dusk-accent" />
                   Patch ready
@@ -251,40 +255,7 @@ export function ArchitectureChat({
             </p>
           </div>
         </div>
-        {messages.length === 0 && !send.isPending ? (
-          <div className="mt-3 flex flex-wrap gap-2">
-            <button
-              type="button"
-              onClick={() => setInput("What does ingest do?")}
-              className="rounded-dusk-pill border border-dusk-hairline-strong bg-dusk-pill/60 px-3 py-1.5 text-xs leading-4 text-dusk-muted outline-none transition-colors hover:border-dusk-accent/40 hover:text-dusk-ink focus-visible:ring-2 focus-visible:ring-dusk-accent"
-            >
-              What does ingest do?
-            </button>
-            <button
-              type="button"
-              onClick={() => setInput("Add a retry queue between ingest and storage")}
-              className="rounded-dusk-pill border border-dusk-hairline-strong bg-dusk-pill/60 px-3 py-1.5 text-xs leading-4 text-dusk-muted outline-none transition-colors hover:border-dusk-accent/40 hover:text-dusk-ink focus-visible:ring-2 focus-visible:ring-dusk-accent"
-            >
-              Add a retry queue between ingest and storage
-            </button>
-          </div>
-        ) : null}
       </div>
-      {history.length > 0 ? (
-        <div
-          ref={historyRef}
-          className="max-h-36 space-y-2 overflow-y-auto border-b border-dusk-hairline px-4 py-2"
-        >
-          {history.map((message) => (
-            <HistoryMessage
-              key={message.key}
-              message={message}
-              applying={apply.isPending}
-              onApply={(patch) => apply.mutate(patch)}
-            />
-          ))}
-        </div>
-      ) : null}
       {pinned ? (
         <div className="flex px-4 pt-2">
           <span className="inline-flex items-center gap-2 rounded-dusk-pill bg-dusk-accent-wash px-3 py-1 text-xs text-dusk-accent-soft">
@@ -300,7 +271,27 @@ export function ArchitectureChat({
           </span>
         </div>
       ) : null}
-      <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
+      {messages.length === 0 && !send.isPending ? (
+        <div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 px-4">
+          {["What does ingest do?", "Add a retry queue between ingest and storage"].map((text) => (
+            <button
+              key={text}
+              type="button"
+              onClick={() => submit(text)}
+              className="rounded-full border border-dusk-hairline bg-dusk-pill px-3 py-1 text-xs text-dusk-ink transition-colors hover:border-dusk-muted hover:bg-dusk-track"
+            >
+              {text}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      <div
+        className={
+          messages.length === 0 && !send.isPending
+            ? "shrink-0 px-4 py-3"
+            : "flex min-h-0 flex-1 flex-col px-4 py-3"
+        }
+      >
         <ThinkingPromptInput
           status={status}
           prompt={prompt}
@@ -311,9 +302,17 @@ export function ArchitectureChat({
           onValueChange={setInput}
           onSubmit={submit}
           onStop={stop}
-          placeholder="Ask about the system or describe a change…"
+          placeholder="Ask about the system…"
           followUpPlaceholder="Ask a follow-up about the diagram…"
           answerNote={answerNote}
+          history={history.map((message) => (
+            <HistoryMessage
+              key={message.key}
+              message={message}
+              applying={apply.isPending}
+              onApply={(patch) => apply.mutate(patch)}
+            />
+          ))}
         />
       </div>
       {donePair && latestPatch ? (

@@ -1704,3 +1704,42 @@ notes.
 - status: done (links intentionally placeholder)
 - evidence: `tsc --noEmit` clean; `biome check .` clean (288 files, 0 errors; landing-only diagnostics fixed, pre-existing `apps/server/src/checks-v2.test.ts:805` kept as info); `pnpm test` → 75 files / 747 passed (one transient single-test failure on the first run, green on two subsequent full runs — consistent with the in-flight `packages/demo` WIP in the worktree, untouched by this work); `pnpm build` → web/server/cli/landing all build; `impeccable detect --json apps/landing` → `[]`; browser captures at 1440 and 390 px (`.impeccable/review/desktop.png`, `mobile.png`, `full.png`) show no overlap, no clipping, working panels and both acceptance/confidence interactions verified by driving the page
 - notes: design direction pinned by the user mid-build — ember "near-black" detour was rejected in favor of exact CLI web Dusk Dark (radius card 28 / pill 999 / uncertainty 22 / code 10, glow only on the card beam). Magic UI components were pulled via the public registry (21st MCP unavailable in-session; same sources 21st serves — BorderBeam/BlurFade/AnimatedBeam lineage, adapted; BorderBeam/AnimatedBeam later replaced by deterministic hand-rolled accent-beam and FlowBeams after render-measurement artifacts). No `@echo/*` coupling; `root package.json` build now includes `@echo/landing` and `dev:landing` was added. Not deployed yet — needs a host + demo-link hrefs; untouched files (`apps/server/src/ask.ts`, `apps/web/*`, `packages/demo/*`) are the user's in-flight work and were not modified.
+
+## 2026-11-03 — Arch chat drill-down: NL part focus with regenerated sub-diagrams
+
+- item: ask for any part in plain words ("the ingest path") and the diagram regenerates an in-depth sub-model for it: chat model resolves words → node ids (`focusNodeIds`) or whole-system (`clearFocus`); server validates ids, scopes code context to the nodes' path globs (minimatch, 120-file cap), runs a scoped generation (3–8 nodes, parent groups only, existing-status, acyclic + edge caps reused, redacted request), returns ephemeral `focus` (label + nodeIds + detail + evidence) — never stored; web isolates the sub-diagram with a "Showing: X" reset chip, merges focus evidence for hover, clears pins on focus switch, sends current focus back for dynamic follow-ups ("what about storage?", "go broader")
+- status: done
+- evidence: 4 new arch service tests (drill hit + ephemeral, unknown ids dropped, clear echo, failure degrades to answer-only) — `apps/server/src/architecture.test.ts` 43/43; full gate: `tsc` clean, `biome` 289 files (4 pre-existing infos), `pnpm test` → 75 files / 751 passed, `pnpm build` ok; no browser probe per user request (they test on their stack)
+- notes: Additive contracts only (`ArchitectureFocus`, `focusNodeIds`/`clearFocus` on chat output, `focusedNodeIds` on request, `focus`+`clearFocus` on response). Failed drills degrade to answer-only, never fail the turn. Stage and commit nothing.
+## 2026-11-03 — Arch chat: autoApply default + bubble animation removal + drill polish gate
+
+- item: (1) `autoApply` on the chat model schema defaults to false — the model sometimes omits the flag and the required boolean failed the whole turn with a schema validation error; missing now fails closed (shows Apply, never auto-applies). (2) Removed the question-bubble fly-from-composer FLIP animation (560ms translate+scale warp) in `ThinkingPromptInput` — the bubble now appears in place and the transcript autoscroll carries the eye; composer autosize + thinking shimmer + step entrances untouched. (3) Gate-verifies the prior drill polish (short focus confirmation prompt, shrink-wrapped Showing chip, no Thinking header pill).
+- status: done
+- evidence: 2 new contract tests (missing autoApply → false, explicit true kept) — `packages/contracts/src/architecture.test.ts` 27/27, `apps/server/src/architecture.test.ts` 43/43; full gate: `tsc` clean, `biome` 289 files (4 pre-existing infos), `pnpm test` → 75 files / 753 passed, `pnpm build` ok; no browser probe per user request (they test on their stack)
+- notes: Contract change is additive-compatible (explicit true/false parse exactly as before). One lint autofix (import order in the new test). Stage and commit nothing.
+## 2026-11-03 — Diagram chat: plain answers + focus confirmation wording
+
+- item: assistant answers in Diagram chat render as plain text (bordered card removed in both the latest answer and history turns; Ask panel untouched — it keeps its borders). Focus confirmations now name the part in the user's own words and never list node labels (those labels name the parent parts and do not appear in the regenerated sub-diagram, which was confusing). Chat answers follow the plain-words, no-em-dash house style; "Patch ready" note reworded to match.
+- status: done
+- evidence: full gate: `tsc` clean, `biome` 289 files (4 pre-existing infos), `pnpm test` → 75 files / 753 passed, `pnpm build` ok; no browser probe per user request (they test on their stack)
+- notes: Diagram-correctness audit reported separately (5 of 6 Capture sub-nodes ground cleanly in real files; Ingest Validator is fuzzy — validation lives inside map.ts buildTapeEvent, not a standalone part; drill sees file paths only, never contents). Stage and commit nothing.
+## 2026-11-03 — Drill grounding: symbols + imports + file contents in drill context
+
+- item: `runDrill` no longer sketches from file names — new `apps/server/src/architecture-drill.ts` `buildDrillFileContext` grounds the sub-diagram in per-file symbols (exports vs internal, 12/file) and in-scope import edges from the existing code index, plus full text of small files from disk (6 files / 12k chars, tests and config excluded, reads jailed to project root, null-byte guard). Deterministic budgets throughout; every cap and skip reported in a Notes line, never silent. Drill prompt updated to forbid splitting a single-job file into two nodes and to prefer observed-import edges. Bodies flow through the existing `redactJson` request gate.
+- status: done
+- evidence: 6 new colocated tests (symbols split/cap, edge filtering, content selection, root escape, budget caps, empty scope) — drill 6/6, arch service 43/43; real-index probe on this repo's capture scope: 30 files, 1911 symbols indexed, 44 in-scope import lines (e.g. finalize.ts -> map.ts via buildTapeEvent), contents + notes render, ~17.8k chars; full gate: `tsc` clean, `biome` on owned files clean, `pnpm test` → 76 files / 759 passed, `pnpm build` ok; no browser probe per user request (they test on their stack)
+- notes: One transient single-test failure on the first full run, green on reruns (matches known repo flakiness). Repo-wide `pnpm lint` currently reports 1 format error in `packages/demo/src/build.ts` — another agent's in-flight WIP, not mine, left untouched; owned files biome-clean. No contracts/DB changes, no migration, no new deps. Stage and commit nothing.
+
+## 2026-11-03 — Fix demo empty sessions + keep architecture in bundle
+
+- item: root cause of screenshot “No sessions” was FULL_WIPE deleting change_refs (overview filters s.changeCount>0) — narrowed change_refs/progress to the 2-session allowlist so overview shows 2; kept code index + architecture tables for the baked project (narrow by project_id instead of wipe) so Architecture tab loads in demo; tech stack still reports code_index_missing (pre-existing, not demo-blocking — fallback text shows)
+- status: done
+- evidence: before: /api/projects/.../sessions changeCount 0 → overview 0; after re-bake: changeCount 7 + 16 → overview 2; demo smoke 12/12 ok; architecture GET returns groups/nodes; `pnpm exec vitest run packages/demo` 18 passed
+- notes: Re-bake required — `node apps/cli/dist/index.js demo build --session ses_e81... --session 01a189... --out demo-bundle`. Restart demo serve + hard refresh. Stage and commit nothing.
+
+## 2026-11-03 — Deploy live on Render
+
+- item: pushed bundle (force-add demo-bundle) + Containerfile, Render Docker build 1m50s, service live at https://echo-caz8.onrender.com (mode:demo, PORT 10000, health 200, 2 sessions changeCount 7+16); README Watch it link updated
+- status: done
+- evidence: Render logs “Deploy succeeded|Live”, health `{"mode":"demo"}` 200, sessions API returns 2; build logs show 6500 modules, pnpm + tsup + vite ok
+- notes: Free tier will sleep 15 min; user to set ping to /api/health. Stage and commit nothing (README change unstaged).
