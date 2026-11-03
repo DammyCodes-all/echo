@@ -42,9 +42,7 @@ function UserBubble({ text, at }: { text: string; at: string | null }) {
           {text}
         </p>
       </div>
-      {at !== null ? (
-        <p className="mt-1 text-right text-[11px] text-dusk-muted/70">{at}</p>
-      ) : null}
+      {at !== null ? <p className="mt-1 text-right text-[11px] text-dusk-muted/70">{at}</p> : null}
     </div>
   );
 }
@@ -115,7 +113,9 @@ function AssistantMessage({ message }: { message: AskThreadMessage }) {
         </p>
       ) : null}
       {response.uncertainty === "medium" ? (
-        <p className="text-xs leading-5 text-dusk-muted">I am not fully sure about parts of this.</p>
+        <p className="text-xs leading-5 text-dusk-muted">
+          I am not fully sure about parts of this.
+        </p>
       ) : null}
       {response.uncertainty === "high" ? (
         <p className="text-xs leading-5 text-dusk-muted">
@@ -218,8 +218,8 @@ export function AskThread({ sessionId, change = null, onClearScope }: AskThreadP
       setQuestion("");
       void queryClient.invalidateQueries({ queryKey: ["ask-thread", sessionId] });
     },
-    onError: (error) => {
-      // A cancel or a failure both put the words back in the box for editing.
+    onError: () => {
+      // A cancel or a failure both restore the sent text to the input.
       // Only failures surface a message; cancels stay silent.
       setQuestion(lastSentRef.current);
     },
@@ -241,6 +241,8 @@ export function AskThread({ sessionId, change = null, onClearScope }: AskThreadP
 
   // A chat that does not follow itself is broken: trail the bottom as turns
   // land. Instant, so reduced-motion users get the same position for free.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: deps are triggers only;
+  // the effect intentionally reads no reactive value besides the scroll node.
   useEffect(() => {
     const node = scrollRef.current;
     if (node !== null) node.scrollTop = node.scrollHeight;
@@ -299,11 +301,11 @@ export function AskThread({ sessionId, change = null, onClearScope }: AskThreadP
             </button>
           </div>
         ) : messages.length === 0 && pendingText === null ? (
-          <div className="rounded-xl border border-dashed border-dusk-hairline bg-dusk-surface/40 px-4 py-6 text-center">
+          <div className="px-4 py-6 text-center">
             <p className="text-sm font-medium text-dusk-ink">What do you want to know?</p>
             <p className="mt-1 text-sm leading-5 text-dusk-muted">
-              Ask anything about this session. If it is not here, you will hear that instead
-              of a guess.
+              Ask anything about this session. If it is not here, you will hear that instead of a
+              guess.
             </p>
             <div className="mt-3 flex flex-wrap justify-center gap-1.5">
               {starters.map((text) => (
@@ -321,11 +323,7 @@ export function AskThread({ sessionId, change = null, onClearScope }: AskThreadP
         ) : (
           messages.map((message) =>
             message.role === "user" ? (
-              <UserBubble
-                key={message.id}
-                text={message.text}
-                at={shortTime(message.createdAt)}
-              />
+              <UserBubble key={message.id} text={message.text} at={shortTime(message.createdAt)} />
             ) : (
               <AssistantMessage key={message.id} message={message} />
             ),
