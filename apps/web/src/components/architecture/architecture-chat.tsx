@@ -2,6 +2,7 @@ import type { ArchitecturePatch } from "@echo/contracts";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
+import { queryKeys } from "../../query";
 import { ThinkingPromptInput } from "../ui/thinking-prompt-input";
 import type { PinnedNode } from "./architecture-diagram";
 
@@ -86,7 +87,7 @@ export function ArchitectureChat({
   const messageCount = messages.length;
 
   const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ["architecture", projectId] });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.architecture(projectId) });
   };
 
   const send = useMutation({
