@@ -28,6 +28,24 @@ describe("demo scan", () => {
     ]);
   });
 
+  it("passes presence-check echoes that assert absence", () => {
+    // Regression: the bake failed on a shell presence check
+    // (if [ -z "${META_API_KEY:-}" ] ... echo "META_API_KEY: missing").
+    // No secret value exists anywhere; the rule only tripped because the
+    // JSON escape backslash after "missing" reached the 8-char minimum.
+    expect(
+      scanTextContent(
+        // biome-ignore lint/suspicious/noTemplateCurlyInString: shell expansion syntax under test, not a template string
+        'if [ -z \\"${META_API_KEY:-}\\" ]; then echo \\"META_API_KEY: missing\\\\n\\"; fi',
+        [],
+      ),
+    ).toEqual([]);
+    expect(scanTextContent('{"text":"META_API_KEY: missing\\\\n"}', [])).toEqual([]);
+    // Controls: real values in the same positions still fail closed.
+    expect(scanTextContent("META_API_KEY: hunter2hunter2", [])).toEqual(["env-assignment"]);
+    expect(scanTextContent("META_API_KEY: missingpersonsreport", [])).toEqual(["env-assignment"]);
+  });
+
   it("honors explicitly allowed synthetic values", () => {
     expect(scanTextContent("token sk-SYNTHETIC_DEMO_0000 ok", ["sk-SYNTHETIC_DEMO_0000"])).toEqual(
       [],
