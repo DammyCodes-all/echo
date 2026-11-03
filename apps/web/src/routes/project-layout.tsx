@@ -6,13 +6,14 @@ import { api } from "../api";
 import { ProjectNavPill } from "../components/project-nav-pill";
 import { ScaffoldPage } from "../components/scaffold-page";
 import { displayProjectName } from "../project-display";
+import { queryKeys } from "../query";
 
 const SECTIONS = ["overview", "learn", "architecture"] as const;
 
 export function ProjectLayout() {
   const { projectId = "" } = useParams();
   const location = useLocation();
-  const projects = useQuery({ queryKey: ["projects"], queryFn: api.projects });
+  const projects = useQuery({ queryKey: queryKeys.projects, queryFn: api.projects });
   const found = projects.data?.find((project) => project.id === projectId);
   const projectName = found
     ? displayProjectName(found)
