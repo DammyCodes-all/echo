@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { Link } from "react-router";
 import { api } from "../api";
@@ -7,6 +7,7 @@ import { ScaffoldPage } from "../components/scaffold-page";
 import { SessionCard } from "../components/session-card";
 import { SkeletonLines } from "../components/skeleton";
 import { useDemoMode } from "../hooks/use-demo-mode";
+import { queryKeys } from "../query";
 
 function CopyQuestion({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
@@ -31,18 +32,20 @@ function CopyQuestion({ text }: { text: string }) {
 
 export function DemoPage() {
   const { isDemo } = useDemoMode();
-  const projectsQuery = useQuery({ queryKey: ["projects"], queryFn: () => api.projects() });
+  const projectsQuery = useQuery({ queryKey: queryKeys.projects, queryFn: () => api.projects() });
   const project = projectsQuery.data?.[0] ?? null;
   const sessionsQuery = useQuery({
-    queryKey: ["sessions", project?.id],
+    queryKey: queryKeys.sessions(project?.id ?? ""),
     queryFn: () => api.sessions(project?.id ?? ""),
     enabled: project !== null,
+    placeholderData: keepPreviousData,
   });
   const firstSession = sessionsQuery.data?.[0] ?? null;
   const threadQuery = useQuery({
-    queryKey: ["ask-thread", firstSession?.id],
+    queryKey: queryKeys.askThread(firstSession?.id ?? ""),
     queryFn: () => api.askThread(firstSession?.id ?? ""),
     enabled: firstSession !== null,
+    placeholderData: keepPreviousData,
   });
   const examples =
     threadQuery.data?.messages
