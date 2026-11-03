@@ -20,7 +20,6 @@ import {
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { memo, useEffect, useMemo, useState } from "react";
-import { formatTime } from "../../api";
 import { duskDarkTokens } from "../../design-tokens";
 import {
   ARCH_NODE_HEIGHT,
@@ -414,30 +413,6 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
   };
 
   const popoverEvidence = hovered ? evidence[hovered.id] : undefined;
-  const receivesFrom = hovered
-    ? flowEdges
-        .filter(
-          (edge) =>
-            edge.to === hovered.id || (edge.bidirectional === true && edge.from === hovered.id),
-        )
-        .map(
-          (edge) =>
-            byId.get(edge.to === hovered.id ? edge.from : edge.to)?.label ??
-            (edge.to === hovered.id ? edge.from : edge.to),
-        )
-    : [];
-  const sendsTo = hovered
-    ? flowEdges
-        .filter(
-          (edge) =>
-            edge.from === hovered.id || (edge.bidirectional === true && edge.to === hovered.id),
-        )
-        .map(
-          (edge) =>
-            byId.get(edge.from === hovered.id ? edge.to : edge.from)?.label ??
-            (edge.from === hovered.id ? edge.to : edge.from),
-        )
-    : [];
 
   return (
     <div className="relative h-[520px] overflow-hidden">
@@ -477,13 +452,8 @@ export const ArchitectureDiagram = memo(function ArchitectureDiagram({
             key={hovered.id}
             label={hovered.label}
             description={hovered.description}
-            receivesFrom={receivesFrom}
-            sendsTo={sendsTo}
             sessions={popoverEvidence ? popoverEvidence.sessions : 0}
             totalSessions={popoverEvidence ? popoverEvidence.totalSessions : 0}
-            lastTouchedLabel={
-              popoverEvidence?.lastTouched ? formatTime(popoverEvidence.lastTouched) : "never"
-            }
           />
         </div>
       ) : null}
