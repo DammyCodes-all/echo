@@ -62,19 +62,13 @@ function assertSafeOutDir(outDir: string): void {
 
 // The bundle allowlist: one project, one or two sessions, and only the rows
 // and files those sessions need. Everything else is deleted or never copied.
+// change_refs/progress are narrowed to the allowlist (they drive
+// s.changeCount which the overview uses to show sessions), and the code
+// index / architecture tables are narrowed to the baked project so the
+// demo can show Architecture + tech stack. Reader checkpoints are wiped.
 const FULL_WIPE_TABLES = [
   "reader_checkpoints",
-  "engagement_events",
-  "change_refs",
-  "change_progress",
   "review_transition_cache",
-  "code_files",
-  "code_symbols",
-  "code_edges",
-  "code_index_state",
-  "project_artifacts",
-  "project_stack_state",
-  "project_architecture_versions",
 ] as const;
 
 function placeholders(count: number): string {
@@ -188,6 +182,26 @@ export function buildDemoBundle(options: DemoBuildOptions): {
       // sessions/projects, so narrowing parents before wiping children trips
       // the foreign-key enforcement.
       for (const table of FULL_WIPE_TABLES) baked.exec(`DELETE FROM ${table}`);
+      baked.exec("DELETE FROM engagement_events");
+      baked
+        .prepare(`DELETE FROM change_refs WHERE session_id NOT IN (${inSessions})`)
+        .run(...sessionIds);
+      baked
+        .prepare(`DELETE FROM change_progress WHERE session_id NOT IN (${inSessions})`)
+        .run(...sessionIds);
+      // Keep code index / architecture for the baked project only; other
+      // projects' rows are builder state that would leak paths.
+      for (const table of [
+        "code_files",
+        "code_symbols",
+        "code_edges",
+        "code_index_state",
+        "project_artifacts",
+        "project_stack_state",
+        "project_architecture_versions",
+      ] as const) {
+        baked.prepare(`DELETE FROM ${table} WHERE project_id != ?`).run(projectId);
+      }
       baked
         .prepare(
           `DELETE FROM snapshot_files WHERE snapshot_id NOT IN (SELECT id FROM snapshots WHERE session_id IN (${inSessions}))`,

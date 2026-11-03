@@ -227,18 +227,43 @@ export type ArchitecturePatchOp = z.infer<typeof ArchitecturePatchOpSchema>;
 export const ArchitecturePatchSchema = z.array(ArchitecturePatchOpSchema).min(1).max(20);
 export type ArchitecturePatch = z.infer<typeof ArchitecturePatchSchema>;
 
+export const ArchitectureNodeEvidenceSchema = z.object({
+  sessions: z.number().int().nonnegative(),
+  totalSessions: z.number().int().nonnegative(),
+  lastTouched: z.string().nullable(),
+});
+export type ArchitectureNodeEvidence = z.infer<typeof ArchitectureNodeEvidenceSchema>;
+
+/**
+ * Ephemeral drill-down: regenerated in-depth detail for the focused nodes.
+ * Never stored as a version; the client renders it in place of the full
+ * model until reset.
+ */
+export const ArchitectureFocusSchema = z.object({
+  label: z.string().min(1).max(80),
+  nodeIds: z.array(z.string().min(1)).min(1).max(10),
+  detail: ArchitectureModelOutputSchema,
+  evidence: z.record(z.string(), ArchitectureNodeEvidenceSchema),
+});
+export type ArchitectureFocus = z.infer<typeof ArchitectureFocusSchema>;
+
 /** Structured model answer for one chat turn. */
 export const ArchitectureChatModelOutputSchema = z.object({
   answer: z.string().min(1).max(4000),
   patch: ArchitecturePatchSchema.optional(),
-  autoApply: z.boolean(),
+  // Default false: the model sometimes omits the flag, and a missing flag
+  // must fail closed (show Apply, never auto-apply) instead of failing the turn.
+  autoApply: z.boolean().default(false),
   relatedNodeIds: z.array(z.string().min(1).max(64)).max(15).default([]),
+  focusNodeIds: z.array(z.string().min(1).max(64)).max(10).default([]),
+  clearFocus: z.boolean().default(false),
 });
 export type ArchitectureChatModelOutput = z.infer<typeof ArchitectureChatModelOutputSchema>;
 
 export const ArchitectureChatRequestSchema = z.object({
   message: z.string().min(1).max(2000),
   pinnedNodeId: z.string().min(1).max(64).nullable().default(null),
+  focusedNodeIds: z.array(z.string().min(1).max(64)).max(10).default([]),
 });
 export type ArchitectureChatRequest = z.infer<typeof ArchitectureChatRequestSchema>;
 
@@ -248,6 +273,8 @@ export const ArchitectureChatResponseSchema = z.object({
   applied: z.boolean(),
   version: z.number().int().positive(),
   relatedNodeIds: z.array(z.string().min(1)),
+  focus: ArchitectureFocusSchema.nullable(),
+  clearFocus: z.boolean(),
 });
 export type ArchitectureChatResponse = z.infer<typeof ArchitectureChatResponseSchema>;
 
@@ -255,13 +282,6 @@ export const ArchitectureApplyRequestSchema = z.object({
   patch: ArchitecturePatchSchema,
 });
 export type ArchitectureApplyRequest = z.infer<typeof ArchitectureApplyRequestSchema>;
-
-export const ArchitectureNodeEvidenceSchema = z.object({
-  sessions: z.number().int().nonnegative(),
-  totalSessions: z.number().int().nonnegative(),
-  lastTouched: z.string().nullable(),
-});
-export type ArchitectureNodeEvidence = z.infer<typeof ArchitectureNodeEvidenceSchema>;
 
 export const ArchitectureGetResponseSchema = z.object({
   projectId: z.string().min(1),
