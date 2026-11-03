@@ -1,0 +1,145 @@
+@import "tailwindcss";
+
+/*
+ * Mirror of the canonical tokens in apps/web/src/styles.css (@theme) — the
+ * landing is a separate static app, so the tokens are copied, never imported.
+ * Keep in sync with apps/web when Dusk Dark changes.
+ */
+@theme {
+  --color-dusk-base: #12121f;
+  --color-dusk-surface: #1c1c30;
+  --color-dusk-pill: #2a2a4c;
+  --color-dusk-secondary: #26264a;
+  --color-dusk-track: #26263f;
+  --color-dusk-rail: #2e2e4a;
+  --color-dusk-faint: #3e3e5c;
+  --color-dusk-deadend: #8a8ab0;
+  --color-dusk-ink: #eeeefa;
+  --color-dusk-muted: #a6a6c4;
+  --color-dusk-accent: #2d88ff;
+  --color-dusk-accent-soft: #a9cfff;
+  --color-dusk-accent-wash: rgba(45, 136, 255, 0.14);
+  --color-dusk-peach: #ffb38a;
+  --color-dusk-peach-wash: rgba(255, 179, 138, 0.14);
+  --color-dusk-pass: #6fd99a;
+  --color-dusk-pass-wash: rgba(111, 217, 154, 0.14);
+  --color-dusk-fail: #ff8a8a;
+  --color-dusk-fail-wash: rgba(255, 138, 138, 0.14);
+  --color-dusk-hairline: rgba(255, 255, 255, 0.06);
+  --color-dusk-hairline-strong: rgba(255, 255, 255, 0.12);
+  --font-sans: "Plus Jakarta Sans", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --radius-dusk-card: 28px;
+  --radius-dusk-swatch: 14px;
+  --radius-dusk-code: 10px;
+  --radius-dusk-uncertainty: 22px;
+  --radius-dusk-pill: 999px;
+  --shadow-dusk-fill: 0 0 16px rgba(45, 136, 255, 0.5);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+@property --beam-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--color-dusk-base);
+  color: var(--color-dusk-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background-color: var(--color-dusk-accent);
+  color: var(--color-dusk-base);
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-dusk-accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* Ambient wash — a whisper of Meta blue, top-right; a faint return bottom-left. */
+.mesh {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 70% 55% at 78% -8%, rgba(45, 136, 255, 0.1), transparent 60%),
+    radial-gradient(ellipse 55% 45% at 8% 110%, rgba(45, 136, 255, 0.05), transparent 60%),
+    var(--color-dusk-base);
+}
+
+/* One arc in Meta blue traveling the card's border. */
+.accent-beam {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  padding: 1.5px;
+  background: conic-gradient(
+    from var(--beam-angle),
+    transparent 0deg 285deg,
+    rgba(45, 136, 255, 0.06) 295deg,
+    #2d88ff 322deg,
+    #a9cfff 336deg,
+    rgba(45, 136, 255, 0.06) 350deg,
+    transparent 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+  animation: beam-rotate 6.5s linear infinite;
+}
+
+@keyframes beam-rotate {
+  to {
+    --beam-angle: 360deg;
+  }
+}
+
+/* Static rails + traveling pulses for the capture diagram. */
+.beam-pulse {
+  stroke-dasharray: 30 400;
+  stroke-dashoffset: 0;
+  animation: beam-flow 2.7s linear infinite;
+}
+
+@keyframes beam-flow {
+  to {
+    stroke-dashoffset: -430;
+  }
+}
+
+.ln-del {
+  color: var(--color-dusk-fail);
+}
+.ln-add {
+  color: var(--color-dusk-pass);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .accent-beam,
+  .beam-pulse {
+    animation: none;
+  }
+}
