@@ -220,6 +220,47 @@ describe("demo build", () => {
     expect(refs).toContain(`refs/echo/sessions/${SESSION_A}`);
   });
 
+  it("trims session-FK tables without violating constraints", () => {
+    const { dataDir, webDir, outDir } = seedSource([SESSION_A, SESSION_B]);
+    const db = openEchoDb(join(dataDir, "echo.sqlite"));
+    try {
+      for (const sid of [SESSION_A, SESSION_B]) {
+        db.prepare(
+          "INSERT INTO engagement_events (id, session_id, card_id, kind, occurred_at, created_at) VALUES (?, ?, NULL, 'card_seen', '2026-10-31T00:00:00.000Z', '2026-10-31T00:00:00.000Z')",
+        ).run(`eng_${sid}`, sid);
+        db.prepare(
+          "INSERT INTO change_refs (session_id, change_id, version, prev_oid, next_oid, created_at) VALUES (?, 'ch1', 1, 'a', 'b', '2026-10-31T00:00:00.000Z')",
+        ).run(sid);
+        db.prepare(
+          "INSERT INTO change_progress (session_id, change_id, version, state, updated_at) VALUES (?, 'ch1', 1, 'new', '2026-10-31T00:00:00.000Z')",
+        ).run(sid);
+      }
+      // A second project with index rows: deleting it must not trip the
+      // project-child FKs (code_files, project_artifacts, ...).
+      upsertProject(db, { id: "prj_demo_other", root: "/repo/other", name: "other" });
+      db.prepare(
+        "INSERT INTO code_files (project_id, path, language, size, sha256, parsed, indexed_at) VALUES ('prj_demo_other', 'a.ts', 'ts', 1, 'x', 0, '2026-10-31T00:00:00.000Z')",
+      ).run();
+      db.prepare(
+        "INSERT INTO project_artifacts (project_id, kind, path, watermark, generator, generated_at) VALUES ('prj_demo_other', 'k', 'p', 'w', 'g', '2026-10-31T00:00:00.000Z')",
+      ).run();
+    } finally {
+      db.close();
+    }
+    // Pre-fix this threw FOREIGN KEY constraint failed: change_refs,
+    // change_progress, and engagement_events all reference sessions, and the
+    // full-wipe tables reference projects. Adopted behavior is full-wipe
+    // (builder-side reading state never ships), so all narrow to zero.
+    buildDemoBundle({ dataDir, sessionIds: [SESSION_A], outDir, webDir });
+    const bakedData = join(outDir, "data");
+    expect(dbRows(bakedData, "engagement_events")).toBe(0);
+    expect(dbRows(bakedData, "change_refs")).toBe(0);
+    expect(dbRows(bakedData, "change_progress")).toBe(0);
+    expect(dbRows(bakedData, "projects")).toBe(1);
+    expect(dbRows(bakedData, "code_files")).toBe(0);
+    expect(dbRows(bakedData, "project_artifacts")).toBe(0);
+  });
+
   it("fails closed on a raw secret in the tape", () => {
     const { dataDir, webDir, outDir } = seedSource([SESSION_A]);
     const tape = join(dataDir, "projects", PROJECT_ID, "sessions", SESSION_A, "tape.jsonl");
