@@ -122,7 +122,7 @@ export function ProjectArchitecturePage() {
           <div
             role="status"
             aria-label="Loading architecture"
-            className="grid h-[520px] place-items-center rounded-dusk-card bg-dusk-surface"
+            className="grid h-[520px] place-items-center"
           >
             <span className="sr-only">Loading architecture…</span>
             <Skeleton className="h-6 w-48" />
