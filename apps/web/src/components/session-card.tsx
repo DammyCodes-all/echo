@@ -6,9 +6,11 @@ import {
   SkipForwardIcon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { useQueryClient } from "@tanstack/react-query";
 import { memo } from "react";
 import { Link } from "react-router";
 import { formatTime } from "../api";
+import { prefetchReader } from "../query";
 import { sessionDisplayTitle } from "../session-display";
 
 function timeAgo(iso: string | null): string {
@@ -72,10 +74,16 @@ function checkIcon(checkStatus: SessionSummary["checkStatus"]) {
 export const SessionCard = memo(function SessionCard({ session }: { session: SessionSummary }) {
   const showCheck = session.checkStatus !== "not_checked";
   const showRisk = session.highRiskCount > 0;
+  const queryClient = useQueryClient();
+  // Hover intent warms the reader (header row + change list) so opening the
+  // session paints from cache instead of flashing the skeleton.
+  const warm = () => prefetchReader(queryClient, session.id);
 
   return (
     <Link
       to={`/sessions/${session.id}`}
+      onMouseEnter={warm}
+      onFocus={warm}
       className="flex h-full flex-col rounded-[20px] border border-transparent bg-dusk-surface px-6 py-5 transition-colors hover:border-dusk-accent/40 hover:bg-dusk-pill/30 focus-visible:outline-2 focus-visible:outline-dusk-accent"
     >
       <span
