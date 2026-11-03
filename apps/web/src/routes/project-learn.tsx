@@ -1,7 +1,8 @@
 import { capStorySummary } from "@echo/contracts";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "react-router";
 import { api } from "../api";
+import { queryKeys } from "../query";
 import { compactSessionSummary } from "../session-display";
 
 const BUCKET_LABELS: Record<string, string> = {
@@ -22,7 +23,11 @@ const BUCKET_ORDER = [
 
 export function ProjectLearnPage() {
   const { projectId = "" } = useParams();
-  const learn = useQuery({ queryKey: ["learn", projectId], queryFn: () => api.learn(projectId) });
+  const learn = useQuery({
+    queryKey: queryKeys.learn(projectId),
+    queryFn: () => api.learn(projectId),
+    placeholderData: keepPreviousData,
+  });
 
   if (learn.isPending) {
     return (
