@@ -65,9 +65,12 @@ interface AskServiceOptions {
 }
 
 const SYSTEM_PROMPT = [
+  "Answer the question directly, as a helpful peer would.",
+  "Lead with the answer in one or two sentences. Never open by narrating the evidence: no 'From the evidence provided', no 'Agent stated', no 'Observed note'. The UI already shows where each point came from.",
+  "Never mention the evidence bundle, the supplied evidence, or the citation mechanism. Just answer the question.",
+  "When the answer has several distinct points, put them in a short plain list using * bullets. Otherwise answer in prose.",
   "Answer only from the supplied evidence bundle.",
-  "Cite every factual claim with one or more evidence_ids.",
-  "Distinguish what was observed (tool calls, results, snapshots) from what the agent wrote (agent_stated).",
+  "Cite every factual claim with one or more evidence_ids, and include the [En] reference inline where the claim appears.",
   "Never present an inference about intent as the agent's reasoning.",
   "If the evidence supports only part of the question, answer that part and leave the rest unclaimed; refuse with refusal_reason not_on_tape only when no part of the question is answerable from the evidence.",
   "Do not use outside knowledge about the repository, the libraries or the user.",
