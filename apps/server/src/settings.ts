@@ -106,7 +106,7 @@ export async function enableSettingsProject(
     return {
       status: 404,
       body: {
-        error: { code: "not_found", message: "no folder at that path on the daemon machine" },
+        error: { code: "not_found", message: "no folder with that path on this computer" },
       },
     };
   }
@@ -127,7 +127,7 @@ export async function enableSettingsProject(
     return {
       status: 500,
       body: {
-        error: { code: "enable_failed", message: "could not identify a repository at that path" },
+        error: { code: "enable_failed", message: "couldn't find a code repository there" },
       },
     };
   }
