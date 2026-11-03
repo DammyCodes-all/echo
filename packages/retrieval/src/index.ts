@@ -508,6 +508,43 @@ export function buildEvidenceBundle(
     picked.push(entry);
     used += entry.item.text.length;
   }
+  // Why-questions carry almost no content words ("why" itself is a stopword),
+  // so "Why this approach?" matches nothing while a longer rephrasing of the
+  // same intent answers. Rationale lives in prompts and agent words: when
+  // overlap finds nothing, fall back to the most recent agent-stated text and
+  // let the model decide relevance. Citation validation still binds every
+  // claim to a verbatim quote, and scoped/strict queries keep exact refusal.
+  if (picked.length === 0 && !strict && queryFile === null && /\bwhy\b/i.test(query.question)) {
+    const candidates = units
+      .filter(
+        (unit) =>
+          unit.event.diagnostics.length === 0 &&
+          unit.summary.length > 0 &&
+          eventKind(unit.event.kind).label === "agent_stated" &&
+          !isMuseLifecycleNoise(unit.event.payload, unit.summary),
+      )
+      .sort((a, b) => b.event.tape_seq - a.event.tape_seq);
+    for (const unit of candidates) {
+      if (picked.length >= Math.max(0, maxItems)) break;
+      if (picked.length > 0 && used + unit.summary.length > maxChars) break;
+      const mapped = eventKind(unit.event.kind);
+      picked.push({
+        item: {
+          evidenceId: "",
+          eventId: unit.event.event_id,
+          kind: mapped.kind,
+          label: mapped.label,
+          ts: unit.event.ts,
+          text: unit.summary,
+          filePath: unit.filePath,
+        },
+        score: mapped.weight,
+        seq: unit.event.tape_seq,
+        relevant: true,
+      });
+      used += unit.summary.length;
+    }
+  }
 
   const items = picked.map((entry, index) => ({ ...entry.item, evidenceId: `E${index + 1}` }));
   const bundleHash = createHash("sha256")
