@@ -7,6 +7,8 @@ type ProgressTapeProps = {
   getState: (change: Pick<Change, "id" | "version">) => ProgressState | undefined;
   isLive: boolean;
   onJump: (index: number) => void;
+  /** Hover/focus intent on a segment: warm that change's diff before the jump. */
+  onPeek?: (index: number) => void;
 };
 
 function segmentClass(state: ProgressState | undefined, isCurrent: boolean): string {
@@ -32,6 +34,7 @@ export function ProgressTape({
   getState,
   isLive,
   onJump,
+  onPeek,
 }: ProgressTapeProps) {
   return (
     <div className="flex items-center gap-3">
@@ -41,6 +44,8 @@ export function ProgressTape({
             key={`${change.id}@v${change.version}`}
             type="button"
             onClick={() => onJump(index)}
+            onMouseEnter={() => onPeek?.(index)}
+            onFocus={() => onPeek?.(index)}
             title={change.title}
             aria-label={segmentLabel(index, getState(change))}
             aria-current={index === currentIndex ? "step" : undefined}
