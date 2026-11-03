@@ -97,6 +97,56 @@ describe("evidence bundle", () => {
   });
 });
 
+describe("why-question fallback", () => {
+  // "Why this approach?" carries one content word ("approach") the tape never
+  // says, so it refused pre-model while a longer rephrasing of the same
+  // intent answered. Rationale lives in prompts and agent words: fall back
+  // to recent agent-stated text and let the model decide relevance.
+  const rationaleTape = [
+    makeEvent(1, "prompt.submitted", "Line up the two session ID formats before anything else"),
+    makeEvent(2, "tool.completed", "shell edit applied"),
+    makeEvent(3, "model.response", "Reconciling the session ID formats now"),
+  ];
+
+  it("falls back to recent agent-stated text when a why-question matches nothing", () => {
+    const bundle = buildEvidenceBundle(rationaleTape, { question: "Why this approach?" });
+    expect(bundle.items.length).toBeGreaterThan(0);
+    expect(bundle.items.every((item) => item.label === "agent_stated")).toBe(true);
+    // Most recent first: the reasoning outranks the older prompt.
+    expect(bundle.items[0]?.eventId).toBe("fixture-fts-3");
+  });
+
+  it("still refuses a why-question with no agent-stated text on tape", () => {
+    const bundle = buildEvidenceBundle([makeEvent(1, "tool.completed", "shell edit applied")], {
+      question: "Why this approach?",
+    });
+    expect(bundle.items).toHaveLength(0);
+    expect(shouldRefuseBeforeModel(bundle)).toBe("not_on_tape");
+  });
+
+  it("does not fall back for non-why questions", () => {
+    const bundle = buildEvidenceBundle(rationaleTape, {
+      question: "What is the capital of France?",
+    });
+    expect(bundle.items).toHaveLength(0);
+    expect(shouldRefuseBeforeModel(bundle)).toBe("not_on_tape");
+  });
+
+  it("does not fall back under strict overlap or file scope", () => {
+    const strict = buildEvidenceBundle(
+      rationaleTape,
+      { question: "Why this approach?" },
+      { strictOverlap: true },
+    );
+    expect(strict.items).toHaveLength(0);
+    const scoped = buildEvidenceBundle(rationaleTape, {
+      question: "Why this approach?",
+      filePath: "src/does-not-exist.ts",
+    });
+    expect(scoped.items).toHaveLength(0);
+  });
+});
+
 describe("citation validation", () => {
   it("accepts a verbatim quote and rejects invented support", () => {
     const bundle = buildEvidenceBundle(tape.events, {
