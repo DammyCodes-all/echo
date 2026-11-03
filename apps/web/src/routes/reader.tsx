@@ -505,14 +505,14 @@ export function ReaderPage() {
         // visible past the rail; the rail owns the per-area breakdown.
         side:
           code == null ? null : (
-            <>
+            <span className="font-mono text-xs tabular-nums">
               <span className="text-dusk-pass">
                 +{code.files.reduce((sum, file) => sum + file.added, 0)}
               </span>{" "}
               <span className="text-dusk-fail">
                 −{code.files.reduce((sum, file) => sum + file.removed, 0)}
               </span>
-            </>
+            </span>
           ),
       }}
     >
@@ -605,10 +605,6 @@ export function ReaderPage() {
                         </button>
                       </div>
                     </div>
-                    <p className="text-sm text-dusk-muted">
-                      Change {viewIndex + 1} of {changes.length} ·{" "}
-                      {next !== null ? `Next up: ${next.title}` : "Last one — the wrap-up is next."}
-                    </p>
                   </div>
 
                   {viewIndex === changes.length - 1 && isLive ? (
