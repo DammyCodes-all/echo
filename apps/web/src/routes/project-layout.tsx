@@ -8,7 +8,7 @@ import { ScaffoldPage } from "../components/scaffold-page";
 import { displayProjectName } from "../project-display";
 import { queryKeys } from "../query";
 
-const SECTIONS = ["overview", "learn", "architecture"] as const;
+const SECTIONS = ["overview", "architecture"] as const;
 
 export function ProjectLayout() {
   const { projectId = "" } = useParams();
@@ -33,7 +33,7 @@ export function ProjectLayout() {
           aria-label="Breadcrumb"
           className="sticky top-0 z-10 -mx-6 bg-dusk-base/95 px-6 py-3 backdrop-blur"
         >
-          <div className="flex items-center gap-2 text-sm">
+          <div className="flex min-w-0 items-center gap-2 text-sm">
             <Link to="/projects" className="text-dusk-muted transition-colors hover:text-dusk-ink">
               ← Projects
             </Link>
@@ -42,7 +42,7 @@ export function ProjectLayout() {
             </span>
             <h1
               aria-current="page"
-              className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-dusk-ink"
+              className="flex min-w-0 items-center gap-2 text-2xl font-semibold tracking-tight text-dusk-ink"
             >
               <span aria-hidden className="inline-flex text-dusk-muted">
                 <HugeiconsIcon icon={Folder01Icon} size={22} strokeWidth={1.8} />
@@ -54,18 +54,26 @@ export function ProjectLayout() {
                 />
               </span>
             </h1>
+            <span className="ml-auto shrink-0">
+              <ProjectNavPill projectId={projectId} active={active} />
+            </span>
           </div>
         </nav>
         <Outlet />
-        <ProjectNavPill projectId={projectId} active={active} />
       </section>
     );
   }
 
   return (
-    <ScaffoldPage breadcrumb={{ backTo: "/projects", backLabel: "Projects" }} title={projectName}>
+    <ScaffoldPage
+      breadcrumb={{
+        backTo: "/projects",
+        backLabel: "Projects",
+        side: <ProjectNavPill projectId={projectId} active={active} />,
+      }}
+      title={projectName}
+    >
       <Outlet />
-      <ProjectNavPill projectId={projectId} active={active} />
     </ScaffoldPage>
   );
 }
