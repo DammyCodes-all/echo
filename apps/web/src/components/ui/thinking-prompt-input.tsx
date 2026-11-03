@@ -7,6 +7,7 @@
 
 import { ArrowUp, Check, ChevronRight, Sparkles, Square } from "lucide-react";
 import * as React from "react";
+import { ModelMarkdown } from "../model-markdown";
 
 export type ThinkingStatus = "idle" | "thinking" | "answering" | "done";
 export type ThinkingStep = { id: string; text: string; status?: "active" | "complete" };
@@ -356,21 +357,14 @@ export function ThinkingPromptInput({
                   aria-live="off"
                   className="mt-4 space-y-2.5 break-words text-sm leading-6 text-dusk-ink"
                 >
-                  {paragraphs.map((paragraph, index) => (
-                    // Paragraphs come from a newline split: order is append-only
-                    // and duplicates are legal, so the index is the stable key.
-                    // biome-ignore lint/suspicious/noArrayIndexKey: split order never reorders.
-                    <p key={`${index}-${paragraph.slice(0, 24)}`}>
-                      {paragraph}
-                      {status === "answering" && index === paragraphs.length - 1 && (
-                        <span
-                          data-cursor
-                          aria-hidden="true"
-                          className="ml-1 inline-block h-3.5 w-1 translate-y-0.5 rounded-full bg-dusk-accent motion-safe:animate-pulse"
-                        />
-                      )}
-                    </p>
-                  ))}
+                  <ModelMarkdown text={answer} />
+                  {status === "answering" && (
+                    <span
+                      data-cursor
+                      aria-hidden="true"
+                      className="ml-1 inline-block h-3.5 w-1 translate-y-0.5 rounded-full bg-dusk-accent motion-safe:animate-pulse"
+                    />
+                  )}
                   {status === "answering" && paragraphs.length === 0 && (
                     <span
                       data-cursor
