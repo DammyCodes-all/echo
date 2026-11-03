@@ -254,10 +254,9 @@ function draftSet(): unknown {
         cardId: "h_aaaaaaaaaaaaaaaa",
         format: "free_text",
         kind: "teach_back",
-        question:
-          "Explain the billing retry change in billing/retry.ts so a teammate can act on it.",
-        rubric: ["states what changed in billing/retry.ts"],
-        explanation: "The retry path in billing/retry.ts changed.",
+        question: "Explain the billing retry change so a teammate can act on it.",
+        rubric: ["states what the retry change does"],
+        explanation: "The retry logic now handles the failure case.",
         evidencePaths: ["billing/retry.ts"],
       },
       {
@@ -271,7 +270,7 @@ function draftSet(): unknown {
         ],
         correctOptionId: "o1",
         distractorSources: [],
-        explanation: "Docs-only change in docs/readme.md.",
+        explanation: "Docs-only change, nothing beyond the docs.",
         evidencePaths: ["docs/readme.md"],
       },
     ],
@@ -282,7 +281,7 @@ function hitGrading(): unknown {
   return {
     hits: [
       {
-        point: "states what changed in billing/retry.ts",
+        point: "states what the retry change does",
         hit: true,
         excerpt: "billing/retry.ts",
         why: "names the file",
@@ -295,7 +294,7 @@ function missGrading(): unknown {
   return {
     hits: [
       {
-        point: "states what changed in billing/retry.ts",
+        point: "states what the retry change does",
         hit: false,
         excerpt: null,
         why: "not mentioned",
@@ -438,9 +437,9 @@ describe("createChecksV2Service", () => {
             cardId: `h_${String(order).repeat(16)}`,
             format: "free_text",
             kind: "teach_back",
-            question: `What changed in ${file}?`,
-            rubric: [`States the ${file} change.`],
-            explanation: `${file} changed.`,
+            question: "What changed here?",
+            rubric: ["States the change."],
+            explanation: "It changed.",
             evidencePaths: [file],
           };
         }),
@@ -515,7 +514,7 @@ describe("createChecksV2Service", () => {
       const mcqBody = CheckV2AnswerResponseSchema.parse(answeredMcq.body);
       expect(mcqBody.attempt.correct).toBe(true);
       expect(mcqBody.attempt.bucket).toBe("solid");
-      expect(mcqBody.reveal.summary).toBe("Docs-only change in docs/readme.md.");
+      expect(mcqBody.reveal.summary).toBe("Docs-only change, nothing beyond the docs.");
       expect(mcqBody.reveal.evidence).toHaveLength(1);
 
       const mid = ChecksV2ResponseSchema.parse(service.state("ses_v2_full").body);
@@ -894,6 +893,51 @@ describe("createChecksV2Service", () => {
     }
   });
 
+  it("rejects file paths in prose and recovers on retry", async () => {
+    const sessionId = "ses_v2_nopath";
+    const { db, dataDir } = seedDb(sessionId);
+    try {
+      const changes = [makeChange("c_aaaaaaaaaaaaaaaa", "src/a.ts")];
+      writeChanges(db, dataDir, sessionId, changes);
+      const pathDraft = {
+        questions: [
+          {
+            cardId: "c_aaaaaaaaaaaaaaaa",
+            format: "mcq",
+            kind: "consequence",
+            question: "What changed in src/a.ts?",
+            options: [
+              { id: "o1", text: "It changed" },
+              { id: "o2", text: "Nothing changed" },
+            ],
+            correctOptionId: "o1",
+            distractorSources: [],
+            explanation: "It changed.",
+            evidencePaths: ["src/a.ts"],
+          },
+        ],
+      };
+      const { fetchImpl, calls } = stubFetchQueue([
+        pathDraft,
+        mcqDraftForChange(changes[0] as Change),
+      ]);
+      const service = createChecksV2Service(
+        { db, dataDir, log: silentLog },
+        { env: ENV, fetchImpl },
+      );
+      const single = await service.checkMe(sessionId, "c_aaaaaaaaaaaaaaaa");
+      expect(single.status).toBe(200);
+      // The path-naming draft was refused; the retry with the error spelled
+      // out produced the behavior question instead.
+      expect(ChecksV2ResponseSchema.parse(single.body).questions[0]?.question).toBe(
+        "What changed here?",
+      );
+      expect(calls()).toBe(2);
+    } finally {
+      db.close();
+    }
+  });
+
   it("rejects code-recall drafts and recovers on retry", async () => {
     const sessionId = "ses_v2_norecall";
     const { db, dataDir } = seedDb(sessionId);
@@ -913,7 +957,7 @@ describe("createChecksV2Service", () => {
             ],
             correctOptionId: "o1",
             distractorSources: [],
-            explanation: "Change in src/a.ts.",
+            explanation: "It changed.",
             evidencePaths: ["src/a.ts"],
           },
         ],
@@ -958,7 +1002,7 @@ describe("createChecksV2Service", () => {
             ],
             correctOptionId: "o1",
             distractorSources: [],
-            explanation: "Change in src/a.ts.",
+            explanation: "It changed.",
             evidencePaths: ["src/a.ts"],
           },
         ],
@@ -1016,7 +1060,7 @@ describe("createChecksV2Service", () => {
             kind: "consequence",
             question: "What will break here?",
             rubric: ["Names a breakage."],
-            explanation: "Change in src/a.ts.",
+            explanation: "It changed.",
             evidencePaths: ["src/a.ts"],
           },
         ],
