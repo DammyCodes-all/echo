@@ -199,13 +199,9 @@ export function ReaderPage() {
   const next = !atEnd && viewIndex < changes.length - 1 ? (changes[viewIndex + 1] ?? null) : null;
   const skipped = changes.filter((change) => progress[progressKey(change)]?.state === "skipped");
 
-  // Per-change Ask state. The anchor is captured at open time so stepping
-  // through changes behind the thread never shifts the question mid-answer;
-  // clearing the chip widens to the whole session. The thread lives in the
-  // rail's Ask tab.
+  // The thread lives in the rail's Ask tab; the tab state lives here so
+  // the action row and wrap-up can flip to it.
   const [railTab, setRailTab] = useState<"changes" | "ask">("changes");
-  const [askChange, setAskChange] = useState<{ id: string; title: string } | null>(null);
-  const [askScopeAll, setAskScopeAll] = useState(false);
 
   // Gate modal bookkeeping: only this change's questions block Continue.
   // Other questions may ride along in the runner, but they never gate.
@@ -256,17 +252,6 @@ export function ReaderPage() {
 
   const handleDone = () => {
     navigate("/projects");
-  };
-
-  // "Ask about this change" anchors the thread to the change on screen and
-  // flips the rail to it. Nearest-block scroll is a no-op on desktop (the
-  // rail is already visible) and brings the thread into view on mobile.
-  const handleAskAboutChange = () => {
-    if (current === null) return;
-    setAskChange({ id: current.id, title: current.title });
-    setAskScopeAll(false);
-    setRailTab("ask");
-    document.getElementById("reader-rail")?.scrollIntoView({ block: "nearest" });
   };
 
   const handleStartCheck = async () => {
@@ -371,7 +356,7 @@ export function ReaderPage() {
           </div>
           <div
             aria-hidden
-            className="grid gap-10 motion-safe:animate-pulse lg:grid-cols-[minmax(0,1fr)_320px]"
+            className="grid gap-8 motion-safe:animate-pulse lg:grid-cols-[minmax(0,1fr)_360px]"
           >
             <div className="min-w-0 space-y-6">
               <div>
@@ -405,27 +390,19 @@ export function ReaderPage() {
                 <div className="h-4 w-3/4 rounded-dusk-code bg-dusk-pill" />
                 <div className="h-4 w-2/3 rounded-dusk-code bg-dusk-pill" />
               </div>
-              <div className="border-t border-dusk-hairline">
-                <div className="border-b border-dusk-hairline py-2.5">
-                  <div className="h-3 w-12 rounded-dusk-code bg-dusk-pill" />
-                </div>
+              <div className="flex items-center gap-2 py-3">
+                <div className="h-3 w-3 rounded-dusk-code bg-dusk-pill" />
+                <div className="h-3 w-12 rounded-dusk-code bg-dusk-pill" />
               </div>
-              <div className="space-y-2 border-t border-dusk-hairline pt-4">
-                <div className="flex items-center gap-3">
-                  <div className="h-4 w-10 rounded-dusk-code bg-dusk-pill" />
-                  <div className="h-4 w-24 rounded-dusk-code bg-dusk-pill" />
-                  <div className="h-10 w-44 rounded-dusk-pill bg-dusk-pill" />
-                </div>
-                <div className="h-4 w-56 rounded-dusk-code bg-dusk-pill" />
-              </div>
+              <div aria-hidden className="h-32 lg:h-20" />
             </div>
-            <aside className="space-y-8">
+            <aside className="space-y-4">
+              <div className="flex gap-4 border-b border-dusk-hairline pb-2">
+                <div className="h-3 w-16 rounded-dusk-code bg-dusk-pill" />
+                <div className="h-3 w-10 rounded-dusk-code bg-dusk-pill" />
+              </div>
               <div>
-                <div className="flex items-center justify-between gap-2">
-                  <div className="h-3 w-20 rounded-dusk-code bg-dusk-pill" />
-                  <div className="h-3 w-6 rounded-dusk-code bg-dusk-pill" />
-                </div>
-                <div className="mt-2 space-y-1">
+                <div className="space-y-1">
                   {["r1", "r2", "r3", "r4", "r5"].map((key) => (
                     <div key={key} className="h-9 rounded-dusk-code bg-dusk-pill/50" />
                   ))}
@@ -443,6 +420,24 @@ export function ReaderPage() {
                 </div>
               </div>
             </aside>
+          </div>
+          <div
+            aria-hidden
+            className="fixed inset-x-0 bottom-0 z-20 border-t border-dusk-hairline bg-dusk-base motion-safe:animate-pulse lg:left-[max(1.5rem,calc((100vw-80rem)/2+1.5rem))] lg:right-[max(26rem,calc((100vw-80rem)/2+26rem))]"
+          >
+            <div
+              aria-hidden
+              className="pointer-events-none absolute -top-12 right-0 left-0 h-12 bg-gradient-to-b from-dusk-base/0 to-dusk-base"
+            />
+            <div className="px-6 pb-4 pt-4 lg:px-0">
+              <div className="flex items-center justify-between gap-3">
+                <div className="h-9 w-20 rounded-dusk-pill bg-dusk-pill" />
+                <div className="flex items-center gap-3">
+                  <div className="h-9 w-40 rounded-dusk-pill bg-dusk-pill" />
+                  <div className="h-10 w-44 rounded-dusk-pill bg-dusk-pill" />
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       </ScaffoldPage>
@@ -578,7 +573,11 @@ export function ReaderPage() {
 
                   {/* The action bar is fixed to the viewport, so this holds its in-flow room. */}
                   <div aria-hidden className="h-32 lg:h-20" />
-                  <div className="fixed inset-x-0 bottom-0 z-20 border-t border-dusk-hairline bg-dusk-base/95 backdrop-blur lg:left-[max(1.5rem,calc((100vw-80rem)/2+1.5rem))] lg:right-[max(26rem,calc((100vw-80rem)/2+26rem))]">
+                  <div className="fixed inset-x-0 bottom-0 z-20 border-t border-dusk-hairline bg-dusk-base lg:left-[max(1.5rem,calc((100vw-80rem)/2+1.5rem))] lg:right-[max(26rem,calc((100vw-80rem)/2+26rem))]">
+                    <div
+                      aria-hidden
+                      className="pointer-events-none absolute -top-12 right-0 left-0 h-12 bg-gradient-to-b from-dusk-base/0 to-dusk-base"
+                    />
                     <div className="px-6 pb-4 pt-4 lg:px-0">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <button
@@ -589,24 +588,14 @@ export function ReaderPage() {
                         >
                           ← Back
                         </button>
-                        <div className="flex flex-wrap items-center gap-3">
-                          <button
-                            type="button"
-                            onClick={handleAskAboutChange}
-                            disabled={gate !== null}
-                            className={GHOST}
-                          >
-                            Ask about this change
-                          </button>
-                          <button
-                            type="button"
-                            onClick={handleGotIt}
-                            disabled={gate !== null}
-                            className={PRIMARY}
-                          >
-                            Got it, next change →
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={handleGotIt}
+                          disabled={gate !== null}
+                          className={PRIMARY}
+                        >
+                          Got it, next change →
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -628,9 +617,6 @@ export function ReaderPage() {
                   tab={railTab}
                   onTabChange={setRailTab}
                   sessionId={sessionId}
-                  askChange={askChange}
-                  askScopeAll={askScopeAll}
-                  onClearAskScope={() => setAskScopeAll(true)}
                 />
               </div>
             ) : isLive && !showSummary ? (
