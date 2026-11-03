@@ -1,7 +1,7 @@
 import type { ProjectTechStackKind, SessionSummary } from "@echo/contracts";
 import {
-  Alert02Icon,
   CheckmarkCircle02Icon,
+  Clock01Icon,
   CodeIcon,
   Database01Icon,
   Folder01Icon,
@@ -11,10 +11,11 @@ import {
   Wrench01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useParams, useSearchParams } from "react-router";
 import { api } from "../api";
 import { SessionCard } from "../components/session-card";
+import { queryKeys } from "../query";
 
 const TECH_KIND_ICON: Record<ProjectTechStackKind, typeof CodeIcon> = {
   language: CodeIcon,
@@ -36,21 +37,24 @@ export function ProjectOverviewPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const query = searchParams.get("q") ?? "";
   const project = useQuery({
-    queryKey: ["project", projectId],
+    queryKey: queryKeys.project(projectId),
     queryFn: () => api.project(projectId),
+    placeholderData: keepPreviousData,
   });
   const sessions = useQuery({
-    queryKey: ["sessions", projectId],
+    queryKey: queryKeys.sessions(projectId),
     queryFn: () => api.sessions(projectId),
     refetchInterval: 5000,
+    placeholderData: keepPreviousData,
   });
 
   const techStack = useQuery({
-    queryKey: ["tech-stack", projectId],
+    queryKey: queryKeys.techStack(projectId),
     queryFn: () => api.techStack(projectId),
     // Background regens land as a new artifact; poll so the sidebar
     // converges without a manual refresh. Stale data stays visible meanwhile.
     refetchInterval: 30_000,
+    placeholderData: keepPreviousData,
   });
 
   // Server order is last activity DESC: only genuinely live sessions move.
@@ -63,7 +67,11 @@ export function ProjectOverviewPage() {
   const visible = filtering ? content.filter((s) => matchesSession(s, query)) : content;
   const checked = content.filter((s) => s.checkStatus === "checked").length;
   const skipped = content.filter((s) => s.checkStatus === "skipped").length;
-  const highRisk = content.reduce((sum, s) => sum + s.highRiskCount, 0);
+  // checkStatus partitions every session (checked + skipped + not_checked =
+  // sessions), so the fourth tile is the live remainder. The old high-risk
+  // tile read sessions.high_risk_count, whose only writer (the story
+  // pipeline) is gone — frozen legacy data, never live risk.
+  const awaiting = content.filter((s) => s.checkStatus === "not_checked").length;
 
   return (
     <div className="lg:grid lg:grid-cols-[300px_minmax(0,1fr)] lg:items-start lg:gap-6">
@@ -134,19 +142,12 @@ export function ProjectOverviewPage() {
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <span
-                  aria-hidden
-                  className={`inline-flex ${highRisk > 0 ? "text-dusk-fail" : "text-dusk-muted"}`}
-                >
-                  <HugeiconsIcon icon={Alert02Icon} size={20} strokeWidth={1.8} />
+                <span aria-hidden className="inline-flex text-dusk-accent">
+                  <HugeiconsIcon icon={Clock01Icon} size={20} strokeWidth={1.8} />
                 </span>
-                <dd
-                  className={`text-2xl font-semibold tracking-tight tabular-nums ${highRisk > 0 ? "text-dusk-fail" : ""}`}
-                >
-                  {highRisk}
-                </dd>
+                <dd className="text-2xl font-semibold tracking-tight tabular-nums">{awaiting}</dd>
               </div>
-              <dt className="mt-1 text-xs text-dusk-muted">High-risk cards</dt>
+              <dt className="mt-1 text-xs text-dusk-muted">Awaiting check</dt>
             </div>
           </dl>
           {techStack.isPending ? (
