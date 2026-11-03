@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../api";
 import { queryKeys } from "../../query";
 import { ThinkingPromptInput } from "../ui/thinking-prompt-input";
+import { ModelMarkdown } from "../model-markdown";
 import type { PinnedNode } from "./architecture-diagram";
 
 interface ChatMessage {
@@ -46,8 +47,8 @@ function HistoryMessage({
   }
   const patch = message.patch;
   return (
-    <div className="space-y-1 rounded-dusk-code bg-dusk-pill px-3 py-2">
-      <p className="text-sm leading-6 text-dusk-ink">{message.text}</p>
+    <div className="space-y-2 rounded-dusk-code bg-dusk-pill px-3.5 py-3">
+      <ModelMarkdown text={message.text} />
       {patch && !message.applied ? (
         <button
           type="button"
