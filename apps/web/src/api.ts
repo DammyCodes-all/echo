@@ -119,8 +119,8 @@ export const api = {
     getJson<SessionSummary>(`/api/sessions/${encodeURIComponent(sessionId)}`),
   review: (sessionId: string) =>
     getJson<SessionReview>(`/api/sessions/${encodeURIComponent(sessionId)}/review`),
-  ask: (sessionId: string, input: AskRequest) =>
-    postJson<AskResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/ask`, input),
+  ask: (sessionId: string, input: AskRequest, options: FetchOptions = {}) =>
+    postJson<AskResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/ask`, input, options),
   askThread: (sessionId: string) =>
     getJson<AskThread>(`/api/sessions/${encodeURIComponent(sessionId)}/ask/thread`),
   checksV2State: (sessionId: string) =>
