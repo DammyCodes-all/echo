@@ -1,5 +1,5 @@
 import type { ArchitecturePatch } from "@echo/contracts";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useParams } from "react-router";
 import { api } from "../api";
@@ -11,6 +11,7 @@ import {
 import { Skeleton } from "../components/skeleton";
 import { useArchitectureStream } from "../hooks/use-architecture-stream";
 import { useDemoMode } from "../hooks/use-demo-mode";
+import { queryKeys } from "../query";
 
 function patchNodeIds(patch: ArchitecturePatch): string[] {
   const ids = new Set<string>();
@@ -54,8 +55,9 @@ export function ProjectArchitecturePage() {
   const [pinned, setPinned] = useState<PinnedNode | null>(null);
 
   const arch = useQuery({
-    queryKey: ["architecture", projectId],
+    queryKey: queryKeys.architecture(projectId),
     queryFn: () => api.architecture(projectId),
+    placeholderData: keepPreviousData,
   });
 
   useArchitectureStream(projectId, (event) => {
@@ -70,13 +72,13 @@ export function ProjectArchitecturePage() {
         // Generation emits done then updated in sequence: updated must not
         // clear the warnings, or they would flash and vanish.
         setWarnings(event.warnings ?? []);
-        void queryClient.invalidateQueries({ queryKey: ["architecture", projectId] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.architecture(projectId) });
         break;
       case "architecture.updated":
         setGenerating(false);
         setProgress(null);
         setGenerateError(null);
-        void queryClient.invalidateQueries({ queryKey: ["architecture", projectId] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.architecture(projectId) });
         break;
       case "generation.error":
         setGenerating(false);
@@ -107,7 +109,7 @@ export function ProjectArchitecturePage() {
     onSuccess: () => {
       setPulseIds([]);
       setWarnings([]);
-      void queryClient.invalidateQueries({ queryKey: ["architecture", projectId] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.architecture(projectId) });
     },
     onError: (error) => {
       setUndoError(error instanceof Error ? error.message : "Undo failed.");
