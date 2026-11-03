@@ -1,8 +1,11 @@
 import type { ProjectSummary, SessionSummary } from "@echo/contracts";
+import { useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Link, useNavigate } from "react-router";
 import { api, formatTime } from "../api";
 import { displayProjectName } from "../project-display";
+import { prefetchProject, queryKeys } from "../query";
 import { sessionDisplayTitle } from "../session-display";
 import GlassFolder, { type ArtRecipe, type FolderFile, hashString } from "./glass-folder-cards";
 
@@ -73,10 +76,15 @@ const REST_PEEK: FolderFile[] = [{ name: "Loading sessions…" }];
 
 export function ProjectFolderCard({ project, index }: { project: ProjectSummary; index: number }) {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [files, setFiles] = useState<FolderFile[] | null>(null);
   const [total, setTotal] = useState(project.sessionCount);
   const [open, setOpen] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const cancelRef = useRef<HTMLButtonElement | null>(null);
   // The fetch resolves after the pointer may have left; only open when still wanted.
   const wantOpen = useRef(false);
   const fetching = useRef(false);
@@ -97,40 +105,49 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
         // A second open while the fetch is in flight opens via the resolver below.
         if (!fetching.current) {
           fetching.current = true;
-          void api.sessions(project.id).then(
-            (sessions) => {
-              fetching.current = false;
-              loadedRef.current = true;
-              // Only the folder subtree remounts; focus elsewhere (e.g. the
-              // view-all link) survives and must not be stolen.
-              refocusOnLoad.current =
-                wantOpen.current &&
-                (wrapRef.current?.querySelector(".gf-root")?.contains(document.activeElement) ??
-                  false);
-              setTotal(sessions.length);
-              setFiles(sessions.slice(0, 3).map(sessionFile));
-              setFailed(false);
-              // The ready folder remounts closed (appear={false} below); flip
-              // to open over two frames so the first preview lifts from inside
-              // instead of dropping in or snapping open.
-              requestAnimationFrame(() => {
+          // Through the query cache, not raw fetch: the overview reads the
+          // same ["sessions", id] key, so the preview warms navigation.
+          // The project row + tech stack ride along for a skeleton-free open.
+          prefetchProject(queryClient, project.id);
+          void queryClient
+            .fetchQuery({
+              queryKey: queryKeys.sessions(project.id),
+              queryFn: () => api.sessions(project.id),
+            })
+            .then(
+              (sessions) => {
+                fetching.current = false;
+                loadedRef.current = true;
+                // Only the folder subtree remounts; focus elsewhere (e.g. the
+                // view-all link) survives and must not be stolen.
+                refocusOnLoad.current =
+                  wantOpen.current &&
+                  (wrapRef.current?.querySelector(".gf-root")?.contains(document.activeElement) ??
+                    false);
+                setTotal(sessions.length);
+                setFiles(sessions.slice(0, 3).map(sessionFile));
+                setFailed(false);
+                // The ready folder remounts closed (appear={false} below); flip
+                // to open over two frames so the first preview lifts from inside
+                // instead of dropping in or snapping open.
                 requestAnimationFrame(() => {
-                  if (wantOpen.current) setOpen(true);
+                  requestAnimationFrame(() => {
+                    if (wantOpen.current) setOpen(true);
+                  });
                 });
-              });
-            },
-            () => {
-              fetching.current = false;
-              setFailed(true);
-              if (wantOpen.current) setOpen(true);
-            },
-          );
+              },
+              () => {
+                fetching.current = false;
+                setFailed(true);
+                if (wantOpen.current) setOpen(true);
+              },
+            );
         }
         return;
       }
       setOpen(next);
     },
-    [project.id],
+    [project.id, queryClient],
   );
 
   useEffect(() => {
@@ -193,8 +210,89 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
 
   const openProject = () => navigate(`/projects/${project.id}`);
 
+  // Focus the safe choice first; Escape and the scrim both back out.
+  useEffect(() => {
+    if (confirming) cancelRef.current?.focus({ preventScroll: true });
+  }, [confirming]);
+
+  async function handleRemove(): Promise<void> {
+    if (removing) return;
+    setRemoving(true);
+    setRemoveError(null);
+    try {
+      await api.disableProject(project.root);
+      setConfirming(false);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.projects });
+    } catch (error) {
+      setRemoveError(error instanceof Error ? error.message : "Could not remove this repository.");
+    } finally {
+      setRemoving(false);
+    }
+  }
+
   return (
     <div ref={wrapRef} className="flex flex-col items-center gap-3">
+      {confirming
+        ? createPortal(
+            <div className="fixed inset-0 z-50 grid place-items-center p-4">
+              <button
+                type="button"
+                aria-label="Close"
+                onClick={() => {
+                  if (!removing) setConfirming(false);
+                }}
+                className="absolute inset-0 cursor-default bg-black/60"
+              />
+              <div
+                role="alertdialog"
+                aria-modal="true"
+                aria-labelledby={`remove-${project.id}-title`}
+                aria-describedby={`remove-${project.id}-body`}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape" && !removing) setConfirming(false);
+                }}
+                className="relative w-full max-w-sm rounded-2xl border border-dusk-hairline-strong bg-[rgba(28,28,48,0.95)] p-5 shadow-[0_20px_48px_rgba(0,0,0,0.5)]"
+              >
+                <h2
+                  id={`remove-${project.id}-title`}
+                  className="text-sm font-semibold text-dusk-ink"
+                >
+                  Remove {displayProjectName(project)}?
+                </h2>
+                <p
+                  id={`remove-${project.id}-body`}
+                  className="mt-2 text-sm leading-6 text-dusk-muted"
+                >
+                  Echo stops capturing new sessions in this folder. Everything already captured
+                  stays readable, and you can add the folder back any time.
+                </p>
+                {removeError !== null ? (
+                  <p className="mt-2 text-sm text-dusk-fail">{removeError}</p>
+                ) : null}
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    ref={cancelRef}
+                    type="button"
+                    disabled={removing}
+                    onClick={() => setConfirming(false)}
+                    className="cursor-pointer rounded-xl px-4 py-2 text-sm text-dusk-muted transition-colors hover:text-dusk-ink disabled:opacity-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={removing}
+                    onClick={() => void handleRemove()}
+                    className="cursor-pointer rounded-xl border border-dusk-fail/40 px-4 py-2 text-sm font-semibold text-dusk-fail transition-colors hover:bg-dusk-fail/10 disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    {removing ? "Removing…" : "Remove repository"}
+                  </button>
+                </div>
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
       <GlassFolder
         key={files === null ? "shell" : "ready"}
         label={displayProjectName(project)}
@@ -204,7 +302,10 @@ export function ProjectFolderCard({ project, index }: { project: ProjectSummary;
         seed={hashString(project.id)}
         files={files ?? (total > 0 ? REST_PEEK : [])}
         action="more"
-        menu={[{ label: "Open project", onSelect: openProject }]}
+        menu={[
+          { label: "Open project", onSelect: openProject },
+          { label: "Remove repository…", danger: true, onSelect: () => setConfirming(true) },
+        ]}
         open={open}
         onOpenChange={handleOpenChange}
         onHitActivate={openProject}
