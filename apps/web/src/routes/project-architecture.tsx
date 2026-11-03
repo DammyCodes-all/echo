@@ -1,4 +1,4 @@
-import type { ArchitecturePatch } from "@echo/contracts";
+import type { ArchitectureFocus, ArchitecturePatch } from "@echo/contracts";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { useParams } from "react-router";
@@ -52,6 +52,15 @@ export function ProjectArchitecturePage() {
   const [highlightedIds, setHighlightedIds] = useState<string[]>([]);
   const [pulseIds, setPulseIds] = useState<string[]>([]);
   const [pinned, setPinned] = useState<PinnedNode | null>(null);
+  const [focus, setFocus] = useState<ArchitectureFocus | null>(null);
+
+  // Drill-down is ephemeral: switching focus drops the pin (it may point at
+  // a node outside the focused view) and clears stale highlights.
+  const handleFocusChange = (next: ArchitectureFocus | null) => {
+    setFocus(next);
+    setPinned(null);
+    setHighlightedIds([]);
+  };
 
   const arch = useQuery({
     queryKey: queryKeys.architecture(projectId),
@@ -198,10 +207,36 @@ export function ProjectArchitecturePage() {
                 </button>
               </div>
             ) : null}
+            {focus ? (
+              <div>
+                <span className="inline-flex max-w-full items-center gap-2 rounded-full border border-dusk-hairline bg-dusk-pill py-1 pr-1.5 pl-3">
+                  <span className="truncate text-xs text-dusk-muted">
+                    Showing: <span className="font-medium text-dusk-ink">{focus.label}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleFocusChange(null)}
+                    aria-label="Show the whole system"
+                    className="shrink-0 rounded-full bg-dusk-track px-2 py-0.5 text-xs text-dusk-muted transition-colors hover:text-dusk-ink"
+                  >
+                    ×
+                  </button>
+                </span>
+              </div>
+            ) : null}
             <div className={demoMode ? undefined : "grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]"}>
               <ArchitectureDiagram
-                architecture={architecture}
-                evidence={arch.data?.evidence ?? {}}
+                key={focus ? `focus:${focus.nodeIds.join(",")}` : "all"}
+                architecture={
+                  focus
+                    ? {
+                        ...focus.detail,
+                        version: architecture.version,
+                        generatedAt: architecture.generatedAt,
+                      }
+                    : architecture
+                }
+                evidence={{ ...(arch.data?.evidence ?? {}), ...(focus?.evidence ?? {}) }}
                 highlightedIds={highlightedIds}
                 pulseIds={pulseIds}
                 pinnedId={pinned?.id ?? null}
@@ -214,6 +249,8 @@ export function ProjectArchitecturePage() {
                   onClearPin={() => setPinned(null)}
                   onHighlight={setHighlightedIds}
                   onPatched={onPatched}
+                  focus={focus}
+                  onFocusChange={handleFocusChange}
                 />
               )}
             </div>

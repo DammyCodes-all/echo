@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
+  ArchitectureChatModelOutputSchema,
   type ArchitectureEdge,
   type ArchitectureModelOutput,
   ArchitectureModelOutputSchema,
@@ -297,6 +298,23 @@ describe("enforceAcyclicEdges with flow ranks", () => {
     // Opposite pair, neither provably backward: first wins, merged.
     expect(result.edges).toEqual([{ from: "ghost", to: "a", bidirectional: true }]);
     expect(result.merged).toBe(1);
+  });
+});
+
+describe("ArchitectureChatModelOutputSchema", () => {
+  test("defaults a missing autoApply to false instead of rejecting the turn", () => {
+    const result = ArchitectureChatModelOutputSchema.safeParse({ answer: "Ingest tails logs." });
+    expect(result.success).toBe(true);
+    expect(result.success ? result.data.autoApply : null).toBe(false);
+  });
+
+  test("keeps an explicit autoApply true", () => {
+    const result = ArchitectureChatModelOutputSchema.safeParse({
+      answer: "Added the queue.",
+      autoApply: true,
+    });
+    expect(result.success).toBe(true);
+    expect(result.success ? result.data.autoApply : null).toBe(true);
   });
 });
 
