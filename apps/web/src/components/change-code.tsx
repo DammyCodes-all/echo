@@ -2,7 +2,7 @@ import type { ChangeCodeFile, ChangeCodeResponse } from "@echo/contracts";
 import { ArrowRight01Icon, Copy01Icon, Tick01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { PatchDiff } from "@pierre/diffs/react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 
 function baseOf(path: string): string {
   const index = path.lastIndexOf("/");
@@ -44,30 +44,22 @@ const DUSK_DIFF_SURFACES = `:host {
   --diffs-bg-buffer: #1c1c30;
 }`;
 
-/** Shimmer shown while Pierre parses/highlights after expand: the toggle
- *  mounts the diff on open, so without this the panel sits blank for a beat.
- *  Widths cycle deterministically — no random, no layout hook needed. */
-const SKELETON_WIDTHS = [92, 76, 85, 63, 90, 70, 83, 55];
-
-function DiffSkeleton({ rows = 6 }: { rows?: number }) {
-  return (
-    <div aria-hidden className="space-y-1.5 px-3 py-3 motion-safe:animate-pulse">
-      {Array.from({ length: rows }, (_, index) => (
-        <div
-          // biome-ignore lint/suspicious/noArrayIndexKey: lines are static and never reorder
-          key={`diff-skeleton-${index}`}
-          className="flex items-center gap-2"
-        >
-          <div className="h-3.5 w-10 shrink-0 rounded-dusk-code bg-dusk-pill/50" />
-          <div
-            className="h-3.5 rounded-dusk-code bg-dusk-pill/50"
-            style={{ width: `${SKELETON_WIDTHS[index % SKELETON_WIDTHS.length]}%` }}
-          />
-        </div>
-      ))}
-    </div>
-  );
-}
+/**
+ * Shared render options: one stable identity, so Pierre doesn't redo setup
+ * work on every parent re-render. Highlighting itself runs in the worker
+ * pool (provided once in main.tsx); diffs paint as plain text immediately
+ * and highlighted output streams in, so no loading placeholder is needed.
+ */
+const PATCH_DIFF_OPTIONS = {
+  diffStyle: "unified",
+  lineDiffType: "word",
+  hunkSeparators: "simple",
+  diffIndicators: "none",
+  disableFileHeader: true,
+  themeType: "dark",
+  overflow: "scroll",
+  unsafeCSS: DUSK_DIFF_SURFACES,
+} as const;
 
 function CodeFile({ file, note }: { file: ChangeCodeFile; note: string | null }) {
   const [copied, setCopied] = useState(false);
@@ -76,56 +68,9 @@ function CodeFile({ file, note }: { file: ChangeCodeFile; note: string | null })
   // The row owns its open state (no native toggle, no :open selector) so
   // the chevron, the mount, and the disclosure can never disagree.
   const [isOpen, setIsOpen] = useState(false);
-  const [revealed, setRevealed] = useState(false);
-  // Pierre's children land in light DOM, so watch for real content: the
-  // skeleton only appears if the wait is actually long. Fast diffs paint
-  // before the timer fires and never flash a shimmer.
-  const [showSkeleton, setShowSkeleton] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!isOpen) return;
-    setShowSkeleton(false);
-    const panel = panelRef.current;
-    const hasContent = () => (panel?.textContent?.trim().length ?? 0) > 0;
-    if (hasContent()) return;
-    let done = false;
-    const observer = new MutationObserver(() => {
-      if (hasContent()) {
-        done = true;
-        observer.disconnect();
-        // No-op when the timer never fired; hides the shimmer otherwise.
-        setShowSkeleton(false);
-      }
-    });
-    if (panel !== null) {
-      observer.observe(panel, { childList: true, subtree: true, characterData: true });
-    }
-    const timer = window.setTimeout(() => {
-      if (!done) setShowSkeleton(true);
-    }, 150);
-    return () => {
-      done = true;
-      observer.disconnect();
-      window.clearTimeout(timer);
-    };
-  }, [isOpen]);
   const toggle = () => {
     setIsOpen((was) => !was);
   };
-  // Mount the heavy diff after the open paints: the click commits only the
-  // chevron + panel, then parsing/highlighting lands in the next frames
-  // behind the skeleton instead of freezing the toggle itself.
-  useEffect(() => {
-    if (!isOpen || revealed) return;
-    let second = 0;
-    const first = requestAnimationFrame(() => {
-      second = requestAnimationFrame(() => setRevealed(true));
-    });
-    return () => {
-      cancelAnimationFrame(first);
-      cancelAnimationFrame(second);
-    };
-  }, [isOpen, revealed]);
   const copy = () => {
     void navigator.clipboard?.writeText(file.path).then(() => {
       setCopied(true);
@@ -153,10 +98,10 @@ function CodeFile({ file, note }: { file: ChangeCodeFile; note: string | null })
       <span className="sr-only">{copied ? "Copied" : "Copy file path"}</span>
     </button>
   );
-  const patch = useMemo(
-    () => (revealed ? patchForFile(file.path, file.hunks) : null),
-    [revealed, file.path, file.hunks],
-  );
+  // Built once per file (memoized: unrelated re-renders don't rebuild it) and
+  // mounted with the open commit — Pierre has to mount with its visible
+  // panel or the first paint stays blank.
+  const patch = useMemo(() => patchForFile(file.path, file.hunks), [file.path, file.hunks]);
   if (file.hunks.length === 0) {
     return (
       <div className="overflow-hidden rounded-dusk-code border border-dusk-hairline">
@@ -205,24 +150,8 @@ function CodeFile({ file, note }: { file: ChangeCodeFile; note: string | null })
         {copyButton}
       </div>
       {isOpen ? (
-        <div ref={panelRef} className="border-t border-dusk-hairline">
-          {showSkeleton ? <DiffSkeleton /> : null}
-          {patch !== null ? (
-            <PatchDiff
-              patch={patch}
-              disableWorkerPool
-              options={{
-                diffStyle: "unified",
-                lineDiffType: "word",
-                hunkSeparators: "simple",
-                diffIndicators: "none",
-                disableFileHeader: true,
-                themeType: "dark",
-                overflow: "scroll",
-                unsafeCSS: DUSK_DIFF_SURFACES,
-              }}
-            />
-          ) : null}
+        <div className="border-t border-dusk-hairline">
+          <PatchDiff patch={patch} options={PATCH_DIFF_OPTIONS} />
           {file.truncated ? (
             <p className="px-3 py-2 text-xs text-dusk-muted">
               Showing the first lines only — the counts above cover the whole file.
