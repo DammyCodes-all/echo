@@ -19,7 +19,7 @@ None of that measures Echo. The submission says so. But it points at the actual 
 Three minutes, all on screen:
 
 - Demo video: TODO (link lands with the cut)
-- Hosted read-only demo: TODO (link lands with the deploy; see `docs/DEPLOY.md`)
+- Hosted read-only demo: **https://echo-caz8.onrender.com** — 2 baked sessions, read-only, Ask Why live (see `docs/DEPLOY.md`)
 - Submission entry: TODO
 
 The video opens the inbox, reads the newest session's story (short version, ask-vs-result, behaviour cards), opens one card (before and now, an inline evidence slice, what checked it), runs the calibration check and gets one wrong while Certain, then asks something the tape can't answer and gets refused. No scores, no gates. A picture of calibration, then back to the inbox.
