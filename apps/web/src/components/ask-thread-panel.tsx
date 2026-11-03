@@ -1,120 +1,192 @@
 import type { AskEvidence, AskRequest, AskThreadMessage } from "@echo/contracts";
+import { Cancel01Icon, SentIcon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "@hugeicons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api";
+import { RichText } from "./rich-text";
 
-export type AskCardRef = { id: string; headline: string } | null;
-
-/** Reader anchor: a review change (c_ id) with its title as the headline. */
+/** Reader anchor: the change the question is scoped to, captured at open time. */
 export type AskChangeRef = { id: string; title: string } | null;
 
-type AskThreadPanelProps = {
+type AskThreadProps = {
   sessionId: string;
-  card: AskCardRef;
-  /** Reader change anchor; takes precedence over card and is sent as changeId. */
+  /** Anchored change; null asks the whole session. */
   change?: AskChangeRef;
-  onClearCard: () => void;
-  // Second arg carries the thread message's cardId so the host can resolve
-  // the citation target; callers that only need the citation can ignore it.
-  onCitationClick: (citation: AskEvidence, messageCardId?: string | null) => void;
-  onClose: () => void;
+  onClearScope: () => void;
 };
 
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : "Ask failed.";
+/** Evidence labels in user words. Every backing carries one. */
+const LABEL_WORDS: Record<AskEvidence["label"], string> = {
+  observed: "Seen in the session",
+  agent_stated: "The agent said",
+  uncertain: "Uncertain",
+};
+
+function shortTime(iso: string): string | null {
+  const ms = Date.parse(iso);
+  if (Number.isNaN(ms)) return null;
+  return new Date(ms).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
-function ThreadMessageView({
-  message,
-  onCitationClick,
-}: {
-  message: AskThreadMessage;
-  onCitationClick: (citation: AskEvidence, messageCardId?: string | null) => void;
-}) {
-  if (message.role === "user") {
-    return (
+function baseName(path: string): string {
+  const index = path.lastIndexOf("/");
+  return index < 0 ? path : path.slice(index + 1);
+}
+
+function UserBubble({ text, at }: { text: string; at: string | null }) {
+  return (
+    <div>
       <div className="flex justify-end">
-        <p className="max-w-[85%] rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink">
-          {message.text}
+        <p className="max-w-[85%] rounded-2xl rounded-br-md bg-dusk-accent px-3.5 py-2 text-sm leading-5 text-dusk-base">
+          {text}
         </p>
       </div>
-    );
-  }
-
-  const response = message.response;
-  const evidenceById = new Map((response?.evidence ?? []).map((item) => [item.evidenceId, item]));
-  return (
-    <div className="space-y-2 rounded-dusk-card bg-dusk-pill px-4 py-3">
-      <p className="text-sm leading-6 text-dusk-ink">{response?.answer ?? message.text}</p>
-      {response?.status === "refused" ? (
-        <p className="text-sm text-dusk-muted">
-          <span className="font-medium text-dusk-ink">Not on the tape.</span> Searched{" "}
-          {response.searchedScope.eventCount} events and found nothing relevant.
-        </p>
-      ) : null}
-      {response?.status === "partial" ? (
-        <p className="text-xs text-dusk-muted">
-          Partial answer: some claims failed citation validation and were dropped.
-        </p>
-      ) : null}
-      {(response?.claims.length ?? 0) > 0 ? (
-        <ul className="space-y-2">
-          {(response?.claims ?? []).map((claim) => (
-            <li
-              key={`${claim.text}-${claim.evidenceIds.join(",")}`}
-              className="text-xs leading-5 text-dusk-muted"
-            >
-              <span className="text-dusk-ink">{claim.text}</span>
-              {claim.weak ? <span> (weak: no direct quote)</span> : null}
-              {claim.evidenceIds.length > 0 ? (
-                <span className="mt-1 flex flex-wrap gap-1">
-                  {claim.evidenceIds.map((id) => {
-                    const cited = evidenceById.get(id);
-                    return cited ? (
-                      <button
-                        key={id}
-                        type="button"
-                        title={`${cited.kind} · ${cited.ts} — jump to the change this cites`}
-                        onClick={() => onCitationClick(cited, message.cardId)}
-                        className="rounded-dusk-code bg-dusk-track px-1.5 py-0.5 font-mono text-[10px] text-dusk-accent-soft"
-                      >
-                        {id}
-                      </button>
-                    ) : (
-                      <span
-                        key={id}
-                        className="rounded-dusk-code bg-dusk-track px-1.5 py-0.5 font-mono text-[10px]"
-                      >
-                        {id}
-                      </span>
-                    );
-                  })}
-                </span>
-              ) : null}
-              {claim.quote ? (
-                <span className="mt-1 block font-mono text-[10px]">“{claim.quote}”</span>
-              ) : null}
-            </li>
-          ))}
-        </ul>
+      {at !== null ? (
+        <p className="mt-1 text-right text-[11px] text-dusk-muted/70">{at}</p>
       ) : null}
     </div>
   );
 }
 
-export function AskThreadPanel({
-  sessionId,
-  card,
-  change,
-  onClearCard,
-  onCitationClick,
-  onClose,
-}: AskThreadPanelProps) {
+function BackingPreview({ item, quote }: { item: AskEvidence; quote: string | null }) {
+  const source = [
+    LABEL_WORDS[item.label],
+    shortTime(item.ts),
+    item.filePath === null ? null : baseName(item.filePath),
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+  return (
+    <div className="rounded-dusk-code border border-dusk-hairline bg-dusk-base/60 px-3 py-2.5">
+      {quote !== null ? (
+        <p className="text-sm leading-6 text-dusk-ink">“{quote}”</p>
+      ) : (
+        <p className="text-sm leading-6 text-dusk-muted">
+          No direct quote for this one. It is my best read of what happened.
+        </p>
+      )}
+      <p className="mt-1.5 text-xs text-dusk-muted">{source}</p>
+    </div>
+  );
+}
+
+function AssistantMessage({ message }: { message: AskThreadMessage }) {
+  const response = message.response;
+  const [openId, setOpenId] = useState<string | null>(null);
+
+  if (response === null) {
+    return (
+      <div className="rounded-xl border border-dusk-hairline bg-dusk-surface px-3.5 py-3">
+        <p className="text-sm leading-6 text-dusk-ink">
+          <RichText text={message.text} />
+        </p>
+      </div>
+    );
+  }
+
+  if (response.status === "refused") {
+    return (
+      <div className="space-y-1.5 rounded-xl border border-dusk-hairline bg-dusk-surface px-3.5 py-3">
+        <p className="text-sm font-medium text-dusk-ink">Not in this session.</p>
+        <p className="text-sm leading-6 text-dusk-muted">
+          I looked through it and could not find anything on that.
+        </p>
+      </div>
+    );
+  }
+
+  const evidence = response.evidence;
+  const open = evidence.find((item) => item.evidenceId === openId) ?? null;
+  const openQuote =
+    open === null
+      ? null
+      : (response.claims.find((claim) => claim.evidenceIds.includes(open.evidenceId))?.quote ??
+        null);
+
+  return (
+    <div className="space-y-2 rounded-xl border border-dusk-hairline bg-dusk-surface px-3.5 py-3">
+      <p className="text-sm leading-6 text-dusk-ink">
+        <RichText text={response.answer} />
+      </p>
+      {response.status === "partial" ? (
+        <p className="text-xs leading-5 text-dusk-muted">
+          I could only answer part of that. The rest is not in this session.
+        </p>
+      ) : null}
+      {response.uncertainty === "medium" ? (
+        <p className="text-xs leading-5 text-dusk-muted">I am not fully sure about parts of this.</p>
+      ) : null}
+      {response.uncertainty === "high" ? (
+        <p className="text-xs leading-5 text-dusk-muted">
+          I am not sure about this one. The session barely covers it.
+        </p>
+      ) : null}
+      {evidence.length > 0 ? (
+        <div className="flex flex-wrap gap-1.5 pt-0.5">
+          {evidence.map((item, index) => {
+            const isOpen = item.evidenceId === openId;
+            return (
+              <button
+                key={item.evidenceId}
+                type="button"
+                aria-expanded={isOpen}
+                aria-label={`Show source ${index + 1}`}
+                onClick={() =>
+                  setOpenId((current) => (current === item.evidenceId ? null : item.evidenceId))
+                }
+                className={`flex h-6 min-w-6 items-center justify-center rounded-full px-2 text-xs tabular-nums transition-colors ${
+                  isOpen
+                    ? "bg-dusk-accent font-semibold text-dusk-base"
+                    : "bg-dusk-track text-dusk-accent-soft hover:bg-dusk-pill"
+                }`}
+              >
+                {index + 1}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+      {open !== null ? <BackingPreview item={open} quote={openQuote} /> : null}
+    </div>
+  );
+}
+
+function PendingAnswer() {
+  return (
+    <div
+      role="status"
+      aria-label="Reading through the session"
+      className="rounded-xl border border-dusk-hairline bg-dusk-surface px-3.5 py-3"
+    >
+      <div className="flex items-center gap-2.5">
+        <span aria-hidden className="flex gap-1">
+          <span className="h-1.5 w-1.5 rounded-full bg-dusk-muted motion-safe:animate-pulse" />
+          <span
+            style={{ animationDelay: "150ms" }}
+            className="h-1.5 w-1.5 rounded-full bg-dusk-muted motion-safe:animate-pulse"
+          />
+          <span
+            style={{ animationDelay: "300ms" }}
+            className="h-1.5 w-1.5 rounded-full bg-dusk-muted motion-safe:animate-pulse"
+          />
+        </span>
+        <p className="text-sm text-dusk-muted">Reading through the session…</p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The thread itself, laid out inline. The host owns positioning and height.
+ * Rendered in the reader rail's Ask tab.
+ */
+export function AskThread({ sessionId, change = null, onClearScope }: AskThreadProps) {
   const queryClient = useQueryClient();
   const [question, setQuestion] = useState("");
-  // The reader anchors to a change (c_ id); the story page anchors to a card
-  // (h_ id). Either way the anchor headline labels the thread.
-  const anchorHeadline = change?.title ?? card?.headline ?? null;
+  const abortRef = useRef<AbortController | null>(null);
+  const lastSentRef = useRef("");
+  const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const threadQuery = useQuery({
     queryKey: ["ask-thread", sessionId],
@@ -123,132 +195,201 @@ export function AskThreadPanel({
 
   const askMutation = useMutation({
     mutationFn: (text: string) => {
-      // Server is the source of truth: send, then refetch the thread rather
-      // than hand-appending the response locally. A change anchor travels as
-      // changeId with cardId null: the thread schema only accepts h_ ids.
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+      lastSentRef.current = text;
+      // A change anchor travels as changeId with cardId null: the thread
+      // schema only accepts h_ ids.
       const changeId = change?.id ?? null;
-      return api.ask(sessionId, {
-        question: text,
-        filePath: null,
-        symbols: [],
-        cardId: changeId !== null ? null : (card?.id ?? null),
-        ...(changeId !== null ? { changeId } : {}),
-      } as AskRequest);
+      return api.ask(
+        sessionId,
+        {
+          question: text,
+          filePath: null,
+          symbols: [],
+          cardId: null,
+          ...(changeId !== null ? { changeId } : {}),
+        } as AskRequest,
+        { signal: controller.signal },
+      );
     },
     onSuccess: () => {
       setQuestion("");
       void queryClient.invalidateQueries({ queryKey: ["ask-thread", sessionId] });
     },
+    onError: (error) => {
+      // A cancel or a failure both put the words back in the box for editing.
+      // Only failures surface a message; cancels stay silent.
+      setQuestion(lastSentRef.current);
+    },
   });
+  const failed = askMutation.isError && askMutation.error?.name !== "AbortError";
 
-  const submit = () => {
-    const trimmed = question.trim();
+  const submit = (raw: string) => {
+    const trimmed = raw.trim();
     if (trimmed.length === 0 || askMutation.isPending) return;
     askMutation.mutate(trimmed);
   };
 
+  const cancel = () => {
+    abortRef.current?.abort();
+  };
+
   const messages = threadQuery.data?.messages ?? [];
+  const pendingText = askMutation.isPending ? (askMutation.variables ?? null) : null;
+
+  // A chat that does not follow itself is broken: trail the bottom as turns
+  // land. Instant, so reduced-motion users get the same position for free.
+  useEffect(() => {
+    const node = scrollRef.current;
+    if (node !== null) node.scrollTop = node.scrollHeight;
+  }, [messages.length, askMutation.isPending]);
+
+  const starters = ["Why this approach?", "What could break?", "What was tried before?"];
 
   return (
-    // Slide-over, not an overlay modal: the story stays visible and citable on
-    // the left while the thread pins to the right edge.
-    <aside
-      aria-label="Ask why thread"
-      className="fixed right-0 top-0 bottom-0 z-40 flex w-full max-w-md flex-col border-l border-dusk-hairline bg-dusk-surface"
-    >
-      <div className="flex items-start justify-between gap-3 border-b border-dusk-hairline px-6 py-4">
-        <div>
-          <p className="text-xs uppercase tracking-widest text-dusk-muted">Ask why</p>
-          <p className="mt-1 text-xs text-dusk-muted">
-            Answers cite the tape — or say not on the tape.
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label="Close ask panel"
-          className="rounded-dusk-code bg-dusk-pill px-2 py-1 text-sm text-dusk-muted"
-        >
-          ×
-        </button>
-      </div>
-
-      {anchorHeadline ? (
-        <div className="flex items-center justify-between gap-2 border-b border-dusk-hairline px-6 py-2">
+    <div className="flex min-h-0 flex-1 flex-col">
+      {change !== null ? (
+        <div className="flex items-center justify-between gap-2 rounded-full border border-dusk-hairline bg-dusk-pill px-3 py-1.5">
           <p className="truncate text-xs text-dusk-muted">
-            Asking about: <span className="text-dusk-ink">{anchorHeadline}</span>
+            About this change: <span className="font-medium text-dusk-ink">{change.title}</span>
           </p>
           <button
             type="button"
-            onClick={onClearCard}
-            aria-label="Clear selected card"
-            className="shrink-0 rounded-dusk-code bg-dusk-pill px-2 py-0.5 text-sm text-dusk-muted"
+            onClick={onClearScope}
+            aria-label="Ask the whole session instead"
+            className="shrink-0 rounded-full bg-dusk-track px-2 py-0.5 text-xs text-dusk-muted transition-colors hover:text-dusk-ink"
           >
             ×
           </button>
         </div>
       ) : null}
 
-      <div className="flex-1 space-y-3 overflow-y-auto px-6 py-4">
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-label="Questions and answers"
+        className="mt-3 min-h-[180px] flex-1 space-y-3 overflow-y-auto pr-0.5"
+      >
         {threadQuery.isPending ? (
-          <div role="status" aria-label="Loading thread" className="space-y-3">
+          <div role="status" aria-label="Loading thread" className="space-y-2.5">
             <span className="sr-only">Loading thread…</span>
             {[0, 1, 2].map((index) => (
               <div
                 key={index}
                 aria-hidden
-                className="space-y-2 rounded-dusk-card bg-dusk-pill px-4 py-3 motion-safe:animate-pulse"
+                className="space-y-2 rounded-xl border border-dusk-hairline bg-dusk-surface px-3.5 py-3 motion-safe:animate-pulse"
               >
-                <div className="h-4 w-11/12 rounded-dusk-code bg-dusk-track" />
-                <div className="h-4 w-full rounded-dusk-code bg-dusk-track" />
-                {index === 1 ? null : <div className="h-4 w-2/3 rounded-dusk-code bg-dusk-track" />}
+                <div className="h-2.5 w-3/4 rounded-full bg-dusk-pill" />
+                <div className="h-2.5 w-full rounded-full bg-dusk-pill" />
+                <div className="h-2.5 w-5/6 rounded-full bg-dusk-pill opacity-60" />
               </div>
             ))}
           </div>
         ) : threadQuery.isError ? (
-          <p className="text-sm text-dusk-fail">{errorMessage(threadQuery.error)}</p>
-        ) : messages.length === 0 ? (
-          <p className="text-sm text-dusk-muted">
-            Ask about this session. Answers cite the tape — or say not on the tape.
-          </p>
+          <div className="space-y-2 rounded-xl border border-dusk-hairline bg-dusk-surface px-4 py-5 text-center">
+            <p className="text-sm text-dusk-muted">I could not load this thread.</p>
+            <button
+              type="button"
+              onClick={() => void threadQuery.refetch()}
+              className="rounded-dusk-pill border border-dusk-hairline-strong px-4 py-1.5 text-sm text-dusk-ink"
+            >
+              Try again
+            </button>
+          </div>
+        ) : messages.length === 0 && pendingText === null ? (
+          <div className="rounded-xl border border-dashed border-dusk-hairline bg-dusk-surface/40 px-4 py-6 text-center">
+            <p className="text-sm font-medium text-dusk-ink">What do you want to know?</p>
+            <p className="mt-1 text-sm leading-5 text-dusk-muted">
+              Ask anything about this session. If it is not here, you will hear that instead
+              of a guess.
+            </p>
+            <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+              {starters.map((text) => (
+                <button
+                  key={text}
+                  type="button"
+                  onClick={() => submit(text)}
+                  className="rounded-full border border-dusk-hairline bg-dusk-pill px-3 py-1 text-xs text-dusk-ink transition-colors hover:border-dusk-muted hover:bg-dusk-track"
+                >
+                  {text}
+                </button>
+              ))}
+            </div>
+          </div>
         ) : (
-          messages.map((message) => (
-            <ThreadMessageView
-              key={message.id}
-              message={message}
-              onCitationClick={onCitationClick}
-            />
-          ))
+          messages.map((message) =>
+            message.role === "user" ? (
+              <UserBubble
+                key={message.id}
+                text={message.text}
+                at={shortTime(message.createdAt)}
+              />
+            ) : (
+              <AssistantMessage key={message.id} message={message} />
+            ),
+          )
         )}
-        {askMutation.isError ? (
-          <p className="text-sm text-dusk-fail">{errorMessage(askMutation.error)}</p>
+        {pendingText !== null ? (
+          <>
+            <UserBubble text={pendingText} at={null} />
+            <PendingAnswer />
+          </>
+        ) : null}
+        {failed ? (
+          <div className="space-y-2 rounded-xl border border-dusk-hairline bg-dusk-surface px-4 py-4 text-center">
+            <p className="text-sm text-dusk-muted">
+              That did not send. Your question is still below if you want to retry.
+            </p>
+            <button
+              type="button"
+              onClick={() => submit(question)}
+              className="rounded-dusk-pill border border-dusk-hairline-strong px-4 py-1.5 text-sm text-dusk-ink"
+            >
+              Try again
+            </button>
+          </div>
         ) : null}
       </div>
 
-      <div className="border-t border-dusk-hairline px-6 py-4">
-        <div className="flex gap-2">
+      <div className="pt-3">
+        <div className="flex items-center gap-2 rounded-full border border-dusk-hairline bg-dusk-surface px-1.5 py-1.5 shadow-sm focus-within:border-dusk-accent/50 focus-within:ring-1 focus-within:ring-dusk-accent/20">
           <input
             value={question}
             onChange={(event) => setQuestion(event.target.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") submit();
+              if (event.key === "Enter") submit(question);
             }}
             placeholder={
-              anchorHeadline ? `Ask about “${anchorHeadline}”…` : "Why did the agent do that?"
+              change !== null ? `Ask about “${change.title}”…` : "Ask about this session…"
             }
             disabled={askMutation.isPending}
-            className="min-w-0 flex-1 rounded-dusk-code bg-dusk-pill px-3 py-2 text-sm text-dusk-ink outline-none placeholder:text-dusk-muted disabled:opacity-40"
+            aria-label="Ask a question"
+            className="min-w-0 flex-1 bg-transparent px-3 py-1 text-sm text-dusk-ink outline-none placeholder:text-dusk-muted disabled:opacity-40"
           />
-          <button
-            type="button"
-            onClick={submit}
-            disabled={askMutation.isPending || question.trim().length === 0}
-            className="shrink-0 rounded-dusk-code bg-dusk-accent px-3 py-2 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40"
-          >
-            {askMutation.isPending ? "Asking…" : "Ask"}
-          </button>
+          {askMutation.isPending ? (
+            <button
+              type="button"
+              onClick={cancel}
+              aria-label="Stop waiting for the answer"
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-dusk-pill text-dusk-muted transition-colors hover:text-dusk-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent"
+            >
+              <HugeiconsIcon icon={Cancel01Icon} size={16} strokeWidth={1.9} aria-hidden />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => submit(question)}
+              disabled={question.trim().length === 0}
+              aria-label="Ask"
+              className="flex size-8 shrink-0 items-center justify-center rounded-full bg-dusk-accent text-dusk-base transition-colors hover:bg-dusk-accent/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40"
+            >
+              <HugeiconsIcon icon={SentIcon} size={16} strokeWidth={1.9} aria-hidden />
+            </button>
+          )}
         </div>
       </div>
-    </aside>
+    </div>
   );
 }
