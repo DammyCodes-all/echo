@@ -1,4 +1,4 @@
-import type { FolderResolveResponse, HooksStatus } from "@echo/contracts";
+import type { FolderResolveResponse, HooksStatus, ProjectSummary } from "@echo/contracts";
 import {
   ArrowLeft01Icon,
   ArrowRight01Icon,
@@ -6,7 +6,6 @@ import {
   Delete02Icon,
   Folder01Icon,
   FolderAddIcon,
-  InformationCircleIcon,
   Plug01Icon,
   Settings01Icon,
   Tick01Icon,
@@ -25,6 +24,7 @@ import {
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router";
 import { api } from "../../api";
+import { displayProjectName } from "../../project-display";
 
 type MotionPref = "full" | "reduced";
 type DaemonState = "ready" | "degraded" | "offline";
@@ -93,15 +93,7 @@ function getStops(root: HTMLElement | null): HTMLElement[] {
 }
 
 function focusStop(stop: HTMLElement | undefined): void {
-  if (!stop) return;
-  if (stop.dataset.stop === "group") {
-    const target =
-      stop.querySelector<HTMLElement>('[aria-checked="true"]') ??
-      stop.querySelector<HTMLElement>("button");
-    target?.focus({ preventScroll: true });
-    return;
-  }
-  stop.focus({ preventScroll: true });
+  stop?.focus({ preventScroll: true });
 }
 
 function dotStyle(state: DaemonState): { background: string; border: string } {
@@ -113,6 +105,43 @@ function dotStyle(state: DaemonState): { background: string; border: string } {
     case "offline":
       return { background: "transparent", border: "1px solid #8a8ab0" };
   }
+}
+
+function RepoRow({
+  name,
+  title,
+  busy,
+  disabled,
+  onRemove,
+  removeLabel,
+}: {
+  name: string;
+  title: string;
+  busy: boolean;
+  disabled: boolean;
+  onRemove: () => void;
+  removeLabel: string;
+}) {
+  return (
+    <div className="echo-settings-row flex w-full items-center gap-2 rounded-lg px-3 py-1.5 transition-colors hover:bg-white/[0.07]">
+      <span aria-hidden className="inline-flex shrink-0 text-dusk-faint">
+        <HugeiconsIcon icon={Folder01Icon} size={14} strokeWidth={1.8} />
+      </span>
+      <span title={title} className="min-w-0 flex-1 truncate font-mono text-xs text-dusk-ink">
+        {name}
+      </span>
+      <button
+        type="button"
+        disabled={disabled || busy}
+        onClick={onRemove}
+        title={removeLabel}
+        aria-label={removeLabel}
+        className="inline-flex shrink-0 cursor-pointer items-center rounded p-1 text-dusk-muted transition-colors hover:text-dusk-fail disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={1.8} />
+      </button>
+    </div>
+  );
 }
 
 export function SettingsMenu() {
@@ -129,6 +158,7 @@ export function SettingsMenu() {
   const [motionReady, setMotionReady] = useState(false);
   const [repos, setRepos] = useState<string[] | null>(null);
   const [reposFailed, setReposFailed] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[] | null>(null);
   const [reposOpen, setReposOpen] = useState(false);
   const [reposNote, setReposNote] = useState<{ text: string; ok: boolean } | null>(null);
   const [removePath, setRemovePath] = useState<string | null>(null);
@@ -244,6 +274,17 @@ export function SettingsMenu() {
       .catch(() => {
         if (live) setReposFailed(true);
       });
+    // The allowlist can hold several folders per repository, so the header
+    // counts materialized projects — the same number the projects page shows.
+    void api
+      .projects()
+      .then((listed) => {
+        if (!live) return;
+        setProjects(listed);
+      })
+      .catch(() => {
+        if (live) setProjects(null);
+      });
     void fetch("/api/health")
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText);
@@ -330,18 +371,10 @@ export function SettingsMenu() {
     };
   }, [open, compact]);
 
-  function changeMotion(value: MotionPref): void {
-    setMotion(value);
-  }
-
-  async function handleCopy(kind: "enable" | "support"): Promise<void> {
-    const text =
-      kind === "enable"
-        ? "echo-cli enable <path>"
-        : `Echo ${health?.version ?? "0.1.0"} (${health?.mode ?? "local"}) · ${repos?.length ?? 0} repos · daemon ${healthOk ? "ok" : "unreachable"}`;
-    const ok = await copyText(text);
+  async function handleCopyEnable(): Promise<void> {
+    const ok = await copyText("echo-cli enable <path>");
     if (!ok) return;
-    setCopied(kind);
+    setCopied("enable");
     window.clearTimeout(copyTimer.current);
     copyTimer.current = window.setTimeout(() => setCopied(null), 1500);
   }
@@ -355,6 +388,10 @@ export function SettingsMenu() {
         setHooks(payload.hooks);
       })
       .catch(() => setReposFailed(true));
+    void api
+      .projects()
+      .then((listed) => setProjects(listed))
+      .catch(() => setProjects(null));
   }
 
   async function handleInstallHooks(): Promise<void> {
@@ -365,8 +402,9 @@ export function SettingsMenu() {
       const result = await api.installHooks();
       setHooksNote(
         result.changed
-          ? `Installed ${result.eventsInstalled.length} hook events.`
-          : "Already installed — nothing changed.",
+          ? `Turned on — following all ${result.eventsInstalled.length}.` +
+              (result.backupPath ? " Your previous settings were backed up first." : "")
+          : "Already on — nothing changed.",
       );
       refreshSettings();
     } catch (error) {
@@ -411,11 +449,53 @@ export function SettingsMenu() {
     }
   }
 
+  /** Removing a repo stops every enabled folder inside it — subfolders never surface on their own. */
+  async function handleRemoveProject(project: ProjectSummary, paths: string[]): Promise<void> {
+    if (demo || removePath !== null) return;
+    setRemovePath(project.id);
+    setReposNote(null);
+    try {
+      for (const path of paths) {
+        await api.disableProject(path);
+      }
+      setReposNote({
+        text: `Stopped capturing ${displayProjectName(project)}.`,
+        ok: true,
+      });
+      refreshSettings();
+    } catch (error) {
+      setReposNote({
+        text: error instanceof Error ? error.message : "Could not remove that repository.",
+        ok: false,
+      });
+    } finally {
+      setRemovePath(null);
+    }
+  }
+
+  /** Enabled folders grouped under their repo; leftovers the daemon couldn't place. */
+  function groupedRepos(): {
+    groups: Array<{ project: ProjectSummary; paths: string[] }>;
+    stale: string[];
+  } | null {
+    if (projects === null || repos === null) return null;
+    const claimed = new Set<string>();
+    const groups = projects.map((project) => {
+      const paths = repos.filter((path) => {
+        const inside = path === project.root || path.startsWith(`${project.root}/`);
+        if (inside) claimed.add(path);
+        return inside;
+      });
+      return { project, paths };
+    });
+    return { groups, stale: repos.filter((path) => !claimed.has(path)) };
+  }
+
   async function handlePickFolder(): Promise<void> {
     if (demo || folderBusy) return;
     const picker = (window as PickerWindow).showDirectoryPicker;
     if (picker === undefined) {
-      setFolderNote("This browser can't pick folders — copy the enable command below.");
+      setFolderNote("This browser can't open the folder picker — use the terminal command below.");
       return;
     }
     setFolderBusy(true);
@@ -438,7 +518,7 @@ export function SettingsMenu() {
       return;
     }
     if (resolved.matches.length === 0) {
-      setFolderNote(`No folder named "${name}" found. Is it on the daemon machine?`);
+      setFolderNote(`No folder called "${name}" found on this computer.`);
       setFolderBusy(false);
       return;
     }
@@ -477,23 +557,6 @@ export function SettingsMenu() {
         event.preventDefault();
         requestClose(true);
         return;
-      case "ArrowLeft":
-      case "ArrowRight": {
-        if (current?.dataset.stop !== "group") return;
-        event.preventDefault();
-        const options = Array.from(
-          current.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]'),
-        );
-        const at = Math.max(
-          0,
-          options.findIndex((option) => option.getAttribute("aria-checked") === "true"),
-        );
-        const next =
-          options[(at + (event.key === "ArrowRight" ? 1 : -1) + options.length) % options.length];
-        next?.focus({ preventScroll: true });
-        next?.click();
-        return;
-      }
       default:
         return;
     }
@@ -505,29 +568,28 @@ export function SettingsMenu() {
       ? "degraded"
       : "ready";
   const demo = health?.mode === "demo";
+  // Materialized projects, not allowlist folders: one repo with two enabled
+  // folders is one repo, matching the projects page.
+  const headerRepos = projects?.length ?? repos?.length ?? null;
   const daemonLabel =
-    daemonState === "ready"
-      ? "Daemon running"
-      : daemonState === "degraded"
-        ? "Demo mode"
-        : "Daemon unreachable";
+    daemonState === "ready" ? "Running" : daemonState === "degraded" ? "Demo" : "Not running";
   const dot = dotStyle(daemonState);
   const reduced = reducedMotion;
 
   const content = (
     <>
-      <div className="flex items-center gap-3 px-3 py-2.5">
+      <div className="flex items-start gap-2.5 px-4 py-3">
         <span
           aria-hidden="true"
-          className="inline-block h-2.5 w-2.5 shrink-0 rounded-full"
+          className="mt-[5px] inline-block h-2 w-2 shrink-0 rounded-full"
           style={{ background: dot.background, border: dot.border }}
         />
         <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-dusk-ink">Echo local</p>
-          <p className="truncate font-mono text-[11px] tracking-wide text-dusk-muted">
+          <p className="truncate text-[13px] font-semibold leading-5 text-dusk-ink">Echo local</p>
+          <p className="truncate text-[11px] tracking-wide text-dusk-muted">
             {daemonLabel}
             {health ? ` · v${health.version}` : ""}
-            {repos !== null ? ` · ${repos.length} repos` : ""}
+            {headerRepos !== null ? ` · ${headerRepos} repos` : ""}
           </p>
         </div>
       </div>
@@ -539,7 +601,7 @@ export function SettingsMenu() {
           data-stop="item"
           data-label="Repositories"
           aria-expanded={reposOpen}
-          className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
+          className="echo-settings-row flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
           onClick={() => setReposOpen((was) => !was)}
         >
           <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
@@ -547,17 +609,24 @@ export function SettingsMenu() {
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-dusk-ink">Captured repositories</span>
-            <span className="block truncate font-mono text-[11px] text-dusk-muted">
+            <span className="block truncate text-[11px] text-dusk-muted">
               {reposFailed
-                ? "Could not load — is the daemon running?"
-                : repos === null
+                ? "Can't load — is Echo running?"
+                : projects === null && repos === null
                   ? "Loading…"
-                  : repos.length === 0
+                  : (projects ?? []).length === 0 && (repos ?? []).length === 0
                     ? "None enabled yet"
-                    : repos
-                        .slice(0, 2)
-                        .map((r) => r.split("/").pop() ?? r)
-                        .join(" · ") + (repos.length > 2 ? ` · +${repos.length - 2}` : "")}
+                    : (projects ?? []).length > 0
+                      ? (projects ?? [])
+                          .slice(0, 2)
+                          .map((p) => displayProjectName(p))
+                          .join(" · ") +
+                        ((projects ?? []).length > 2 ? ` · +${(projects ?? []).length - 2}` : "")
+                      : (repos ?? [])
+                          .slice(0, 2)
+                          .map((r) => r.split("/").pop() ?? r)
+                          .join(" · ") +
+                        ((repos ?? []).length > 2 ? ` · +${(repos ?? []).length - 2}` : "")}
             </span>
           </span>
           <span
@@ -569,32 +638,80 @@ export function SettingsMenu() {
         </button>
         {reposOpen ? (
           <div className="ml-7">
-            {(repos ?? []).map((path) => (
-              <div
-                key={path}
-                className="echo-settings-row flex w-full items-center gap-2 rounded-2xl px-3 py-1.5 transition-colors hover:bg-white/[0.07]"
-              >
-                <span
-                  title={path}
-                  className="min-w-0 flex-1 truncate font-mono text-xs text-dusk-ink"
-                >
-                  {path.split("/").pop() ?? path}
-                </span>
-                <button
-                  type="button"
-                  disabled={demo || removePath !== null}
-                  onClick={() => void handleRemoveRepo(path)}
-                  title={`Stop capturing ${path}`}
-                  aria-label={`Stop capturing ${path}`}
-                  className="inline-flex shrink-0 cursor-pointer items-center rounded p-1 text-dusk-muted transition-colors hover:text-dusk-fail disabled:cursor-not-allowed disabled:opacity-50"
-                >
-                  <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={1.8} />
-                </button>
-              </div>
-            ))}
+            {(() => {
+              const grouped = groupedRepos();
+              if (grouped === null) {
+                return (repos ?? []).map((path) => (
+                  <RepoRow
+                    key={path}
+                    name={path.split("/").pop() ?? path}
+                    title={path}
+                    busy={removePath !== null}
+                    disabled={demo}
+                    onRemove={() => void handleRemoveRepo(path)}
+                    removeLabel={`Stop capturing ${path}`}
+                  />
+                ));
+              }
+              return (
+                <>
+                  {grouped.groups.map(({ project, paths }) => (
+                    <div
+                      key={project.id}
+                      className="echo-settings-row flex w-full items-center gap-2 rounded-lg px-3 py-1.5 transition-colors hover:bg-white/[0.07]"
+                    >
+                      <span aria-hidden className="inline-flex shrink-0 text-dusk-faint">
+                        <HugeiconsIcon icon={Folder01Icon} size={14} strokeWidth={1.8} />
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-[13px] text-dusk-ink">
+                          {displayProjectName(project)}
+                        </span>
+                        <span
+                          title={paths.join("\n")}
+                          className="block truncate font-mono text-[11px] text-dusk-muted"
+                        >
+                          {paths.length > 1
+                            ? `${paths.length} folders`
+                            : (paths[0]?.split("/").pop() ?? project.root)}
+                        </span>
+                      </span>
+                      <button
+                        type="button"
+                        disabled={demo || removePath !== null}
+                        onClick={() => void handleRemoveProject(project, paths)}
+                        title={`Stop capturing ${displayProjectName(project)}`}
+                        aria-label={`Stop capturing ${displayProjectName(project)}`}
+                        className="inline-flex shrink-0 cursor-pointer items-center rounded p-1 text-dusk-muted transition-colors hover:text-dusk-fail disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={1.8} />
+                      </button>
+                    </div>
+                  ))}
+                  {grouped.stale.length > 0 ? (
+                    <>
+                      <p className="px-3 pt-1 text-[11px] text-dusk-muted">
+                        These folders are gone — remove them to tidy up.
+                      </p>
+                      {grouped.stale.map((path) => (
+                        <RepoRow
+                          key={path}
+                          name={path.split("/").pop() ?? path}
+                          title={path}
+                          busy={removePath !== null}
+                          disabled={demo}
+                          onRemove={() => void handleRemoveRepo(path)}
+                          removeLabel={`Stop capturing ${path}`}
+                        />
+                      ))}
+                    </>
+                  ) : null}
+                </>
+              );
+            })()}
             {reposNote !== null ? (
               <p
-                className={`px-3 py-1 font-mono text-[11px] ${reposNote.ok ? "text-dusk-pass" : "text-dusk-fail"}`}
+                className={`px-3 py-1 text-[11px] ${reposNote.ok ? "text-dusk-pass" : "text-dusk-fail"}`}
               >
                 {reposNote.text}
               </p>
@@ -605,7 +722,7 @@ export function SettingsMenu() {
               tabIndex={-1}
               data-stop="item"
               data-label="Open projects"
-              className="echo-settings-row flex w-full cursor-pointer items-center gap-2 rounded-2xl px-3 py-1.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
+              className="echo-settings-row flex w-full cursor-pointer items-center gap-2 rounded-lg px-3 py-1.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
               onClick={() => {
                 requestClose(false, () => void navigate("/projects"));
               }}
@@ -627,7 +744,7 @@ export function SettingsMenu() {
               tabIndex={-1}
               data-stop="item"
               data-label="Back to settings"
-              className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
+              className="echo-settings-row flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
               onClick={() => setCandidates(null)}
             >
               <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
@@ -637,7 +754,7 @@ export function SettingsMenu() {
                 <span className="block truncate text-sm text-dusk-ink">
                   Picked &ldquo;{candidates.name}&rdquo;
                 </span>
-                <span className="block truncate font-mono text-[11px] text-dusk-muted">
+                <span className="block truncate text-[11px] text-dusk-muted">
                   {candidates.matches.length} matches — choose the right one
                 </span>
               </span>
@@ -651,7 +768,7 @@ export function SettingsMenu() {
                 data-stop="item"
                 data-label={`Enable ${match}`}
                 disabled={folderBusy}
-                className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-50"
+                className="echo-settings-row flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-50"
                 onClick={() => {
                   setFolderBusy(true);
                   setFolderNote(null);
@@ -669,9 +786,8 @@ export function SettingsMenu() {
               </button>
             ))}
             {candidates.truncated ? (
-              <p className="px-3 py-1 font-mono text-[11px] text-dusk-muted">
-                Stopped looking after the first matches — type the full path with the command below
-                for anything deeper.
+              <p className="px-3 py-1 text-[11px] text-dusk-muted">
+                That&apos;s the first batch — for deeper folders, use the terminal command below.
               </p>
             ) : null}
           </>
@@ -682,9 +798,9 @@ export function SettingsMenu() {
               role="menuitem"
               tabIndex={-1}
               data-stop="item"
-              data-label="Capture hooks"
+              data-label="Capture Muse sessions"
               disabled={demo || hooksBusy}
-              className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-60"
+              className="echo-settings-row flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-60"
               onClick={() => void handleInstallHooks()}
             >
               <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
@@ -692,19 +808,19 @@ export function SettingsMenu() {
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-sm text-dusk-ink">
-                  {hooksBusy ? "Installing hooks…" : "Install capture hooks"}
+                  {hooksBusy ? "Setting up…" : "Capture Muse sessions"}
                 </span>
-                <span className="block truncate font-mono text-[11px] text-dusk-muted">
+                <span className="block truncate text-[11px] text-dusk-muted">
                   {hooksNote ??
                     (demo
-                      ? "Read-only in demo mode"
+                      ? "Turned off in the demo"
                       : hooks === null
                         ? "Loading…"
                         : hooks.installed
-                          ? `Installed · ${hooks.totalEvents} events`
+                          ? `On — following all ${hooks.totalEvents}`
                           : hooks.eventsInstalled.length > 0
-                            ? `Partly installed · ${hooks.eventsInstalled.length} of ${hooks.totalEvents} — click to fill the gaps`
-                            : "Not installed — Echo can't capture Claude sessions")}
+                            ? `Partly on — ${hooks.eventsInstalled.length} of ${hooks.totalEvents}, tap to finish`
+                            : "Off — turn on so Echo can follow your Muse work")}
                 </span>
               </span>
               {hooks?.installed ? (
@@ -720,7 +836,7 @@ export function SettingsMenu() {
               data-stop="item"
               data-label="Add folder"
               disabled={demo || folderBusy}
-              className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-60"
+              className="echo-settings-row flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none disabled:opacity-60"
               onClick={() => void handlePickFolder()}
             >
               <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
@@ -730,8 +846,8 @@ export function SettingsMenu() {
                 <span className="block truncate text-sm text-dusk-ink">
                   {folderBusy ? "Looking for that folder…" : "Add a folder…"}
                 </span>
-                <span className="block truncate font-mono text-[11px] text-dusk-muted">
-                  {folderNote ?? (demo ? "Read-only in demo mode" : "Pick from your computer")}
+                <span className="block truncate text-[11px] text-dusk-muted">
+                  {folderNote ?? (demo ? "Turned off in the demo" : "Choose from this computer")}
                 </span>
               </span>
               <span aria-hidden className="inline-flex shrink-0 text-dusk-faint">
@@ -745,66 +861,19 @@ export function SettingsMenu() {
           role="menuitem"
           tabIndex={-1}
           data-stop="item"
-          data-label="Copy enable command"
-          className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
-          onClick={() => void handleCopy("enable")}
+          data-label="Add from the terminal"
+          className="echo-settings-row flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
+          onClick={() => void handleCopyEnable()}
         >
           <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
             <HugeiconsIcon icon={Copy01Icon} size={16} strokeWidth={1.8} />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm text-dusk-ink">
-              {copied === "enable" ? "Copied" : "Copy enable command"}
+              {copied === "enable" ? "Copied" : "Add from the terminal"}
             </span>
             <span className="block truncate font-mono text-[11px] text-dusk-muted">
               echo-cli enable &lt;path&gt;
-            </span>
-          </span>
-        </button>
-        <fieldset data-stop="group" data-label="Motion" className="m-0 border-0 p-0 px-3 py-2.5">
-          <legend className="float-left w-full pb-2 text-[11px] uppercase tracking-[0.14em] text-dusk-muted">
-            Motion
-          </legend>
-          <div className="grid w-full grid-cols-2 gap-1 rounded-full border border-dusk-hairline bg-dusk-track p-1">
-            {(["full", "reduced"] as const).map((value) => (
-              <button
-                key={value}
-                type="button"
-                role="menuitemradio"
-                tabIndex={-1}
-                aria-checked={motion === value}
-                aria-label={value === "full" ? "Full motion" : "Reduced motion"}
-                onClick={() => changeMotion(value)}
-                className={
-                  motion === value
-                    ? "rounded-full bg-dusk-accent px-3 py-1.5 text-[13px] font-semibold text-dusk-base transition-colors"
-                    : "rounded-full px-3 py-1.5 text-[13px] text-dusk-muted transition-colors hover:text-dusk-ink"
-                }
-              >
-                {value === "full" ? "Full" : "Reduced"}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-        <div aria-hidden="true" className="mx-3 my-1 border-t border-dusk-hairline" />
-        <button
-          type="button"
-          role="menuitem"
-          tabIndex={-1}
-          data-stop="item"
-          data-label="Copy support info"
-          className="echo-settings-row flex w-full items-center gap-3 rounded-2xl px-3 py-2.5 text-left transition-colors hover:bg-white/[0.07] focus-visible:bg-white/[0.07] focus-visible:outline-none"
-          onClick={() => void handleCopy("support")}
-        >
-          <span aria-hidden className="inline-flex shrink-0 text-dusk-muted">
-            <HugeiconsIcon icon={InformationCircleIcon} size={16} strokeWidth={1.8} />
-          </span>
-          <span className="min-w-0 flex-1">
-            <span className="block truncate text-sm text-dusk-ink">
-              {copied === "support" ? "Copied" : "Copy support info"}
-            </span>
-            <span className="block truncate font-mono text-[11px] text-dusk-muted">
-              Version, mode, repo count — no secrets
             </span>
           </span>
         </button>
@@ -822,7 +891,7 @@ export function SettingsMenu() {
       onKeyDown={onKeyDown}
       data-motion={reduced ? "reduced" : "full"}
       data-leaving={leaving || undefined}
-      className="echo-settings-panel fixed z-50 w-[min(340px,calc(100vw-24px))] rounded-dusk-card border border-dusk-hairline-strong bg-[rgba(28,28,48,0.85)] shadow-[0_20px_48px_rgba(0,0,0,0.5)] backdrop-blur-xl backdrop-saturate-150"
+      className="echo-settings-panel fixed z-50 w-[min(340px,calc(100vw-24px))] rounded-xl bg-[rgba(28,28,48,0.85)] shadow-[0_20px_48px_rgba(0,0,0,0.5)] backdrop-blur-xl backdrop-saturate-150"
     >
       {content}
     </div>
@@ -845,7 +914,7 @@ export function SettingsMenu() {
         onKeyDown={onKeyDown}
         data-motion={reduced ? "reduced" : "full"}
         data-leaving={leaving || undefined}
-        className="echo-settings-sheet fixed inset-x-3 bottom-3 z-50 rounded-dusk-card border border-dusk-hairline-strong bg-[rgba(28,28,48,0.92)] p-1 shadow-[0_20px_48px_rgba(0,0,0,0.5)] backdrop-blur-xl backdrop-saturate-150"
+        className="echo-settings-sheet fixed inset-x-3 bottom-3 z-50 rounded-xl bg-[rgba(28,28,48,0.92)] p-1 shadow-[0_20px_48px_rgba(0,0,0,0.5)] backdrop-blur-xl backdrop-saturate-150"
       >
         <span
           aria-hidden="true"
