@@ -6,8 +6,10 @@ import {
   type ArchitectureChatModelOutput,
   ArchitectureChatModelOutputSchema,
   type ArchitectureEdge,
+  type ArchitectureFocus,
   type ArchitectureModelOutput,
   ArchitectureModelOutputSchema,
+  type ArchitectureNode,
   type ArchitectureNodeEvidence,
   type ArchitecturePatch,
   type ArchitecturePatchOp,
@@ -34,12 +36,14 @@ import {
 } from "@echo/model";
 import { redactJson } from "@echo/redaction";
 import { Minimatch } from "minimatch";
+import { buildDrillFileContext } from "./architecture-drill";
 
 export const ARCHITECTURE_PROMPT_VERSION = "architecture-v3";
 const DEFAULT_TIMEOUT_MS = 180_000;
 const DEFAULT_MAX_TOKENS = 16_000;
 const DEFAULT_REASONING_EFFORT = "low";
 const MAX_CONTEXT_FILES = 500;
+const DRILL_FILE_LIMIT = 120;
 const README_CHARS = 2000;
 const AGENTS_CHARS = 2000;
 const DOCS_FILE_CHARS = 1000;
@@ -426,11 +430,12 @@ Rules: 8 to 15 nodes; labels of 3 words or fewer; one-line descriptions; every n
 
 const CHAT_SYSTEM = `You answer questions about a project's functional architecture and optionally change it.
 The current architecture JSON, the pinned node (if any), and conversation context are in the user message.
-Return ONLY JSON: {"answer": string, "patch"?: Op[], "autoApply": boolean, "relatedNodeIds": string[]}.
+Return ONLY JSON: {"answer": string, "patch"?: Op[], "autoApply": boolean, "relatedNodeIds": string[], "focusNodeIds"?: string[], "clearFocus"?: boolean}.
 Op is one of: {"op":"addNode","node":{...,"status":"proposed"}} | {"op":"updateNode","id","patch"} | {"op":"removeNode","id"} | {"op":"addEdge","edge":{"from","to","label?","bidirectional?"}} | {"op":"removeEdge","from","to"} | {"op":"addGroup","group":{"id","label","order?"}}.
 New nodes keep within the same constraints (label 3 words max, known group, one-line description, globs for paths). Added nodes use status "proposed" unless you verified the part exists in the code. Added edges must be primary data or control flow, never transitive; never add the reverse of an existing edge — one edge per pair, directed by write/data flow (reads live in descriptions), bidirectional true only when the return flow matters; added groups include order (flow rank, upstream first).
 Set autoApply true ONLY when the user message is a clear, specific architecture change. When the request is ambiguous, exploratory, or a question, return the patch you would apply with autoApply false (the UI shows an Apply button) or no patch at all for pure questions.
-relatedNodeIds lists the node ids your answer refers to.`;
+relatedNodeIds lists the node ids your answer refers to.
+The user names parts in plain words ("the ingest path", "storage"), never ids. When they explicitly ask to see, zoom into, or drill deeper into a part, resolve their words to node ids and list them in focusNodeIds (the UI regenerates an in-depth sub-diagram for those nodes). When you set focusNodeIds, keep the answer to a short confirmation naming the focused part in the user's own words plus at most two sentences of explanation; do not list node names, the sub-diagram shows the breakdown. When they ask to see everything again or go back to the whole system, set clearFocus true and leave focusNodeIds empty. Otherwise leave both unset. Write every answer in plain words a non-engineer understands, no em dashes.`;
 
 export interface ArchitectureService {
   get(projectId: string): ArchitectureOutcome;
@@ -440,6 +445,7 @@ export interface ArchitectureService {
     projectId: string,
     message: string,
     pinnedNodeId: string | null,
+    focusedNodeIds?: string[],
   ): Promise<ArchitectureOutcome>;
   applyPatch(projectId: string, patch: ArchitecturePatch): ArchitectureOutcome;
   undo(projectId: string): ArchitectureOutcome;
@@ -549,14 +555,89 @@ export function createArchitectureService(
     return parsed.data;
   }
 
-  function evidenceFor(projectId: string, architecture: Architecture | null) {
-    if (!architecture) return { evidence: {}, evidenceTruncated: false };
+  function evidenceFor(projectId: string, nodes: ArchitectureNode[] | null) {
+    if (!nodes) return { evidence: {}, evidenceTruncated: false };
     const project = getProject(db, projectId);
     const { rows, truncated } = listProjectSessionFiles(db, projectId);
     return {
-      evidence: computeEvidence(architecture.nodes, rows, project?.sessionCount ?? 0),
+      evidence: computeEvidence(nodes, rows, project?.sessionCount ?? 0),
       evidenceTruncated: truncated,
     };
+  }
+
+  function focusLabel(architecture: Architecture, nodes: ArchitectureNode[]): string {
+    const groupIds = [...new Set(nodes.map((node) => node.group))];
+    if (groupIds.length === 1) {
+      const group = architecture.groups.find((candidate) => candidate.id === groupIds[0]);
+      if (group) return group.label.slice(0, 80);
+    }
+    return nodes
+      .slice(0, 3)
+      .map((node) => node.label)
+      .join(", ")
+      .slice(0, 80);
+  }
+
+  function drillSystem(groupIds: string[]): string {
+    return `You expand architecture nodes into an in-depth functional sub-diagram: the working pieces inside the focused part (stages, stores, decision points).
+The focused nodes, their code paths, and the matching project files are in the user message. Each file lists the symbols it defines and the in-scope files it imports; small files include their full text.
+Return ONLY JSON: {"groups":[{"id","label","order"}],"nodes":[{"id","label","group","description","paths","status":"existing"}],"edges":[{"from","to","label?","bidirectional?"}]}.
+Rules: 3 to 8 nodes; labels of 3 words or fewer; one-line descriptions; use ONLY these group ids: ${groupIds.join(", ")}; every node in a known group; every edge between known nodes; edges are primary data or control flow only, never transitive; one edge per pair, acyclic; every node's paths are globs inside the focused scope; status is always "existing" — only describe parts grounded in the listed files and symbols. When a file's symbols show a single job, never split it into two nodes; prefer edges that follow an observed import. No coordinates, no markdown.`;
+  }
+
+  async function runDrill(
+    projectId: string,
+    architecture: Architecture,
+    nodeIds: string[],
+    config: ModelConfig,
+    root: string,
+  ): Promise<ArchitectureFocus | null> {
+    const nodes = architecture.nodes.filter((node) => nodeIds.includes(node.id));
+    if (nodes.length === 0) return null;
+    const matchers = nodes.flatMap((node) => node.paths.map((glob) => new Minimatch(glob)));
+    const { files } = listCodeFiles(db, projectId, MAX_CONTEXT_FILES);
+    const scoped = files.filter((file) => matchers.some((matcher) => matcher.match(file.path)));
+    const fileContext = buildDrillFileContext(scoped, DRILL_FILE_LIMIT, {
+      db,
+      projectId,
+      root,
+    });
+    const groupIds = [...new Set(nodes.map((node) => node.group))];
+    const messages: ChatMessage[] = [
+      { role: "system", content: drillSystem(groupIds) },
+      {
+        role: "user",
+        content: [
+          `Focused nodes:\n${JSON.stringify(nodes.map((node) => ({ id: node.id, label: node.label, description: node.description, paths: node.paths })))}`,
+          fileContext,
+          "Describe this part's internal functional architecture in depth.",
+        ].join("\n\n"),
+      },
+    ];
+    const warnings: string[] = [];
+    try {
+      const redacted = redactJson(messages).value as ChatMessage[];
+      const fresh = (
+        await withDeadline((signal) =>
+          requestJson(config, redacted, (raw) => ArchitectureModelOutputSchema.parse(raw), {
+            fetchImpl,
+            retryMaxTokens: Math.max(config.maxTokens * 2, 8192),
+            reasoningEffort: config.reasoningEffort,
+            signal,
+          }),
+        )
+      ).value;
+      const detail = trimmedWithWarning(acyclicWithWarning(fresh, warnings), warnings);
+      const { evidence } = evidenceFor(projectId, detail.nodes);
+      return { label: focusLabel(architecture, nodes), nodeIds, detail, evidence };
+    } catch (error) {
+      // A failed drill never fails the turn: the answer stands on its own.
+      log.info(
+        { project_id: projectId, err: String(error) },
+        "architecture drill skipped; answering without focus",
+      );
+      return null;
+    }
   }
 
   function buildGenerationContext(projectId: string, root: string): string {
@@ -746,7 +827,7 @@ export function createArchitectureService(
         body: {
           projectId: project.id,
           architecture,
-          ...evidenceFor(projectId, architecture),
+          ...evidenceFor(projectId, architecture?.nodes ?? null),
         },
       };
     },
@@ -801,7 +882,7 @@ export function createArchitectureService(
       };
     },
 
-    async chat(projectId, message, pinnedNodeId) {
+    async chat(projectId, message, pinnedNodeId, focusedNodeIds = []) {
       const project = getProject(db, projectId);
       if (!project) {
         return { status: 404, body: { error: { code: "not_found", message: "unknown project" } } };
@@ -845,6 +926,9 @@ export function createArchitectureService(
           content: [
             `Current architecture:\n${JSON.stringify(architecture)}`,
             pinned ? `Pinned node context:\n${JSON.stringify(pinned)}` : null,
+            focusedNodeIds.length > 0
+              ? `Currently focused node ids (the user is viewing this part):\n${JSON.stringify(focusedNodeIds)}`
+              : null,
             `User message:\n${message}`,
           ]
             .filter((part): part is string => part !== null)
@@ -877,6 +961,12 @@ export function createArchitectureService(
       }
       const knownIds = new Set(architecture.nodes.map((node) => node.id));
       const relatedNodeIds = answer.relatedNodeIds.filter((id) => knownIds.has(id));
+      const resolvedFocus = answer.focusNodeIds.filter((id) => knownIds.has(id));
+      const focus =
+        resolvedFocus.length > 0
+          ? await runDrill(projectId, architecture, resolvedFocus, config, project.root)
+          : null;
+      const clearFocus = resolvedFocus.length === 0 && answer.clearFocus;
       if (!answer.patch) {
         return {
           status: 200,
@@ -886,6 +976,8 @@ export function createArchitectureService(
             applied: false,
             version: architecture.version,
             relatedNodeIds,
+            focus,
+            clearFocus,
           },
         };
       }
@@ -913,6 +1005,8 @@ export function createArchitectureService(
             applied: false,
             version: architecture.version,
             relatedNodeIds,
+            focus,
+            clearFocus,
           },
         };
       }
@@ -927,6 +1021,8 @@ export function createArchitectureService(
             applied: true,
             version: saved.version,
             relatedNodeIds,
+            focus,
+            clearFocus,
           },
         };
       } catch (error) {
