@@ -184,8 +184,9 @@ describe("demo build", () => {
     expect(dbRows(bakedData, "events")).toBe(1);
     expect(dbRows(bakedData, "projects")).toBe(1);
     expect(dbRows(bakedData, "reader_checkpoints")).toBe(0);
-    expect(dbRows(bakedData, "change_refs")).toBe(0);
-    expect(dbRows(bakedData, "change_progress")).toBe(0);
+    // change refs drive the overview; the baked session's refs are kept.
+    expect(dbRows(bakedData, "change_refs")).toBe(1);
+    expect(dbRows(bakedData, "change_progress")).toBe(1);
     const db = openEchoDb(join(bakedData, "echo.sqlite"));
     try {
       const root = db.prepare("SELECT canonical_root FROM projects").get() as {
@@ -249,13 +250,15 @@ describe("demo build", () => {
     }
     // Pre-fix this threw FOREIGN KEY constraint failed: change_refs,
     // change_progress, and engagement_events all reference sessions, and the
-    // full-wipe tables reference projects. Adopted behavior is full-wipe
-    // (builder-side reading state never ships), so all narrow to zero.
+    // full-wipe tables reference projects. change_refs/progress narrow to the
+    // allowlist (they drive s.changeCount), engagement is wiped.
+    // Seed already has 1 change ref per session (CHANGE_A); the extra ch1
+    // inserts below add a second per session, so the baked session keeps 2.
     buildDemoBundle({ dataDir, sessionIds: [SESSION_A], outDir, webDir });
     const bakedData = join(outDir, "data");
     expect(dbRows(bakedData, "engagement_events")).toBe(0);
-    expect(dbRows(bakedData, "change_refs")).toBe(0);
-    expect(dbRows(bakedData, "change_progress")).toBe(0);
+    expect(dbRows(bakedData, "change_refs")).toBe(2);
+    expect(dbRows(bakedData, "change_progress")).toBe(2);
     expect(dbRows(bakedData, "projects")).toBe(1);
     expect(dbRows(bakedData, "code_files")).toBe(0);
     expect(dbRows(bakedData, "project_artifacts")).toBe(0);
