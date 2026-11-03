@@ -29,7 +29,7 @@ type ScaffoldPageProps = {
     quietTitle?: boolean;
     /** True while the title row has no data: a shimmer bar instead of text. */
     titleLoading?: boolean;
-    /** Right-aligned slot at the row end, e.g. a diff total. */
+    /** Right-aligned slot at the row end, e.g. section tabs or a diff total. */
     side?: ReactNode;
   };
   children?: ReactNode;
@@ -105,11 +105,7 @@ export function ScaffoldPage({
                 </span>
               )}
             </h1>
-            {breadcrumb.side ? (
-              <span className="ml-auto shrink-0 font-mono text-xs tabular-nums">
-                {breadcrumb.side}
-              </span>
-            ) : null}
+            {breadcrumb.side ? <span className="ml-auto shrink-0">{breadcrumb.side}</span> : null}
           </div>
         </nav>
       ) : (
