@@ -4,7 +4,6 @@ import { DemoPage } from "./routes/demo";
 import { NotFoundPage } from "./routes/not-found";
 import { ProjectArchitecturePage } from "./routes/project-architecture";
 import { ProjectLayout } from "./routes/project-layout";
-import { ProjectLearnPage } from "./routes/project-learn";
 import { ProjectOverviewPage } from "./routes/project-overview";
 import { ProjectsPage } from "./routes/projects";
 import { ReaderPage } from "./routes/reader";
@@ -28,7 +27,6 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <Navigate to="overview" replace /> },
           { path: "overview", element: <ProjectOverviewPage /> },
-          { path: "learn", element: <ProjectLearnPage /> },
           { path: "architecture", element: <ProjectArchitecturePage /> },
         ],
       },
