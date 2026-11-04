@@ -1,6 +1,5 @@
 import type { SessionSummary } from "@echo/contracts";
 import {
-  Alert02Icon,
   CheckmarkCircle02Icon,
   Clock01Icon,
   SkipForwardIcon,
