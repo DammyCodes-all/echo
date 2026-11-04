@@ -1,8 +1,13 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { rollupIdFor } from "@echo/chapters";
-import { ChangeCodeResponseSchema, ChangeSchema, type TapeEvent } from "@echo/contracts";
+import { buildSessionSummaryFromDigests, rollupIdFor } from "@echo/chapters";
+import {
+  CHANGES_FILE_NAME,
+  ChangeCodeResponseSchema,
+  ChangeSchema,
+  type TapeEvent,
+} from "@echo/contracts";
 import {
   appendEvents,
   deleteEchoSession,
