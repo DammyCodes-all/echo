@@ -18,7 +18,7 @@ export function endScreenSummary(total: number, skipped: number, neverOpened: nu
 const PRIMARY =
   "rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent";
 
-export function CaughtUp({ summary, skipped, onDone, onRevisit }: CaughtUpProps) {
+export function CaughtUp({ summary, skipped, total, neverOpened, onDone, onRevisit }: CaughtUpProps) {
   return (
     <div className="space-y-6 rounded-dusk-card bg-dusk-surface px-6 py-8">
       <div>
