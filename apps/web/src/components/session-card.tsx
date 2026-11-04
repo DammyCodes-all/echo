@@ -61,8 +61,6 @@ function checkIcon(checkStatus: SessionSummary["checkStatus"]) {
  * rows referentially equal, so only new/changed sessions pay for a render.
  */
 export const SessionCard = memo(function SessionCard({ session }: { session: SessionSummary }) {
-  const showCheck = session.checkStatus !== "not_checked";
-  const showRisk = session.highRiskCount > 0;
   const queryClient = useQueryClient();
   // Hover intent warms the reader (header row + change list) so opening the
   // session paints from cache instead of flashing the skeleton.
