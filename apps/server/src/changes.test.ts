@@ -26,7 +26,7 @@ import {
 import type { SnapshotResult } from "@echo/snapshots";
 import { snapshotWorkingTree } from "@echo/snapshots";
 import { describe, expect, it } from "vitest";
-import { createChangesService } from "./changes";
+import { CHANGES_EVIDENCE_GATE, createChangesService } from "./changes";
 
 const TAKEN_AT = new Date("2026-10-28T10:00:00.000Z");
 const silentLog = { info: () => {}, error: () => {} };
