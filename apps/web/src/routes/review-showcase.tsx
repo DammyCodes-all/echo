@@ -319,6 +319,8 @@ export function ReviewShowcasePage() {
             <CaughtUp
               summary="One typo fix. Nothing else shipped."
               skipped={[]}
+              total={1}
+              neverOpened={0}
               onDone={noop}
               onRevisit={noop}
             />
