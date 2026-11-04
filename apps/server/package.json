@@ -7,9 +7,9 @@
     "echo-daemon": "dist/index.js"
   },
   "scripts": {
-    "dev": "tsx watch src/index.ts",
-    "build": "tsup",
-    "start": "node dist/index.js"
+    "dev": "node init && tsx watch src/index.ts",
+    "build": "node init && tsup",
+    "start": "node init && node dist/index.js"
   },
   "dependencies": {
     "@echo/capture": "workspace:*",

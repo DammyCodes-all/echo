@@ -1,9 +1,5 @@
 import type { SessionSummary } from "@echo/contracts";
-import {
-  CheckmarkCircle02Icon,
-  Clock01Icon,
-  SkipForwardIcon,
-} from "@hugeicons/core-free-icons";
+import { CheckmarkCircle02Icon, Clock01Icon, SkipForwardIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { useQueryClient } from "@tanstack/react-query";
 import { memo } from "react";

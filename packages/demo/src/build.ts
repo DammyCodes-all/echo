@@ -66,10 +66,7 @@ function assertSafeOutDir(outDir: string): void {
 // s.changeCount which the overview uses to show sessions), and the code
 // index / architecture tables are narrowed to the baked project so the
 // demo can show Architecture + tech stack. Reader checkpoints are wiped.
-const FULL_WIPE_TABLES = [
-  "reader_checkpoints",
-  "review_transition_cache",
-] as const;
+const FULL_WIPE_TABLES = ["reader_checkpoints", "review_transition_cache"] as const;
 
 function placeholders(count: number): string {
   return new Array(count).fill("?").join(", ");
