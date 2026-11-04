@@ -132,7 +132,7 @@ export function ProjectArchitecturePage() {
         {arch.isPending ? (
           <div role="status" aria-label="Loading architecture">
             <span className="sr-only">Loading architecture…</span>
-            <Skeleton className="h-6 w-48" />
+            <ArchitectureSkeleton />
           </div>
         ) : arch.isError ? (
           <div className="space-y-3 rounded-dusk-card border border-dusk-fail/40 bg-dusk-fail-wash p-8 text-sm text-dusk-fail">
