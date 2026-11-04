@@ -89,24 +89,9 @@ export const SessionCard = memo(function SessionCard({ session }: { session: Ses
           </span>
           {timeAgo(session.lastActivity)}
         </span>
-        {showCheck || showRisk ? (
-          <span className="flex shrink-0 items-center gap-2">
-            {showCheck ? (
-              <span className={checkBadgeClass(session.checkStatus)}>
-                <span aria-hidden className="inline-flex">
-                  <HugeiconsIcon icon={checkIcon(session.checkStatus)} size={14} strokeWidth={2} />
-                </span>
-                {checkLabel(session.checkStatus)}
-              </span>
-            ) : null}
-            {showRisk ? (
-              <span className={riskBadgeClass(session.highRiskCount)}>
-                <span aria-hidden className="inline-flex">
-                  <HugeiconsIcon icon={Alert02Icon} size={14} strokeWidth={2} />
-                </span>
-                {session.highRiskCount} high-risk
-              </span>
-            ) : null}
+        <span className={checkBadgeClass(session.checkStatus)}>
+          <span aria-hidden className="inline-flex">
+            <HugeiconsIcon icon={checkIcon(session.checkStatus)} size={14} strokeWidth={2} />
           </span>
         ) : null}
       </span>
