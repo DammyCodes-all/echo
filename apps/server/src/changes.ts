@@ -736,6 +736,11 @@ export function createChangesService(
 
     const artifactPath = changesArtifactPath(dataDir, session.projectId, sessionId);
     const previous = readArtifactFile(artifactPath, sessionId);
+    // A previously assessed artifact that already matches the current
+    // lateness must not regenerate every run: the marker only forces one
+    // pass to stamp (or clear) it.
+    const needsLateBaselineFlag =
+      lateBaseline !== (previous?.diagnostics.includes(LATE_BASELINE_DIAGNOSTIC) ?? false);
     const carried = new Map<string, Change>();
     for (const change of previous?.changes ?? []) {
       // Pre-split rows never carry: the fold below rebuilds them small at
