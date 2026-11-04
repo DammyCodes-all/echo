@@ -53,11 +53,9 @@ function checkIcon(checkStatus: SessionSummary["checkStatus"]) {
 
 /**
  * Session card for the project overview: title, a hairline, then one bottom
- * row with the relative last-activity time and only the badges that say
- * something — high-risk flags plus the non-default check states. Small
- * risk counts stay quiet (muted pill) so red keeps meaning "look here". The
- * default `not_checked` and the capture/event-count details stay off the
- * card; the story page owns them.
+ * row with the relative last-activity time and the check-state badge
+ * (Checked / Skipped / Awaiting check). The capture/event-count details
+ * stay off the card; the story page owns them.
  *
  * Memoized: the list re-renders every poll, and React Query keeps unchanged
  * rows referentially equal, so only new/changed sessions pay for a render.
