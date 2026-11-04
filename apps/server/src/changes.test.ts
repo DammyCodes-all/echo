@@ -19,6 +19,7 @@ import {
   listSnapshots,
   openEchoDb,
   recordChangeRef,
+  setSessionSummary,
   upsertProject,
   upsertSession,
 } from "@echo/db";
