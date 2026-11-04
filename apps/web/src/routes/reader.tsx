@@ -640,6 +640,8 @@ export function ReaderPage() {
                 <CaughtUp
                   summary={summary}
                   skipped={skipped}
+                  total={changes.length}
+                  neverOpened={neverOpened}
                   onDone={handleDone}
                   onRevisit={(change) => {
                     const index = changes.findIndex((candidate) => candidate.id === change.id);
