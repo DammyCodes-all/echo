@@ -1233,6 +1233,19 @@ export function createChangesService(
       ) {
         return { sessionId: session.id, reason: "stale" };
       }
+      // A baseline assessed after the artifact was written: the daemon was
+      // down across the early work, so the artifact's emptiness is a capture
+      // hole, not a quiet session. One regen pass stamps the marker. The
+      // comparison runs both ways so a healed assessment clears it too.
+      const firstTakenMs = snaps.length > 0 ? Date.parse(snaps[0]?.takenAt ?? "") : Number.NaN;
+      const firstActivity = firstActivityMs(db, session.id);
+      const lateNow =
+        !Number.isNaN(firstTakenMs) &&
+        firstActivity !== null &&
+        firstTakenMs - firstActivity > LATE_BASELINE_MS;
+      if (lateNow !== artifact.diagnostics.includes(LATE_BASELINE_DIAGNOSTIC)) {
+        return { sessionId: session.id, reason: "stale" };
+      }
       // Pre-split rollups self-heal on the backfill tick even when their
       // snapshots are quiet: the reader never sees a giant change twice.
       if (artifact.changes.some((change) => change.files.length > MAX_FILES_PER_CHANGE)) {
