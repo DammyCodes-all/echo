@@ -38,6 +38,37 @@ export function SkeletonCard({ className = "" }: SkeletonProps) {
 }
 
 /**
+ * Architecture loading state mirroring ProjectArchitecturePage's loaded
+ * geometry: a 520px canvas with node-like cards where the graph will land,
+ * beside the 360px chat rail. Content swaps in with no layout shift.
+ */
+export function ArchitectureSkeleton() {
+  return (
+    <div aria-hidden className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_360px]">
+      <div className="relative h-[520px] overflow-hidden motion-safe:animate-pulse">
+        <div className="absolute top-[12%] left-[8%] h-16 w-44 rounded-dusk-card bg-dusk-pill/40" />
+        <div className="absolute top-[8%] left-[46%] h-16 w-52 rounded-dusk-card bg-dusk-pill/50" />
+        <div className="absolute top-[38%] left-[28%] h-16 w-48 rounded-dusk-card bg-dusk-pill/40" />
+        <div className="absolute top-[34%] left-[66%] h-16 w-40 rounded-dusk-card bg-dusk-pill/50" />
+        <div className="absolute top-[64%] left-[12%] h-16 w-48 rounded-dusk-card bg-dusk-pill/50" />
+        <div className="absolute top-[68%] left-[56%] h-16 w-52 rounded-dusk-card bg-dusk-pill/40" />
+      </div>
+      <div className="hidden space-y-3 rounded-dusk-card bg-dusk-surface p-6 lg:block">
+        <div className="motion-safe:animate-pulse">
+          <div className="h-4 w-2/3 rounded-dusk-code bg-dusk-pill" />
+          <div className="mt-3 space-y-2">
+            <div className="h-3.5 rounded-dusk-code bg-dusk-pill/70" />
+            <div className="h-3.5 w-4/5 rounded-dusk-code bg-dusk-pill/70" />
+            <div className="h-3.5 w-3/5 rounded-dusk-code bg-dusk-pill/70" />
+          </div>
+          <div className="mt-6 h-10 rounded-dusk-pill bg-dusk-pill/50" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
  * Folder-shaped loading card mirroring ProjectFolderCard's closed geometry:
  * a 320px folder (tab + body + art zone + bottom-left label lines) so the /
  * grid swaps in place with no layout shift. Total height (~307px) matches the
