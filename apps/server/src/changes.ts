@@ -269,6 +269,17 @@ interface TimedEvidence {
  */
 const EVIDENCE_SKEW_MS = 120_000;
 
+export const LATE_BASELINE_DIAGNOSTIC = "changes_late_baseline";
+/**
+ * Late-baseline tolerance: a first snapshot taken this long after the
+ * session's first recorded activity missed the early work (a daemon
+ * outage across the session start). The pairs can only diff captured
+ * state, so an empty artifact below is a capture hole, never proof of
+ * a quiet session. Five minutes: a healthy first poll lands the baseline
+ * in seconds; an outage spans minutes.
+ */
+const LATE_BASELINE_MS = 5 * 60 * 1000;
+
 /**
  * Wall-clock budget for the pair-diff loop below; mirrors the review index.
  * A monster session degrades to a partial fold with a diagnostic instead of
