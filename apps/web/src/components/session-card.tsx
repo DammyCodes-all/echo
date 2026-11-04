@@ -46,7 +46,9 @@ function checkLabel(checkStatus: SessionSummary["checkStatus"]): string {
 }
 
 function checkIcon(checkStatus: SessionSummary["checkStatus"]) {
-  return checkStatus === "checked" ? CheckmarkCircle02Icon : SkipForwardIcon;
+  if (checkStatus === "checked") return CheckmarkCircle02Icon;
+  if (checkStatus === "skipped") return SkipForwardIcon;
+  return Clock01Icon;
 }
 
 /**
