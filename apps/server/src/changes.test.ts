@@ -199,7 +199,7 @@ function insertRow(db: EchoDb, sessionId: string, snapshot: SnapshotResult, even
   });
 }
 
-async function seedTwoSnapshots(): Promise<{
+async function seedTwoSnapshots(eventAt: string = TAKEN_AT.toISOString()): Promise<{
   db: EchoDb;
   dataDir: string;
   root: string;
