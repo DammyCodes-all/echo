@@ -198,6 +198,7 @@ export function ReaderPage() {
   const previous = !atEnd && viewIndex > 0 ? (changes[viewIndex - 1] ?? null) : null;
   const next = !atEnd && viewIndex < changes.length - 1 ? (changes[viewIndex + 1] ?? null) : null;
   const skipped = changes.filter((change) => progress[progressKey(change)]?.state === "skipped");
+  const neverOpened = changes.filter((change) => progress[progressKey(change)] === undefined).length;
 
   // The thread lives in the rail's Ask tab; the tab state lives here so
   // the action row and wrap-up can flip to it.
