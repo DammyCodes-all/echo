@@ -31,16 +31,6 @@ function cardTitle(session: SessionSummary): string {
   return sessionDisplayTitle(session);
 }
 
-/** Red is triage signal: five or more high-risk cards shout, smaller counts stay visible but quiet. */
-const HIGH_RISK_LOUD_THRESHOLD = 5;
-
-function riskBadgeClass(highRiskCount: number): string {
-  const base =
-    "inline-flex items-center gap-1.5 whitespace-nowrap rounded-dusk-code px-2.5 py-1 text-xs font-semibold";
-  if (highRiskCount >= HIGH_RISK_LOUD_THRESHOLD) return `${base} bg-dusk-fail-wash text-dusk-fail`;
-  return `${base} bg-dusk-track text-dusk-muted`;
-}
-
 /** Same badge voice as the story cards: wash fill, no border, sentence case. */
 function checkBadgeClass(checkStatus: SessionSummary["checkStatus"]): string {
   const base =
