@@ -1743,3 +1743,31 @@ notes.
 - status: done
 - evidence: Render logs “Deploy succeeded|Live”, health `{"mode":"demo"}` 200, sessions API returns 2; build logs show 6500 modules, pnpm + tsup + vite ok
 - notes: Free tier will sleep 15 min; user to set ping to /api/health. Stage and commit nothing (README change unstaged).
+
+## 2026-11-04 — Late-baseline gap: silent empty sessions now say so honestly
+
+- item: `changes_late_baseline` diagnostic (`apps/server/src/changes.ts`: `firstActivityMs` MIN(ts) over non-started events vs first snapshot takenAt, 5min tolerance; stamped in `maybeGenerateChanges` with early-exit/rerun-safe bypasses so one pass lands it; `findSessionNeedingChanges` stale-pick compares current lateness vs artifact marker both ways) + `diagnostics` on `ChangesResponse`/`SessionChangesResponse` (`api.changes` defensive default) + reader empty-state copy ("Echo started watching after the work happened…") when empty and flagged
+- status: done
+- evidence: 3 new tests watched red pre-fix (late flags + empty, control keeps 1 change unflagged, pre-fix artifact picked stale) then green; full gate on unit — `tsc` clean, touched files biome-clean, `pnpm test` → 78 files / 768 passed, `pnpm build` ok; live proof on the dud session `01a1a5be` (daemon down 08:48–09:02, baseline of post-edit tree, 0 changes silent): backfill regen stamped `['changes_late_baseline', 'changes_evidence_gated_v2']`, served via API. Repo-wide `pnpm lint` still red on concurrent files (`checks-v2.test.ts` useLiteralKeys, `packages/demo/src/build.ts` format) — untouched, not mine.
+- notes: Root cause was H1 late baseline (session.started observed 09:01:57 vs ts 08:48:15; daemon uptime ~9min at 09:11; baseline==final trees proven identical; evidence intents present so timing was the sole killer). H2/H3/H4 falsified (no changes_unattributed in diagnostics, baseline contains edits, native log has this session's edit_file calls). The dud session can never gain changes (pre-edit state gone) — needs a rerun with the daemon up. Nothing staged or committed.
+
+## 2026-11-04 — Drop stale high-risk pill from session cards + folder previews
+
+- item: session cards (`session-card.tsx`: risk pill + threshold gone, `not_checked` now renders an "Awaiting check" badge with the clock icon, Checked/Skipped byte-identical) and folder preview sheets (`project-folder-card.tsx` checkLine: "Awaiting check", no high-risk suffix); matches the overview tile's existing "Awaiting check" label
+- status: done
+- evidence: `pnpm typecheck` clean for both files (only repo errors at the time were 2 unrelated untracked in-flight test files, resolved by later units); no tests cover these components (UI exempt per AGENTS.md; grep confirms zero references in apps/web tests)
+- notes: `SessionSummary.highRiskCount` contract/column untouched — still served, just not rendered. Nothing staged or committed.
+
+## 2026-11-04 — Reader end screen tops with a plain totals sentence
+
+- item: `endScreenSummary(total, skipped, neverOpened)` exported from `caught-up.tsx` ("This session had N changes — you skipped S and never opened O.", singular "change" at 1), rendered first under the heading; reader derives neverOpened from missing progress rows and passes total/neverOpened; showcase fixtures pinned (5/2/1, 1/0/0)
+- status: done
+- evidence: `pnpm exec vitest run apps/web/src/components/caught-up.test.ts` → 2 passed; `pnpm typecheck` clean apart from the next unit's test-only error
+- notes: Implemented to the pre-existing untracked `caught-up.test.ts` oracle; that file itself left untouched. Nothing staged or committed.
+
+## 2026-11-04 — Ask starters lead with the scoped change's title
+
+- item: `askStarters(change)` exported from `ask-thread-panel.tsx`: scoped change → "Why did you change {title}?" first, other two starters unchanged; null → session starters unchanged; `AskThread` empty-state chips use it
+- status: done
+- evidence: `pnpm typecheck` clean repo-wide; `pnpm exec vitest run` over ask-thread-panel + caught-up + ask-answer → 3 files / 9 passed
+- notes: Implemented to the pre-existing untracked `ask-thread-panel.test.ts` oracle; that file itself left untouched. Nothing staged or committed.
