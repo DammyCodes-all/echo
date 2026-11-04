@@ -22,7 +22,7 @@ Three minutes, all on screen:
 
 - Demo video: https://youtu.be/kmUYmTl1qGM
 - Hosted read-only demo: **https://echo-caz8.onrender.com** — the filmed session plus one more, baked in. Read the review one change at a time, take the calibration check, ask why (see `docs/DEPLOY.md`)
-- Submission entry: TODO
+- Built for: Meta Global AI Developer Hackathon 2026 · Indie Developer track
 
 The video opens the inbox, walks a real session one change at a time (before and now in plain words, one file diff), takes the calibration check and gets one wrong while Certain, asks something the tape can't answer and gets refused, then zooms out to the project map. No scores, no gates.
 
