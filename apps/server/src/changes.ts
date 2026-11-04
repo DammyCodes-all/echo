@@ -697,6 +697,18 @@ export function createChangesService(
     const shadowDir = join(dataDir, "projects", session.projectId, "shadow.git");
     const diagnostics: string[] = [];
     if (snapshots.length < 2) diagnostics.push("needs_two_snapshots");
+    // Late baseline: the first snapshot landed long after the session's
+    // first recorded activity, so the early work was never captured. Stamp
+    // it now so an empty artifact reads as a capture hole below, not a
+    // quiet session.
+    const firstTakenMs =
+      snapshots.length > 0 ? Date.parse(snapshots[0]?.takenAt ?? "") : Number.NaN;
+    const firstActivity = firstActivityMs(db, sessionId);
+    const lateBaseline =
+      !Number.isNaN(firstTakenMs) &&
+      firstActivity !== null &&
+      firstTakenMs - firstActivity > LATE_BASELINE_MS;
+    if (lateBaseline) diagnostics.push(LATE_BASELINE_DIAGNOSTIC);
 
     const refs = getChangeRefs(db, sessionId);
     // Each fold chunk keeps a stable per-session id so regens update rows
