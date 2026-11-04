@@ -311,6 +311,8 @@ export function ReviewShowcasePage() {
             <CaughtUp
               summary="Five small changes, mostly polish plus one billing retry worth a look."
               skipped={[changeMinimal, changeWatchOnly]}
+              total={5}
+              neverOpened={1}
               onDone={noop}
               onRevisit={noop}
             />
