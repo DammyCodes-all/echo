@@ -277,6 +277,66 @@ describe("changes service", () => {
     }
   });
 
+  it("stamps changes_late_baseline when the first snapshot lands long after the first activity", async () => {
+    const early = new Date(TAKEN_AT.getTime() - 14 * 60 * 1000).toISOString();
+    const { db, dataDir, sessionId } = await seedTwoSnapshots(early);
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog }, { env: OFF_ENV });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      // The pair diff exists, but its only evidence predates the snapshot
+      // window, so nothing is claimed — and the artifact says why instead
+      // of reporting a quiet session.
+      expect(first.artifact?.changes).toHaveLength(0);
+      expect(first.artifact?.diagnostics).toContain("changes_late_baseline");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("does not stamp changes_late_baseline when the baseline lands with the activity", async () => {
+    const { db, dataDir, sessionId } = await seedTwoSnapshots();
+    try {
+      const service = createChangesService({ db, dataDir, log: silentLog }, { env: OFF_ENV });
+      const first = await service.maybeGenerateChanges(sessionId);
+      expect(first.outcome).toBe("generated");
+      expect(first.artifact?.changes.length).toBeGreaterThan(0);
+      expect(first.artifact?.diagnostics).not.toContain("changes_late_baseline");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("picks a late-baseline artifact missing the marker as stale", async () => {
+    const early = new Date(TAKEN_AT.getTime() - 14 * 60 * 1000).toISOString();
+    const { db, dataDir, projectId, sessionId } = await seedTwoSnapshots(early);
+    try {
+      // A pre-fix artifact: current watermark, gated, inbox in sync — the
+      // only thing missing is the late-baseline assessment.
+      const service = createChangesService({ db, dataDir, log: silentLog }, { env: OFF_ENV });
+      const snaps = listSnapshots(db, sessionId);
+      const lastOid = snaps.length > 0 ? (snaps[snaps.length - 1]?.commitOid ?? null) : null;
+      const summary = buildSessionSummaryFromDigests([]);
+      mkdirSync(join(dataDir, "projects", projectId, "sessions", sessionId), { recursive: true });
+      writeFileSync(
+        join(dataDir, "projects", projectId, "sessions", sessionId, CHANGES_FILE_NAME),
+        JSON.stringify({
+          sessionId,
+          generatedAt: new Date().toISOString(),
+          generator: "skeleton-v1",
+          summary,
+          diagnostics: [CHANGES_EVIDENCE_GATE],
+          changes: [],
+          snapshotWatermark: { snapshotCount: snaps.length, lastOid },
+        }),
+      );
+      setSessionSummary(db, sessionId, summary);
+      expect(service.findSessionNeedingChanges(false)).toEqual({ sessionId, reason: "stale" });
+    } finally {
+      db.close();
+    }
+  });
+
   it("appends new pairs and versions without resetting progress", async () => {
     const { db, dataDir, root, projectId, sessionId } = await seedTwoSnapshots();
     try {
