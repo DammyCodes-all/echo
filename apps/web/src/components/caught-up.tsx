@@ -3,6 +3,8 @@ import type { Change } from "@echo/contracts";
 type CaughtUpProps = {
   summary: string;
   skipped: Change[];
+  total: number;
+  neverOpened: number;
   onDone: () => void;
   onRevisit: (change: Change) => void;
 };
