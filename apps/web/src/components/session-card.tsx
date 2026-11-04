@@ -42,7 +42,7 @@ function checkBadgeClass(checkStatus: SessionSummary["checkStatus"]): string {
 function checkLabel(checkStatus: SessionSummary["checkStatus"]): string {
   if (checkStatus === "checked") return "Checked";
   if (checkStatus === "skipped") return "Skipped";
-  return "Not checked";
+  return "Awaiting check";
 }
 
 function checkIcon(checkStatus: SessionSummary["checkStatus"]) {
