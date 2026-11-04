@@ -123,8 +123,6 @@ export function ReaderPage() {
   // Checks v2 runner state, shared by the per-change and caught-up offers.
   const [checksState, setChecksState] = useState<ChecksV2Response | null>(null);
   const [checkFocusId, setCheckFocusId] = useState<string | null>(null);
-  const [checkOpen, setCheckOpen] = useState(false);
-  const [checkBusy, setCheckBusy] = useState(false);
   const [checkError, setCheckError] = useState<string | null>(null);
   // Transition gate: "Got it" parks here and opens a blocking check modal
   // instead of advancing. Skip in the modal still marks understood.
@@ -198,7 +196,9 @@ export function ReaderPage() {
   const previous = !atEnd && viewIndex > 0 ? (changes[viewIndex - 1] ?? null) : null;
   const next = !atEnd && viewIndex < changes.length - 1 ? (changes[viewIndex + 1] ?? null) : null;
   const skipped = changes.filter((change) => progress[progressKey(change)]?.state === "skipped");
-  const neverOpened = changes.filter((change) => progress[progressKey(change)] === undefined).length;
+  const neverOpened = changes.filter(
+    (change) => progress[progressKey(change)] === undefined,
+  ).length;
 
   // The thread lives in the rail's Ask tab; the tab state lives here so
   // the action row and wrap-up can flip to it.
@@ -253,41 +253,6 @@ export function ReaderPage() {
 
   const handleDone = () => {
     navigate("/projects");
-  };
-
-  const handleStartCheck = async () => {
-    if (checkBusy) return;
-    setCheckBusy(true);
-    setCheckError(null);
-    try {
-      const next = await api.generateChecksV2(sessionId);
-      setChecksState(next);
-      setCheckFocusId(null);
-      setCheckOpen(true);
-    } catch (unknown) {
-      setCheckError(checkMessage(unknown));
-    } finally {
-      setCheckBusy(false);
-    }
-  };
-
-  const handleSkipCheck = async () => {
-    if (checkBusy) return;
-    setCheckBusy(true);
-    setCheckError(null);
-    try {
-      await api.skipChecksV2(sessionId);
-      setChecksState((old) => (old === null ? old : { ...old, status: "skipped" as const }));
-      setCheckOpen(false);
-    } catch (unknown) {
-      setCheckError(checkMessage(unknown));
-    } finally {
-      setCheckBusy(false);
-    }
-  };
-
-  const handleRunnerDone = () => {
-    setCheckOpen(false);
   };
 
   // "Got it" parks on a gate instead of advancing: fetch this change's
@@ -561,17 +526,6 @@ export function ReaderPage() {
                     </p>
                   ) : null}
 
-                  {checkOpen && checksState !== null && !atEnd ? (
-                    <CheckRunner
-                      sessionId={sessionId}
-                      state={checksState}
-                      focusQuestionId={checkFocusId}
-                      onUpdate={setChecksState}
-                      onSkip={() => void handleSkipCheck()}
-                      onDone={handleRunnerDone}
-                    />
-                  ) : null}
-
                   {/* The action bar is fixed to the viewport, so this holds its in-flow room. */}
                   <div aria-hidden className="h-32 lg:h-20" />
                   <div className="fixed inset-x-0 bottom-0 z-20 border-t border-dusk-hairline bg-dusk-base lg:left-[max(1.5rem,calc((100vw-80rem)/2+1.5rem))] lg:right-[max(26rem,calc((100vw-80rem)/2+26rem))]">
@@ -648,40 +602,6 @@ export function ReaderPage() {
                     if (index !== -1) jump(index);
                   }}
                 />
-
-                <div className="space-y-3 rounded-dusk-card bg-dusk-surface px-6 py-5">
-                  <p className="text-xs uppercase tracking-widest text-dusk-muted">
-                    Check your understanding
-                  </p>
-                  <p className="text-sm text-dusk-muted">
-                    Up to three questions across this session&apos;s changes.
-                  </p>
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() => void handleStartCheck()}
-                      disabled={checkBusy}
-                      className={PRIMARY}
-                    >
-                      {checkBusy ? "Starting…" : "Check my understanding"}
-                    </button>
-                  </div>
-                  {checkError !== null ? (
-                    <p role="alert" className="text-sm text-dusk-fail">
-                      {checkError}
-                    </p>
-                  ) : null}
-                  {checkOpen && checksState !== null ? (
-                    <CheckRunner
-                      sessionId={sessionId}
-                      state={checksState}
-                      focusQuestionId={checkFocusId}
-                      onUpdate={setChecksState}
-                      onSkip={() => void handleSkipCheck()}
-                      onDone={handleRunnerDone}
-                    />
-                  ) : null}
-                </div>
               </div>
             )}
           </>
