@@ -63,6 +63,9 @@ export type SessionChangesResponse = {
   diagnostics: string[];
 };
 
+/** Marker the server stamps when the first snapshot missed the early work. */
+export const LATE_BASELINE_DIAGNOSTIC = "changes_late_baseline";
+
 type FetchOptions = {
   signal?: AbortSignal;
   timeoutMs?: number;
