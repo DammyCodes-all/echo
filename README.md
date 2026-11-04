@@ -20,7 +20,7 @@ None of that measures Echo. The submission says so. But it points at the actual 
 
 Three minutes, all on screen:
 
-- Demo video: TODO (link lands with the cut)
+- Demo video: https://youtu.be/kmUYmTl1qGM
 - Hosted read-only demo: **https://echo-caz8.onrender.com** — the filmed session plus one more, baked in. Read the review one change at a time, take the calibration check, ask why (see `docs/DEPLOY.md`)
 - Submission entry: TODO
 
