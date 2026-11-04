@@ -1,0 +1,300 @@
+{
+  "sessionId": "01a1a5ea-e924-7f83-9f4d-fd4ae9bce607",
+  "generatedAt": "2026-11-04T09:45:09.463Z",
+  "generator": "model-changes-v1",
+  "summary": "This session contains 7 reviewed changes. They span the files recorded in the changes. In short, This update removes loud red high risk styling / Session status presentation now surfaces consistently with Awaiting / This change updates the web caught-up end screen / reader wrap-up now shows transparent totals including never / Review showcase now passes explicit total and neverOpened; and 2 more.",
+  "diagnostics": [
+    "changes_evidence_gated_v2"
+  ],
+  "changes": [
+    {
+      "id": "c_01c3cff21256b2df",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "7d916bd5a65d0bf8fb15b9fae572ae74e38c6116",
+        "nextOid": "763507b01eb77f0d7e95f66f2065e99b64db8c4b"
+      },
+      "title": "Quieter high-risk session badges",
+      "summary": "This update tones down how session cards flag high-risk content so they no longer turn loud red at higher counts. Counts that previously triggered a strong warning now stay in the quieter muted style used for lower counts.",
+      "before": [
+        "Cards with five or more high-risk items showed a prominent red badge to shout for triage attention."
+      ],
+      "now": [
+        "All high-risk counts use the same subdued badge appearance without a loud red wash."
+      ],
+      "howItWorks": [
+        "Open a session list containing cards with varying high-risk counts.",
+        "Check the badge area at the top of each session card.",
+        "Confirm badges no longer switch to a red background when the count reaches five or more."
+      ],
+      "headsUp": [],
+      "verify": [
+        "Open the session list view and look at cards that contain high-risk items to confirm badges appear in muted gray instead of red.",
+        "Create or find a session with five or more high-risk cards and verify its badge does not turn red"
+      ],
+      "files": [
+        {
+          "path": "apps/web/src/components/session-card.tsx",
+          "note": "Removed special loud-red styling threshold for high-risk count badges"
+        }
+      ],
+      "digest": "This update removes loud red high risk styling from session cards on the web app. Previously cards with five or more high risk items switched to a bright red wash to signal triage urgency. Now that threshold and special color logic is deleted. All counts render with the same muted gray track background and subdued text. Result is calmer consistent visual hierarchy across session lists without shouting for attention.",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "7d916bd5a65d0bf8fb15b9fae572ae74e38c6116",
+        "nextOid": "763507b01eb77f0d7e95f66f2065e99b64db8c4b"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_cce24aac3ec3c60c",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "763507b01eb77f0d7e95f66f2065e99b64db8c4b",
+        "nextOid": "ac3787b9d87bd7296a251a32e54fdbbaca8b24aa"
+      },
+      "title": "Clear session check status",
+      "summary": "Session cards now always show their check state with clearer wording. \"Not checked\" is now called \"Awaiting check\" with a clock icon, and high-risk counts no longer appear inline on cards.",
+      "before": [
+        "Session cards only showed a check badge when status was checked or skipped and hid the default \"Not checked\" state; high-risk counts appeared as a red badge.",
+        "Project folder view showed check status as \"Not checked\" and appended \"· X high-risk\" to the line when applicable."
+      ],
+      "now": [
+        "Every session card shows a badge for Checked, Skipped, or Awaiting check with a matching icon, with no high-risk count on the card.",
+        "Folder check lines now read Checked, Skipped, or Awaiting check with no high-risk suffix."
+      ],
+      "howItWorks": [
+        "Open the project overview and read the bottom row of any session card to see its current check badge.",
+        "Look for the clock icon and Awaiting check label on sessions that have not been checked yet.",
+        "Open a project folder and confirm its session line shows the simplified status text without extra counts."
+      ],
+      "headsUp": [],
+      "verify": [
+        "Open project overview and confirm every session card shows Checked, Skipped, or Awaiting check with correct icon.",
+        "Open a project folder and confirm check lines no longer show high-risk counts.",
+        "Refresh session list and verify no high-risk pill appears on cards."
+      ],
+      "files": [
+        {
+          "path": "apps/web/src/components/project-folder-card.tsx",
+          "note": "Simplifies folder check line to awaiting wording without high-risk suffix."
+        },
+        {
+          "path": "apps/web/src/components/session-card.tsx",
+          "note": "Makes check badge always visible with updated label and icon."
+        }
+      ],
+      "digest": "Session status presentation now surfaces consistently with Awaiting check replacing Not checked and dedicated icons for each state ensuring every session card displays a badge without relying on conditional visibility while removing inline high risk counts from both card and folder views to simplify scanning and reserve detailed risk information for the dedicated story page",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "763507b01eb77f0d7e95f66f2065e99b64db8c4b",
+        "nextOid": "ac3787b9d87bd7296a251a32e54fdbbaca8b24aa"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_8397ce319efe7961",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "60803fb6510f22ea7ce6a692f8997ed8dcac612d",
+        "nextOid": "3d5f8058aaf3d4fa3e163f97dd2331af9114c4c8"
+      },
+      "title": "Session end screen totals",
+      "summary": "The end-of-session screen now shows a plain totals sentence above your summary. It tells you how many changes were in the session, how many you skipped, and how many you never opened, so you get a clear wrap-up without scores or judgment.",
+      "before": [
+        "The finished screen only showed a custom summary text and a list of skipped items, with no overall count of the session."
+      ],
+      "now": [
+        "The finished screen now adds a one-line totals sentence like \"This session had 12 changes — you skipped 3 and never opened 2.\" at the top, generated from the new counts."
+      ],
+      "howItWorks": [
+        "When you finish a session, the page receives the total number of changes, how many were skipped, and how many were never opened.",
+        "It builds a single plain sentence that handles singular and plural correctly for the count.",
+        "That sentence is displayed prominently above the existing summary on the caught-up end screen."
+      ],
+      "headsUp": [],
+      "verify": [
+        "Open a completed session and confirm a sentence at the top reads \"This session had ... changes — you skipped ... and never opened ...\".",
+        "Check that the skipped number matches the length of the skipped list shown below."
+      ],
+      "files": [
+        {
+          "path": "apps/web/src/components/caught-up.tsx",
+          "note": "Adds totals-based end-screen sentence and required counts to the finished view."
+        }
+      ],
+      "digest": "This change updates the web caught-up end screen to display a plain totals summary sentence generated by a new helper that formats total changes skipped count and never opened count with correct singular plural handling and renders it prominently above the existing session summary providing users a clear transparent session wrap up without scores or risk language",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "60803fb6510f22ea7ce6a692f8997ed8dcac612d",
+        "nextOid": "3d5f8058aaf3d4fa3e163f97dd2331af9114c4c8"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_97446fbf2901d397",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "3d5f8058aaf3d4fa3e163f97dd2331af9114c4c8",
+        "nextOid": "3d3c4d48ab0eee884c081c3d0f5f5aacafac79ac"
+      },
+      "title": "Reader Wrap-Up Shows Totals",
+      "summary": "The reader now counts how many changes you never opened and shares that number with the end-of-session screen. The wrap-up view receives the total amount of changes along with the never-opened count so it can display a clear totals sentence.",
+      "before": [
+        "The wrap-up at the end of the reader only knew your general summary and which items were skipped.",
+        "There was no count for changes you never opened, so the ending could not explain what was left untouched."
+      ],
+      "now": [
+        "The page now tallies every change with no progress recorded as never opened and passes that number forward.",
+        "The ending screen receives the total number of changes plus the never-opened total to render a plain summary line."
+      ],
+      "howItWorks": [
+        "Open the reader and flip through changes while your progress for each change is saved.",
+        "At the end the view looks up progress for every change and counts those with no entry as never opened.",
+        "That count together with the total number of changes is handed to the final screen.",
+        "The final screen formats those numbers into a single totals sentence above the session summary."
+      ],
+      "headsUp": [],
+      "verify": [
+        "Open a Reader session, skip ahead without opening some changes, reach the Caught Up screen and confirm a totals sentence shows total, skipped and never opened counts.",
+        "Open browser dev tools and verify neverOpened equals number of changes with no progress entry."
+      ],
+      "files": [
+        {
+          "path": "apps/web/src/routes/reader.tsx",
+          "note": "Counts never-opened changes and passes totals to the wrap-up view."
+        }
+      ],
+      "digest": "reader wrap-up now shows transparent totals including never opened changes previously ending lacked untouched count now page filters progress entries undefined tallies never opened length passes total and neverOpened props to CaughtUp component helper formats plain sentence singular plural above summary no scores no risk language helps users understand completion",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "3d5f8058aaf3d4fa3e163f97dd2331af9114c4c8",
+        "nextOid": "3d3c4d48ab0eee884c081c3d0f5f5aacafac79ac"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_dc7f44dd98029710",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "3d3c4d48ab0eee884c081c3d0f5f5aacafac79ac",
+        "nextOid": "0b26951484ad9afb02f514c0e3f47b0055e2f333"
+      },
+      "title": "Showcase totals now passed to CaughtUp",
+      "summary": "The Review showcase page now provides explicit totals to the end-of-session summary. Both example summaries now include the total number of changes and how many were never opened, so the displayed sentence can be verified against real counts.",
+      "before": [
+        "Review showcase rendered end summaries without numeric totals, so the overall counts were not visible on the page."
+      ],
+      "now": [
+        "Review showcase passes total and neverOpened numbers to the summary component, making the totals sentence accurate and checkable."
+      ],
+      "howItWorks": [
+        "Page renders two example end states for the review flow to demonstrate summary formatting.",
+        "Each state now supplies a total count and a never-opened count alongside the summary text.",
+        "Summary component uses those numbers to build a plain sentence with correct singular and plural wording.",
+        "Sentence appears prominently above the existing summary, showing how many were seen, skipped, or left unopened."
+      ],
+      "headsUp": [],
+      "verify": [
+        "Open the review showcase route and confirm two summary examples appear with a totals sentence above each summary.",
+        "Check the first example shows 5 total with 1 never opened, and the second shows 1 total with 0 never opened."
+      ],
+      "files": [
+        {
+          "path": "apps/web/src/routes/review-showcase.tsx",
+          "note": "Adds total and neverOpened props to CaughtUp examples so the showcase renders realistic totals."
+        }
+      ],
+      "digest": "Review showcase now passes explicit total and neverOpened counts to the CaughtUp summary component so both demo scenarios render accurate totals sentences that match the helper formatting and let readers verify the wrap-up display without scores or risk language in plain presentation for the end-of-session experience showing five small changes versus one typo fix with correct singular plural handling above existing summaries and improving transparency for testing",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "3d3c4d48ab0eee884c081c3d0f5f5aacafac79ac",
+        "nextOid": "0b26951484ad9afb02f514c0e3f47b0055e2f333"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_56efc4e8617b4359",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "8eb82834a0b7dbc0443cbfacd1c12313bc5a7af0",
+        "nextOid": "cf0ffe57839cae8e226f1fdc36372dfc140968c9"
+      },
+      "title": "Context aware starter questions",
+      "summary": "This change makes the set of suggested starter questions adapt to the user's current focus. When viewing a specific change, the first suggestion now mentions that change's title by name, making it easier to ask a relevant question. Otherwise the generic wording remains for broad sessions.",
+      "before": [
+        "The Ask panel always showed the same three fixed starter prompts: Why this approach?, What could break?, and What was tried before?, with no awareness of what change was being reviewed."
+      ],
+      "now": [
+        "The starter prompts are generated by a new helper that checks the current scope, showing Why did you change [title]? when a change is selected and falling back to Why this approach? when there is none, with the other two prompts unchanged."
+      ],
+      "howItWorks": [
+        "The panel determines whether a specific change is in scope when rendering.",
+        "It calls the new starter builder which picks the title-specific first question for a scoped view or the generic one for the overall session.",
+        "The resulting three prompts are displayed as tappable suggestions that populate the Ask input."
+      ],
+      "headsUp": [],
+      "verify": [
+        "Open a session with no change selected and confirm the first starter reads Why this approach?",
+        "Open a single change thread and confirm the first starter reads Why did you change [that change's title]?",
+        "Confirm the second and third starters still read What could break? and What was tried before? in both views"
+      ],
+      "files": [
+        {
+          "path": "apps/web/src/components/ask-thread-panel.tsx",
+          "note": "Generates starter questions dynamically, personalizing first prompt with change title when in scoped view."
+        }
+      ],
+      "digest": "update adds helper askStarters in ask thread panel to personalize first suggested question when viewing specific change using its title why did you change X otherwise generic why this approach plus two stable prompts what could break and what was tried before replaces hard coded array with scoped call improving relevance",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "8eb82834a0b7dbc0443cbfacd1c12313bc5a7af0",
+        "nextOid": "cf0ffe57839cae8e226f1fdc36372dfc140968c9"
+      },
+      "origin": "model"
+    },
+    {
+      "id": "c_ae06da7f2ff80473",
+      "version": 1,
+      "snapshotPair": {
+        "prevOid": "3858afca1df716f48c58a41af3e2fa0534b3f4ae",
+        "nextOid": "646248740ff288f048b16bad497b98cf7ccea374"
+      },
+      "title": "Build tracker notes refreshed",
+      "summary": "This update adds three recent web changes to the build tracker document. Entries record the session card cleanup, the reader end screen totals sentence, and the ask starter wording for scoped changes. The notes capture what shipped, how it was verified, and that nothing was left staged.",
+      "before": [
+        "The build tracker stopped before these November changes, so recent UI tweaks were not documented for readers."
+      ],
+      "now": [
+        "The tracker now lists the three November 4th items with their status, evidence, and implementation notes in plain history entries."
+      ],
+      "howItWorks": [
+        "Open the build tracker document and find the new dated sections appended at the end.",
+        "Read each entry to see the area changed, what the user now sees, and the verification that was run.",
+        "Follow the notes to understand any leftover impacts, like contract fields kept but not rendered."
+      ],
+      "headsUp": [],
+      "verify": [
+        "Open docs/BuildTracker.md and confirm the three dated 2026-11-04 sections appear after the previous notes.",
+        "Check that each entry includes an item description, status, evidence, and notes without staged changes."
+      ],
+      "files": [
+        {
+          "path": "docs/BuildTracker.md",
+          "note": "Appends dated history entries summarizing recent UI and reader summary changes."
+        }
+      ],
+      "digest": "appended three dated changelog entries to BuildTracker on 2026-11-04 documenting removal of stale high risk pill from session cards and folder previews plus reader end screen totals sentence with singular plural handling and scoped ask starter title prefix including verification via typecheck and vitest and notes about preserved contract status field retention without staging commits for history",
+      "createdFrom": {
+        "kind": "snapshot_pair",
+        "prevOid": "3858afca1df716f48c58a41af3e2fa0534b3f4ae",
+        "nextOid": "646248740ff288f048b16bad497b98cf7ccea374"
+      },
+      "origin": "model"
+    }
+  ],
+  "snapshotWatermark": {
+    "snapshotCount": 30,
+    "lastOid": "a5ed97a25ff4cc78c1c21856788fb8dabfc7f9a0"
+  }
+}

@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "sessionId": "01a1a5ea-e924-7f83-9f4d-fd4ae9bce607",
+  "status": "in_progress",
+  "generatedAt": "2026-11-04T10:06:56.124Z",
+  "tapeWatermark": {
+    "eventCount": 1949,
+    "sha256": "ea8b73354afd8d5d7d9400f0e347d1b2d1e894c21334d2e4d07c157c2ed1e1b1"
+  },
+  "questions": [
+    {
+      "id": "chk2_33934e3bb5b3",
+      "cardId": "c_01c3cff21256b2df",
+      "kind": "consequence",
+      "question": "What happens to the badge on a session card that has **five or more** high-risk items?",
+      "evidenceFactIds": [
+        "c_01c3cff21256b2df"
+      ],
+      "evidencePaths": [
+        "apps/web/src/components/session-card.tsx"
+      ],
+      "format": "mcq",
+      "options": [
+        {
+          "id": "a",
+          "text": "It shows a prominent red badge to shout for triage attention"
+        },
+        {
+          "id": "b",
+          "text": "It stays in the same subdued, muted style as lower counts with no loud red wash"
+        }
+      ],
+      "correctOptionId": "b",
+      "distractorSources": [
+        "c_01c3cff21256b2df"
+      ],
+      "explanation": "The update removed the loud red warning at five or more \u2014 all high-risk counts now use the quieter muted badge appearance."
+    },
+    {
+      "id": "chk2_ba827739c20c",
+      "cardId": "c_8397ce319efe7961",
+      "kind": "consequence",
+      "question": "What does the **finished screen** now show at the top when a session ends?",
+      "evidenceFactIds": [
+        "b: Before state - finished screen only showed custom summary and skipped list",
+        "a: General outside knowledge - scores/judgment which card says is explicitly avoided"
+      ],
+      "evidencePaths": [
+        "apps/web/src/components/caught-up.tsx"
+      ],
+      "format": "mcq",
+      "options": [
+        {
+          "id": "a",
+          "text": "A scored judgment with points for how many changes you covered"
+        },
+        {
+          "id": "b",
+          "text": "Only the custom summary text and a list of skipped items with no overall count"
+        },
+        {
+          "id": "c",
+          "text": "A one-line totals sentence stating how many changes were in the session, how many you skipped, and how many you never opened"
+        }
+      ],
+      "correctOptionId": "c",
+      "distractorSources": [
+        "b: Before state - finished screen only showed custom summary and skipped list",
+        "a: General outside knowledge - scores/judgment which card says is explicitly avoided"
+      ],
+      "explanation": "The change adds a plain totals sentence like \"This session had 12 changes \u2014 you skipped 3 and never opened 2\" to give a clear wrap-up without scores or judgment."
+    },
+    {
+      "id": "chk2_6ed0b2096023",
+      "cardId": "c_97446fbf2901d397",
+      "kind": "consequence",
+      "question": "After you finish a session in the **reader**, what does the **wrap-up** screen now show?",
+      "evidenceFactIds": [
+        "Before: wrap-up only knew general summary and skipped items",
+        "Before: no count for never-opened changes"
+      ],
+      "evidencePaths": [
+        "apps/web/src/routes/reader.tsx"
+      ],
+      "format": "mcq",
+      "options": [
+        {
+          "id": "a",
+          "text": "Only the general summary and which items were skipped, with no counts"
+        },
+        {
+          "id": "b",
+          "text": "A totals sentence with the **total** number of changes and the **never-opened** count"
+        },
+        {
+          "id": "c",
+          "text": "Only the count of changes you opened, hiding the total"
+        }
+      ],
+      "correctOptionId": "b",
+      "distractorSources": [
+        "Before: wrap-up only knew general summary and skipped items",
+        "Before: no count for never-opened changes"
+      ],
+      "explanation": "The reader now tallies every change with no progress as **never opened** and passes the **total** plus that count to the wrap-up to render a plain summary line."
+    },
+    {
+      "id": "chk2_f19f47f7f922",
+      "cardId": "c_dc7f44dd98029710",
+      "kind": "consequence",
+      "question": "What now appears in the **end-of-session summary** on the Review showcase page?",
+      "evidenceFactIds": [
+        "Before: Review showcase rendered end summaries without numeric totals, so the overall counts were not visible on the page."
+      ],
+      "evidencePaths": [
+        "apps/web/src/routes/review-showcase.tsx"
+      ],
+      "format": "mcq",
+      "options": [
+        {
+          "id": "a",
+          "text": "It shows end summaries without numeric totals, so overall counts are not visible"
+        },
+        {
+          "id": "b",
+          "text": "It shows both the total number of changes and how many were never opened as a verifiable sentence"
+        }
+      ],
+      "correctOptionId": "b",
+      "distractorSources": [
+        "Before: Review showcase rendered end summaries without numeric totals, so the overall counts were not visible on the page."
+      ],
+      "explanation": "The page now passes explicit total and neverOpened numbers to the summary, so both example summaries display a checkable totals sentence."
+    },
+    {
+      "id": "chk2_b56a90b6d746",
+      "cardId": "c_ae06da7f2ff80473",
+      "kind": "teach_back",
+      "question": "In your own words, what did the refreshed **build tracker** add for readers?",
+      "evidenceFactIds": [],
+      "evidencePaths": [
+        "docs/BuildTracker.md"
+      ],
+      "format": "free_text",
+      "rubric": [
+        "states that three November 4th items were added to the history",
+        "names the items as the session card cleanup, the reader end screen totals sentence, and the ask starter wording for scoped changes",
+        "says entries include status, evidence and implementation notes about what shipped and how it was verified"
+      ],
+      "explanation": "The refresh added three November 4th history entries so recent UI tweaks are now documented with their status and evidence."
+    }
+  ],
+  "attempts": [],
+  "picture": [
+    {
+      "cardId": "c_01c3cff21256b2df",
+      "bucket": "solid",
+      "questionId": "chk2_33934e3bb5b3"
+    },
+    {
+      "cardId": "c_cce24aac3ec3c60c",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_8397ce319efe7961",
+      "bucket": "confident_but_wrong",
+      "questionId": "chk2_ba827739c20c"
+    },
+    {
+      "cardId": "c_97446fbf2901d397",
+      "bucket": "solid",
+      "questionId": "chk2_6ed0b2096023"
+    },
+    {
+      "cardId": "c_dc7f44dd98029710",
+      "bucket": "never_looked",
+      "questionId": "chk2_f19f47f7f922"
+    },
+    {
+      "cardId": "c_56efc4e8617b4359",
+      "bucket": "never_looked",
+      "questionId": null
+    },
+    {
+      "cardId": "c_ae06da7f2ff80473",
+      "bucket": "confident_but_wrong",
+      "questionId": "chk2_b56a90b6d746"
+    }
+  ],
+  "currentQuestionId": "chk2_f19f47f7f922",
+  "origin": "check_me"
+}
