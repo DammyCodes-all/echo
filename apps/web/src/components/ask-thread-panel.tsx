@@ -24,6 +24,12 @@ const LABEL_WORDS: Record<AskEvidence["label"], string> = {
   uncertain: "Uncertain",
 };
 
+/** Starter questions; a scoped change gets its own title in the first one. */
+export function askStarters(change: AskChangeRef): string[] {
+  const first = change === null ? "Why this approach?" : `Why did you change ${change.title}?`;
+  return [first, "What could break?", "What was tried before?"];
+}
+
 function shortTime(iso: string): string | null {
   const ms = Date.parse(iso);
   if (Number.isNaN(ms)) return null;
