@@ -30,13 +30,9 @@ function shortTime(iso: string | null): string | null {
 }
 
 function checkLine(session: SessionSummary): string {
-  const label =
-    session.checkStatus === "checked"
-      ? "Checked"
-      : session.checkStatus === "skipped"
-        ? "Skipped"
-        : "Not checked";
-  return session.highRiskCount > 0 ? `${label} · ${session.highRiskCount} high-risk` : label;
+  if (session.checkStatus === "checked") return "Checked";
+  if (session.checkStatus === "skipped") return "Skipped";
+  return "Awaiting check";
 }
 
 function captureLine(session: SessionSummary): string | null {
