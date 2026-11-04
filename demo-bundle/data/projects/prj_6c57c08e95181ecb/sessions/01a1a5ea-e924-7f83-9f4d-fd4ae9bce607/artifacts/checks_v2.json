@@ -164,12 +164,12 @@
     },
     {
       "cardId": "c_8397ce319efe7961",
-      "bucket": "confident_but_wrong",
+      "bucket": "solid",
       "questionId": "chk2_ba827739c20c"
     },
     {
       "cardId": "c_97446fbf2901d397",
-      "bucket": "solid",
+      "bucket": "never_looked",
       "questionId": "chk2_6ed0b2096023"
     },
     {
@@ -184,10 +184,10 @@
     },
     {
       "cardId": "c_ae06da7f2ff80473",
-      "bucket": "confident_but_wrong",
+      "bucket": "wrong_and_knew_it",
       "questionId": "chk2_b56a90b6d746"
     }
   ],
-  "currentQuestionId": "chk2_f19f47f7f922",
+  "currentQuestionId": "chk2_6ed0b2096023",
   "origin": "check_me"
 }
