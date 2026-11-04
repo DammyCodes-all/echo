@@ -813,7 +813,14 @@ export function createChangesService(
     // entirely — diffing hundreds of pairs just to skip them is the slow
     // path this early exit removes. A pre-split rollup or a drifted
     // summary always regenerates.
-    if (watermarkHit && previous && previousGated && !needsResplit && !needsSummaryRewrite) {
+    if (
+      watermarkHit &&
+      previous &&
+      previousGated &&
+      !needsResplit &&
+      !needsSummaryRewrite &&
+      !needsLateBaselineFlag
+    ) {
       const needsFill =
         modelConfig !== null &&
         previous.changes.some((change) => (change.origin ?? "skeleton") === "skeleton");
