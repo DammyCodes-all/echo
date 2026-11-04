@@ -3,8 +3,6 @@ dist/
 *.tsbuildinfo
 coverage/
 .vite/
-.env
-.env.*
 !.env.example
 *.log
 .DS_Store
@@ -16,3 +14,4 @@ data/
 tmp/
 demo-bundle/
 demo.md
+config.bat

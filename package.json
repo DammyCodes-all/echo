@@ -8,20 +8,22 @@
     "node": ">=24"
   },
   "scripts": {
-    "dev": "pnpm -r --parallel --filter @echo/server --filter @echo/web dev",
-    "dev:server": "pnpm --filter @echo/server dev",
-    "dev:web": "pnpm --filter @echo/web dev",
-    "build": "pnpm --filter @echo/web build && pnpm --filter @echo/server build && pnpm --filter @echo/cli build && pnpm --filter @echo/landing build",
+    "dev": "node init && pnpm -r --parallel --filter @echo/server --filter @echo/web dev",
+    "dev:server": "node init && pnpm --filter @echo/server dev",
+    "dev:web": "node init && pnpm --filter @echo/web dev",
+    "build": "node init && pnpm --filter @echo/web build && pnpm --filter @echo/server build && pnpm --filter @echo/cli build && pnpm --filter @echo/landing build",
     "typecheck": "tsc --noEmit",
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "dev:landing": "pnpm --filter @echo/landing dev"
+    "dev:landing": "node init && pnpm --filter @echo/landing dev"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.6.3",
     "@types/node": "^26.6.5",
+    "dotenv": "^8.2.0",
+    "node-fetch": "^3.3.2",
     "tsup": "^9.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",

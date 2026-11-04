@@ -4,7 +4,7 @@ One minute after opening a coding-agent session, say what shipped, where it diff
 
 **Try it live (no login, no keys): https://echo-caz8.onrender.com** — read-only demo with real recorded sessions. Read a review, take a check, ask why.
 
-Built for the Meta Global AI Developer Hackathon 2026 (Oct 27 to Nov 4), Indie Developer track, Build for Your World. History starts Oct 27 (`4ce366b`). Everything in the demo path is new work from the event.
+Built for the Meta Global AI Developer Hackathon 2026 (Oct 27 to Nov 4), Indie Developer track, Build for Your World. Team of 3: DammyCodes-all, Sam-Charles, truella. History starts Oct 27 (`4ce366b`). Everything in the demo path is new work from the event.
 
 ## The problem
 
@@ -43,7 +43,7 @@ flowchart LR
   Story --> Trust["deterministic trust layer:<br/>fact-check, computed<br/>verification + risk"]
 ```
 
-Muse Code (native session logs, lifecycle hooks) and Muse Spark (drafting, grounded answers, check generation) are Meta's. Everything else is mine, built in this repo: the recorder, the tape format, shadow-Git capture, the deterministic trust layer (claim validation with one regeneration then a gap line, computed observed-only verification, blast radius times mental-model risk), evidence-grounded Ask Why with refusal, calibration checks v2, engagement tracking, the redaction gate.
+Muse Code (native session logs, lifecycle hooks) and Muse Spark (drafting, grounded answers, check generation) are Meta's. Everything else is ours, built in this repo by the Echo team (DammyCodes-all, Sam-Charles, truella): the recorder, the tape format, shadow-Git capture, the deterministic trust layer (claim validation with one regeneration then a gap line, computed observed-only verification, blast radius times mental-model risk), evidence-grounded Ask Why with refusal, calibration checks v2, engagement tracking, the redaction gate.
 
 "Just a log viewer" is the obvious dismissal. Four things answer it. The refusal: "not on the tape." The Detours: reverted and failed attempts a final diff can't show. Verification that is computed, never asserted by the model. Checks aimed at the risky cards you never opened.
 
@@ -60,7 +60,7 @@ That starts the daemon on 127.0.0.1:4783 and Vite on :5173.
 
 Keys come from `META_API_KEY` and `BASETEN_API_KEY` (see `.env.example`). Never commit real keys; `.env.local` is gitignored. With the model off, story generation falls back to a deterministic skeleton, so the loop is explorable without spending credits.
 
-I'm the first user, so the first sessions recorded are mine. The demo uses my own repos plus a synthetic secret.
+We're the first users, so the first sessions recorded are ours. The demo uses our own repos plus a synthetic secret.
 
 ## Honest limits
 
