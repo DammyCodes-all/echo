@@ -319,7 +319,7 @@ export function AskThread({ sessionId, change = null, onClearScope }: AskThreadP
     if (node !== null) node.scrollTop = node.scrollHeight;
   }, [messages.length, askMutation.isPending]);
 
-  const starters = ["Why this approach?", "What could break?", "What was tried before?"];
+  const starters = askStarters(change);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
