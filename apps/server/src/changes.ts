@@ -395,6 +395,20 @@ function isPathEvident(
   return false;
 }
 
+// Earliest non-lifecycle tape timestamp: the first thing the session
+// actually did. session.started is excluded — an idle session that only
+// started and never acted missed nothing before a late baseline.
+function firstActivityMs(db: EchoDb, sessionId: string): number | null {
+  const row = db
+    .prepare(
+      "SELECT MIN(ts) AS minTs FROM events WHERE session_id = ? AND kind != 'session.started'",
+    )
+    .get(sessionId) as { minTs: unknown } | undefined;
+  if (typeof row?.minTs !== "string") return null;
+  const parsed = Date.parse(row.minTs);
+  return Number.isNaN(parsed) ? null : parsed;
+}
+
 // Model-distilled session name from the first prompt plus change titles.
 // Runs at most once per session: first-write-wins forever, agent titles
 // never lose, and any failure just leaves the title null for the next run.
