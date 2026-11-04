@@ -1315,6 +1315,7 @@ export function createChangesService(
       progress,
       summary: artifact ? artifact.summary : buildSessionSummaryFromDigests([]),
       isLive,
+      diagnostics: artifact?.diagnostics ?? [],
     };
     return { status: 200, body };
   }
