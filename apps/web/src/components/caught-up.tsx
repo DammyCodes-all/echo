@@ -9,6 +9,12 @@ type CaughtUpProps = {
   onRevisit: (change: Change) => void;
 };
 
+/** One plain sentence topping the end screen: totals only, no scores. */
+export function endScreenSummary(total: number, skipped: number, neverOpened: number): string {
+  const changes = total === 1 ? "change" : "changes";
+  return `This session had ${total} ${changes} — you skipped ${skipped} and never opened ${neverOpened}.`;
+}
+
 const PRIMARY =
   "rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent";
 
