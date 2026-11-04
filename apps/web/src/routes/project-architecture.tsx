@@ -8,7 +8,7 @@ import {
   ArchitectureDiagram,
   type PinnedNode,
 } from "../components/architecture/architecture-diagram";
-import { Skeleton } from "../components/skeleton";
+import { ArchitectureSkeleton } from "../components/skeleton";
 import { useArchitectureStream } from "../hooks/use-architecture-stream";
 import { useDemoMode } from "../hooks/use-demo-mode";
 import { queryKeys } from "../query";
