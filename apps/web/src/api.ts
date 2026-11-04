@@ -196,6 +196,9 @@ export const api = {
       progress: Array.isArray(body?.progress) ? body.progress : [],
       summary: typeof body?.summary === "string" ? body.summary : "",
       isLive: body?.isLive === true,
+      diagnostics: Array.isArray(body?.diagnostics)
+        ? body.diagnostics.filter((entry): entry is string => typeof entry === "string")
+        : [],
     };
   },
   recordProgress: (
