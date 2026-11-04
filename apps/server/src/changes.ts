@@ -140,6 +140,7 @@ export interface ChangesResponse {
   progress: Progress[];
   summary: string;
   isLive: boolean;
+  diagnostics: string[];
 }
 
 export type ChangesGenerateOutcome =
