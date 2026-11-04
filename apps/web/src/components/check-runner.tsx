@@ -27,6 +27,11 @@ function toMessage(error: unknown): string {
 const PRIMARY =
   "rounded-dusk-pill bg-dusk-accent px-5 py-2.5 text-sm font-semibold text-dusk-base focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40";
 
+// Quiet inline action for the embedded (bare) reveal: the modal footer owns
+// the primary Continue, so "next question" must not compete with it.
+const QUIET =
+  "text-sm text-dusk-muted underline underline-offset-4 hover:text-dusk-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-dusk-accent disabled:opacity-40";
+
 type Reveal = { summary: string; evidence: AskEvidence[] };
 
 type CheckRunnerProps = {
@@ -198,9 +203,15 @@ export function CheckRunner({
         {error !== null ? <p className="text-sm text-dusk-fail">{error}</p> : null}
         <div className="flex flex-wrap gap-2">
           {unanswered.length > 0 ? (
-            <button type="button" onClick={() => setRevealedId(null)} className={PRIMARY}>
-              Next
-            </button>
+            bare ? (
+              <button type="button" onClick={() => setRevealedId(null)} className={QUIET}>
+                Next question →
+              </button>
+            ) : (
+              <button type="button" onClick={() => setRevealedId(null)} className={PRIMARY}>
+                Next
+              </button>
+            )
           ) : !bare ? (
             <button type="button" onClick={() => setRevealedId(null)} className={PRIMARY}>
               See your picture
