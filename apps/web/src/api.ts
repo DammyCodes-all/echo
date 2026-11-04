@@ -59,6 +59,8 @@ export type SessionChangesResponse = {
   progress: Progress[];
   summary: string;
   isLive: boolean;
+  /** Artifact diagnostics (e.g. late-baseline); empty when the server omits them. */
+  diagnostics: string[];
 };
 
 type FetchOptions = {
