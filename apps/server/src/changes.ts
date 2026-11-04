@@ -1123,7 +1123,8 @@ export function createChangesService(
       filled === 0 &&
       previous &&
       previousGated &&
-      previous.summary === summary
+      previous.summary === summary &&
+      !needsLateBaselineFlag
     ) {
       const progressPath = progressArtifactPath(dataDir, session.projectId, sessionId);
       if (!existsSync(progressPath)) persistProgressFile(sessionId, session.projectId);
