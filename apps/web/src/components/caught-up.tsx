@@ -26,6 +26,9 @@ export function CaughtUp({ summary, skipped, total, neverOpened, onDone, onRevis
         <h2 className="mt-2 text-2xl font-semibold text-dusk-ink">
           That&apos;s the whole session.
         </h2>
+        <p className="mt-2 text-dusk-body leading-6 text-dusk-ink">
+          {endScreenSummary(total, skipped.length, neverOpened)}
+        </p>
         <p className="mt-2 text-dusk-body leading-6 text-dusk-ink">{summary}</p>
       </div>
 
