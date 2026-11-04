@@ -93,7 +93,8 @@ export const SessionCard = memo(function SessionCard({ session }: { session: Ses
           <span aria-hidden className="inline-flex">
             <HugeiconsIcon icon={checkIcon(session.checkStatus)} size={14} strokeWidth={2} />
           </span>
-        ) : null}
+          {checkLabel(session.checkStatus)}
+        </span>
       </span>
     </Link>
   );
