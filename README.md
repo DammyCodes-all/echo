@@ -2,6 +2,8 @@
 
 One minute after opening a coding-agent session, say what shipped, where it differs from what you asked, and what could bite you.
 
+**Try it live (no login, no keys): https://echo-caz8.onrender.com** — read-only demo with real recorded sessions. Read a review, take a check, ask why.
+
 Built for the Meta Global AI Developer Hackathon 2026 (Oct 27 to Nov 4), Indie Developer track, Build for Your World. History starts Oct 27 (`4ce366b`). Everything in the demo path is new work from the event.
 
 ## The problem
@@ -19,10 +21,10 @@ None of that measures Echo. The submission says so. But it points at the actual 
 Three minutes, all on screen:
 
 - Demo video: TODO (link lands with the cut)
-- Hosted read-only demo: **https://echo-caz8.onrender.com** — 2 baked sessions, read-only, Ask Why live (see `docs/DEPLOY.md`)
+- Hosted read-only demo: **https://echo-caz8.onrender.com** — the filmed session plus one more, baked in. Read the review one change at a time, take the calibration check, ask why (see `docs/DEPLOY.md`)
 - Submission entry: TODO
 
-The video opens the inbox, reads the newest session's story (short version, ask-vs-result, behaviour cards), opens one card (before and now, an inline evidence slice, what checked it), runs the calibration check and gets one wrong while Certain, then asks something the tape can't answer and gets refused. No scores, no gates. A picture of calibration, then back to the inbox.
+The video opens the inbox, walks a real session one change at a time (before and now in plain words, one file diff), takes the calibration check and gets one wrong while Certain, asks something the tape can't answer and gets refused, then zooms out to the project map. No scores, no gates.
 
 ## How it works
 
