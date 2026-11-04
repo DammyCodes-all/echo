@@ -130,11 +130,7 @@ export function ProjectArchitecturePage() {
         </div>
 
         {arch.isPending ? (
-          <div
-            role="status"
-            aria-label="Loading architecture"
-            className="grid h-[520px] place-items-center"
-          >
+          <div role="status" aria-label="Loading architecture">
             <span className="sr-only">Loading architecture…</span>
             <Skeleton className="h-6 w-48" />
           </div>
