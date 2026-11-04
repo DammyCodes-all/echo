@@ -244,13 +244,7 @@ async function seedTwoSnapshots(eventAt: string = TAKEN_AT.toISOString()): Promi
   // Evidence gate: the tape must prove the session touched notes.txt,
   // or the pair diff would be dropped as another session's write.
   appendEvents(db, sessionId, [
-    toolEditEvent(
-      sessionId,
-      projectId,
-      "evt_evidence",
-      TAKEN_AT.toISOString(),
-      join(root, "notes.txt"),
-    ),
+    toolEditEvent(sessionId, projectId, "evt_evidence", eventAt, join(root, "notes.txt")),
   ]);
   insertRow(db, sessionId, baseline, "evt_base");
   insertRow(db, sessionId, final, "evt_final");
